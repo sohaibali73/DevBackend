@@ -1,0 +1,39 @@
+# Git
+.git
+.gitignore
+
+# Python
+__pycache__
+*.pyc
+*.pyo
+.venv
+venv/
+.env
+.env.local
+
+# Node/Frontend (not needed for backend)
+node_modules/
+package.json
+package-lock.json
+Uidesignkit-main/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Railway/Render config
+render.yaml
+railway.json
+nixpacks.toml
+.railwayignore
+
+# Backups and data
+backup_*/
+data/
+*.log
+
+# Docs
+*.md
+!README.md

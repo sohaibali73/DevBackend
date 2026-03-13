@@ -1,0 +1,50 @@
+# Web Framework
+fastapi
+uvicorn[standard]
+gunicorn
+
+# AI
+anthropic>=0.84.0
+httpx  # For Vercel AI Gateway async HTTP client
+
+# Database
+supabase
+# Research
+tavily-python
+yfinance
+requests
+# Auth & Encryption
+python-jose[cryptography]
+passlib[bcrypt]
+cryptography>=41.0
+
+# Document Processing (parsing uploaded files, NOT generation)
+PyPDF2
+python-docx
+PyMuPDF
+python-pptx>=0.6.21
+Pillow>=10.0.0
+
+# Utils
+python-dotenv
+pydantic
+pydantic-settings
+python-multipart
+aiofiles
+email-validator
+
+# Data Analysis (for code execution tool)
+numpy
+pandas
+
+# Text-to-Speech (Voice Mode)
+edge-tts
+
+# Speech Recognition
+SpeechRecognition
+
+# Audio Processing
+pydub
+
+# Optional: Embeddings (for vector search)
+sentence-transformers==2.2.2

@@ -1,0 +1,8 @@
+python-dotenv==1.0.0
+pydantic==2.5.0
+fastapi==0.104.1
+python-jose[cryptography]==3.3.0
+uvicorn==0.24.0
+fastapi-cors==0.0.6
+sqlalchemy==2.0.39
+e2b-code-interpreter>=1.0.0
