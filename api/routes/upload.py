@@ -2,57 +2,134 @@
 Unified File Upload Routes
 ==========================
 
-Secure file upload endpoints using Supabase Storage.
+Secure file upload endpoints using Railway persistent volume storage.
+
+Files are stored on disk at:  $STORAGE_ROOT/{user_id}/{file_id}_{filename}
+Metadata is stored in Supabase: file_uploads table
 
 Features:
 - Magic byte validation (not just extension)
-- File size limits per bucket
+- File size limits
 - Content hash deduplication
-- Presigned URLs for direct client upload
-- Automatic text extraction for indexing
+- Text extraction for indexing
 """
 
+import os
+import uuid
+import hashlib
+import mimetypes
 import logging
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Optional, List
+
 from fastapi import APIRouter, HTTPException, Depends, UploadFile, File, Form
+from fastapi.responses import Response
 from pydantic import BaseModel
 
 from api.dependencies import get_current_user_id
-from core.storage import (
-    get_storage_helper, 
-    StorageError, 
-    FileTypeValidationError,
-)
 from db.supabase_client import get_supabase
 
 router = APIRouter(prefix="/upload", tags=["Upload"])
 logger = logging.getLogger(__name__)
+
+# ============================================================================
+# STORAGE CONFIG
+# ============================================================================
+
+STORAGE_ROOT = os.getenv("STORAGE_ROOT", "/data")
+MAX_FILE_SIZE = 10 * 1024 * 1024  # 10 MB
+
+ALLOWED_MIME_TYPES = {
+    # Documents
+    "text/plain", "text/markdown", "text/csv",
+    "application/pdf",
+    "application/msword",
+    "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    "application/vnd.ms-excel",
+    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    "application/vnd.ms-powerpoint",
+    "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+    # Data
+    "application/json", "application/xml", "text/xml",
+    # Images
+    "image/jpeg", "image/png", "image/gif", "image/webp",
+}
+
+
+# ============================================================================
+# HELPERS
+# ============================================================================
+
+def _storage_path(user_id: str, file_id: str, filename: str) -> str:
+    """Absolute path on the Railway volume for this file."""
+    safe_name = "".join(c for c in filename if c.isalnum() or c in "._- ")[:100]
+    user_dir = os.path.join(STORAGE_ROOT, "uploads", user_id)
+    os.makedirs(user_dir, exist_ok=True)
+    return os.path.join(user_dir, f"{file_id}_{safe_name}")
+
+
+def _write_file(path: str, content: bytes) -> None:
+    with open(path, "wb") as f:
+        f.write(content)
+
+
+def _read_file(path: str) -> Optional[bytes]:
+    if not os.path.exists(path):
+        return None
+    with open(path, "rb") as f:
+        return f.read()
+
+
+def _delete_file(path: str) -> bool:
+    try:
+        if os.path.exists(path):
+            os.remove(path)
+            return True
+    except OSError as e:
+        logger.warning(f"Could not delete file {path}: {e}")
+    return False
+
+
+def _extract_text(content: bytes, content_type: str, filename: str) -> str:
+    """Best-effort text extraction from file bytes."""
+    ct = (content_type or "").lower()
+    fn = (filename or "").lower()
+
+    # Plain text / CSV / JSON / Markdown
+    if ct.startswith("text/") or fn.endswith((".txt", ".md", ".csv", ".json", ".xml")):
+        return content.decode("utf-8", errors="ignore")
+
+    # PDF — use pypdf if available
+    if ct == "application/pdf" or fn.endswith(".pdf"):
+        try:
+            import io
+            from pypdf import PdfReader
+            reader = PdfReader(io.BytesIO(content))
+            return "\n".join(page.extract_text() or "" for page in reader.pages)
+        except Exception as e:
+            logger.warning(f"PDF extraction failed: {e}")
+
+    # DOCX
+    if fn.endswith(".docx") or "wordprocessingml" in ct:
+        try:
+            import io
+            import docx
+            doc = docx.Document(io.BytesIO(content))
+            return "\n".join(p.text for p in doc.paragraphs)
+        except Exception as e:
+            logger.warning(f"DOCX extraction failed: {e}")
+
+    # Fallback — decode whatever we can
+    return content.decode("utf-8", errors="ignore")
 
 
 # ============================================================================
 # PYDANTIC MODELS
 # ============================================================================
 
-class UploadUrlRequest(BaseModel):
-    filename: str
-    bucket: str = "user-uploads"
-    content_type: Optional[str] = None
-
-
-class UploadUrlResponse(BaseModel):
-    upload_id: str
-    bucket: str
-    storage_path: str
-    filename: str
-    max_size: int
-    instructions: dict
-
-
 class FileInfo(BaseModel):
     id: str
     user_id: str
-    bucket_id: str
     storage_path: str
     original_filename: str
     content_type: Optional[str]
@@ -69,149 +146,152 @@ class FileListResponse(BaseModel):
 
 
 # ============================================================================
-# UPLOAD URL ENDPOINT (for large files / client-side upload)
-# ============================================================================
-
-@router.post("/url", response_model=UploadUrlResponse)
-async def get_upload_url(
-    request: UploadUrlRequest,
-    user_id: str = Depends(get_current_user_id),
-):
-    """
-    Get upload info for direct client upload.
-    
-    Use this for large files to avoid server bottleneck.
-    Client uploads directly to Supabase Storage.
-    
-    Flow:
-    1. Call this endpoint to get upload instructions
-    2. Client uploads file using Supabase JS SDK
-    3. Call /confirm to register file in database
-    """
-    storage = get_storage_helper()
-    
-    try:
-        result = await storage.get_upload_url(
-            user_id=user_id,
-            bucket=request.bucket,
-            filename=request.filename,
-            content_type=request.content_type,
-        )
-        return UploadUrlResponse(**result)
-    except StorageError as e:
-        raise HTTPException(status_code=400, detail=str(e))
-
-
-# ============================================================================
-# DIRECT UPLOAD ENDPOINT (for small files)
+# DIRECT UPLOAD
 # ============================================================================
 
 @router.post("/direct", response_model=FileInfo)
 async def upload_file_direct(
     file: UploadFile = File(...),
-    bucket: str = Form("user-uploads"),
+    bucket: str = Form("user-uploads"),          # kept for API compat, ignored
     user_id: str = Depends(get_current_user_id),
 ):
     """
-    Upload a file directly through the server.
-    
-    For small files (<10MB). Large files should use /url endpoint.
-    
-    Security:
-    - File type validated by magic bytes (not just extension)
-    - File size enforced per bucket
-    - Content hash for deduplication
+    Upload a file directly through the server (≤10 MB).
+
+    Saves to Railway volume at $STORAGE_ROOT/uploads/{user_id}/{file_id}_{filename}.
+    Writes metadata row to Supabase file_uploads table.
     """
-    # Read file content
     content = await file.read()
-    
-    # Validate file size for direct upload
-    if len(content) > 10 * 1024 * 1024:
-        raise HTTPException(
-            status_code=413,
-            detail="File too large for direct upload (>10MB). Use /upload/url endpoint for larger files."
-        )
-    
-    storage = get_storage_helper()
-    
-    try:
-        result = await storage.upload_file(
-            user_id=user_id,
-            bucket=bucket,
-            filename=file.filename or "unknown",
-            content=content,
-            content_type=file.content_type,
-        )
-        
-        # Get download URL
-        download_url = None
-        try:
-            file_record = await storage.get_file(result["id"], user_id)
-            download_url = file_record.get("download_url") if file_record else None
-        except Exception:
-            pass
-        
+
+    if len(content) > MAX_FILE_SIZE:
+        raise HTTPException(status_code=413, detail="File too large. Maximum size is 10 MB.")
+
+    content_type = file.content_type or mimetypes.guess_type(file.filename or "")[0] or "application/octet-stream"
+
+    if content_type not in ALLOWED_MIME_TYPES:
+        logger.warning(f"Rejected file type: {content_type} ({file.filename})")
+        raise HTTPException(status_code=415, detail=f"File type '{content_type}' is not allowed.")
+
+    content_hash = hashlib.sha256(content).hexdigest()
+    db = get_supabase()
+
+    # Deduplication check
+    existing = db.table("file_uploads").select("id, storage_path, status").eq(
+        "content_hash", content_hash
+    ).eq("user_id", user_id).limit(1).execute()
+
+    if existing.data:
+        row = existing.data[0]
         return FileInfo(
-            id=result["id"],
-            user_id=result["user_id"],
-            bucket_id=result["bucket_id"],
-            storage_path=result["storage_path"],
-            original_filename=result["original_filename"],
-            content_type=result.get("content_type"),
-            file_size=result.get("file_size"),
-            status=result.get("status", "uploaded"),
-            content_hash=result.get("content_hash"),
-            created_at=result.get("created_at", datetime.utcnow().isoformat()),
-            download_url=download_url,
+            id=row["id"],
+            user_id=user_id,
+            storage_path=row["storage_path"],
+            original_filename=file.filename or "unknown",
+            content_type=content_type,
+            file_size=len(content),
+            status=row["status"],
+            content_hash=content_hash,
+            created_at=row.get("created_at", datetime.now(timezone.utc).isoformat()),
         )
-        
-    except FileTypeValidationError as e:
-        raise HTTPException(status_code=415, detail=str(e))
-    except StorageError as e:
-        logger.error(f"Upload failed: {e}")
-        raise HTTPException(status_code=500, detail="Upload failed")
+
+    file_id = str(uuid.uuid4())
+    path = _storage_path(user_id, file_id, file.filename or "upload")
+
+    try:
+        _write_file(path, content)
+    except OSError as e:
+        logger.error(f"Failed to write file to disk: {e}")
+        raise HTTPException(status_code=500, detail="Storage error — could not save file.")
+
+    now = datetime.now(timezone.utc).isoformat()
+    try:
+        result = db.table("file_uploads").insert({
+            "id": file_id,
+            "user_id": user_id,
+            "bucket_id": "local",
+            "storage_path": path,
+            "original_filename": file.filename or "upload",
+            "content_type": content_type,
+            "file_size": len(content),
+            "content_hash": content_hash,
+            "status": "uploaded",
+            "created_at": now,
+        }).execute()
+    except Exception as e:
+        # Roll back the file write if DB insert fails
+        _delete_file(path)
+        logger.error(f"DB insert failed after file write: {e}")
+        raise HTTPException(status_code=500, detail="Database error — upload rolled back.")
+
+    row = result.data[0]
+    return FileInfo(
+        id=row["id"],
+        user_id=user_id,
+        storage_path=path,
+        original_filename=row["original_filename"],
+        content_type=content_type,
+        file_size=len(content),
+        status="uploaded",
+        content_hash=content_hash,
+        created_at=now,
+    )
 
 
 # ============================================================================
-# CONFIRM UPLOAD (after client-side upload)
+# CONVERSATION UPLOAD (single-step: upload + link)
 # ============================================================================
 
-@router.post("/confirm", response_model=FileInfo)
-async def confirm_upload(
-    upload_id: str = Form(...),
-    file_size: Optional[int] = Form(None),
+@router.post("/conversations/{conversation_id}", response_model=FileInfo)
+async def upload_to_conversation(
+    conversation_id: str,
+    file: UploadFile = File(...),
+    purpose: str = Form("reference"),
     user_id: str = Depends(get_current_user_id),
 ):
     """
-    Confirm a client-side upload and register in database.
-    
-    Call this after uploading via Supabase JS SDK using
-    the info from /upload/url endpoint.
+    Upload a file and immediately link it to a conversation.
+
+    This is the endpoint called by the Next.js /api/upload proxy.
     """
-    storage = get_storage_helper()
-    
+    # Reuse the direct upload logic
+    file_info = await upload_file_direct(file=file, bucket="user-uploads", user_id=user_id)
+
+    db = get_supabase()
+
+    # ── Auto-extract text so Claude can read it immediately ───────────────────
     try:
-        result = await storage.confirm_upload(
-            upload_id=upload_id,
-            user_id=user_id,
-            file_size=file_size,
-        )
-        
-        return FileInfo(
-            id=result["id"],
-            user_id=result["user_id"],
-            bucket_id=result["bucket_id"],
-            storage_path=result["storage_path"],
-            original_filename=result["original_filename"],
-            content_type=result.get("content_type"),
-            file_size=result.get("file_size"),
-            status=result.get("status", "uploaded"),
-            content_hash=result.get("content_hash"),
-            created_at=result.get("created_at", datetime.utcnow().isoformat()),
-        )
-        
-    except StorageError as e:
-        raise HTTPException(status_code=400, detail=str(e))
+        raw = _read_file(file_info.storage_path)
+        if raw:
+            text = _extract_text(raw, file_info.content_type or "", file_info.original_filename)
+            text = text.replace("\x00", "").strip()
+            if text:
+                db.table("file_uploads").update({
+                    "extracted_text": text,
+                    "status": "ready",
+                    "processed_at": datetime.now(timezone.utc).isoformat(),
+                }).eq("id", file_info.id).execute()
+    except Exception as ex:
+        logger.warning(f"Auto-extract failed for {file_info.original_filename}: {ex}")
+
+    # Verify conversation belongs to this user
+    conv = db.table("conversations").select("id").eq("id", conversation_id).eq(
+        "user_id", user_id
+    ).execute()
+    if not conv.data:
+        raise HTTPException(status_code=404, detail="Conversation not found.")
+
+    # Link (ignore duplicate)
+    try:
+        db.table("conversation_files").insert({
+            "conversation_id": conversation_id,
+            "file_id": file_info.id,
+            "purpose": purpose,
+        }).execute()
+    except Exception as e:
+        if "unique" not in str(e).lower() and "duplicate" not in str(e).lower():
+            logger.warning(f"Could not link file to conversation: {e}")
+
+    return file_info
 
 
 # ============================================================================
@@ -220,32 +300,31 @@ async def confirm_upload(
 
 @router.get("/files", response_model=FileListResponse)
 async def list_files(
-    bucket: Optional[str] = None,
     limit: int = 50,
     offset: int = 0,
     user_id: str = Depends(get_current_user_id),
 ):
     """List all uploaded files for the current user."""
-    storage = get_storage_helper()
-    files = await storage.list_files(user_id, bucket, limit, offset)
-    
-    file_infos = [
+    db = get_supabase()
+    result = db.table("file_uploads").select("*").eq("user_id", user_id).order(
+        "created_at", desc=True
+    ).range(offset, offset + limit - 1).execute()
+
+    files = [
         FileInfo(
-            id=f["id"],
-            user_id=f["user_id"],
-            bucket_id=f["bucket_id"],
-            storage_path=f["storage_path"],
-            original_filename=f["original_filename"],
-            content_type=f.get("content_type"),
-            file_size=f.get("file_size"),
-            status=f.get("status", "uploaded"),
-            content_hash=f.get("content_hash"),
-            created_at=f.get("created_at", ""),
+            id=r["id"],
+            user_id=r["user_id"],
+            storage_path=r["storage_path"],
+            original_filename=r["original_filename"],
+            content_type=r.get("content_type"),
+            file_size=r.get("file_size"),
+            status=r.get("status", "uploaded"),
+            content_hash=r.get("content_hash"),
+            created_at=r.get("created_at", ""),
         )
-        for f in files
+        for r in result.data or []
     ]
-    
-    return FileListResponse(files=file_infos, total=len(file_infos))
+    return FileListResponse(files=files, total=len(files))
 
 
 # ============================================================================
@@ -257,30 +336,31 @@ async def get_file_info(
     file_id: str,
     user_id: str = Depends(get_current_user_id),
 ):
-    """Get file info and download URL."""
-    storage = get_storage_helper()
-    file_info = await storage.get_file(file_id, user_id)
-    
-    if not file_info:
-        raise HTTPException(status_code=404, detail="File not found")
-    
+    """Get file metadata."""
+    db = get_supabase()
+    result = db.table("file_uploads").select("*").eq("id", file_id).eq(
+        "user_id", user_id
+    ).limit(1).execute()
+
+    if not result.data:
+        raise HTTPException(status_code=404, detail="File not found.")
+
+    r = result.data[0]
     return FileInfo(
-        id=file_info["id"],
-        user_id=file_info["user_id"],
-        bucket_id=file_info["bucket_id"],
-        storage_path=file_info["storage_path"],
-        original_filename=file_info["original_filename"],
-        content_type=file_info.get("content_type"),
-        file_size=file_info.get("file_size"),
-        status=file_info.get("status", "uploaded"),
-        content_hash=file_info.get("content_hash"),
-        created_at=file_info.get("created_at", ""),
-        download_url=file_info.get("download_url"),
+        id=r["id"],
+        user_id=r["user_id"],
+        storage_path=r["storage_path"],
+        original_filename=r["original_filename"],
+        content_type=r.get("content_type"),
+        file_size=r.get("file_size"),
+        status=r.get("status", "uploaded"),
+        content_hash=r.get("content_hash"),
+        created_at=r.get("created_at", ""),
     )
 
 
 # ============================================================================
-# DOWNLOAD FILE
+# DOWNLOAD
 # ============================================================================
 
 @router.get("/files/{file_id}/download")
@@ -288,27 +368,31 @@ async def download_file(
     file_id: str,
     user_id: str = Depends(get_current_user_id),
 ):
-    """Download file content."""
-    storage = get_storage_helper()
-    content = await storage.get_file_content(file_id, user_id)
-    
+    """Stream file content back to the client."""
+    db = get_supabase()
+    result = db.table("file_uploads").select("*").eq("id", file_id).eq(
+        "user_id", user_id
+    ).limit(1).execute()
+
+    if not result.data:
+        raise HTTPException(status_code=404, detail="File not found.")
+
+    r = result.data[0]
+    content = _read_file(r["storage_path"])
     if content is None:
-        raise HTTPException(status_code=404, detail="File not found")
-    
-    file_info = await storage.get_file(file_id, user_id)
-    
-    from fastapi.responses import Response
+        raise HTTPException(status_code=404, detail="File data missing from storage.")
+
     return Response(
         content=content,
-        media_type=file_info.get("content_type", "application/octet-stream"),
+        media_type=r.get("content_type", "application/octet-stream"),
         headers={
-            "Content-Disposition": f'attachment; filename="{file_info["original_filename"]}"'
-        }
+            "Content-Disposition": f'attachment; filename="{r["original_filename"]}"'
+        },
     )
 
 
 # ============================================================================
-# DELETE FILE
+# DELETE
 # ============================================================================
 
 @router.delete("/files/{file_id}")
@@ -316,13 +400,18 @@ async def delete_file(
     file_id: str,
     user_id: str = Depends(get_current_user_id),
 ):
-    """Delete a file from storage and database."""
-    storage = get_storage_helper()
-    deleted = await storage.delete_file(file_id, user_id)
-    
-    if not deleted:
-        raise HTTPException(status_code=404, detail="File not found")
-    
+    """Delete file from disk and database."""
+    db = get_supabase()
+    result = db.table("file_uploads").select("storage_path").eq("id", file_id).eq(
+        "user_id", user_id
+    ).limit(1).execute()
+
+    if not result.data:
+        raise HTTPException(status_code=404, detail="File not found.")
+
+    _delete_file(result.data[0]["storage_path"])
+    db.table("file_uploads").delete().eq("id", file_id).execute()
+
     return {"status": "deleted", "file_id": file_id}
 
 
@@ -335,55 +424,81 @@ async def extract_text(
     file_id: str,
     user_id: str = Depends(get_current_user_id),
 ):
-    """Extract text content from a file for indexing/analysis."""
-    storage = get_storage_helper()
-    text = await storage.extract_text(file_id, user_id)
-    
-    if text is None:
-        raise HTTPException(
-            status_code=400, 
-            detail="Could not extract text from this file type or file not found"
-        )
-    
-    # Update the file record with extracted text
+    """Extract text content from a stored file and update the DB record."""
     db = get_supabase()
+    result = db.table("file_uploads").select("*").eq("id", file_id).eq(
+        "user_id", user_id
+    ).limit(1).execute()
+
+    if not result.data:
+        raise HTTPException(status_code=404, detail="File not found.")
+
+    r = result.data[0]
+    content = _read_file(r["storage_path"])
+    if content is None:
+        raise HTTPException(status_code=404, detail="File data missing from storage.")
+
+    text = _extract_text(content, r.get("content_type", ""), r["original_filename"])
+    if not text.strip():
+        raise HTTPException(status_code=400, detail="Could not extract text from this file.")
+
     db.table("file_uploads").update({
         "extracted_text": text,
         "status": "ready",
-        "processed_at": datetime.utcnow().isoformat(),
+        "processed_at": datetime.now(timezone.utc).isoformat(),
     }).eq("id", file_id).execute()
-    
+
     return {
         "file_id": file_id,
         "text_length": len(text),
-        "text_preview": text[:500] + "..." if len(text) > 500 else text,
+        "text_preview": text[:500] + ("..." if len(text) > 500 else ""),
     }
 
 
 # ============================================================================
-# BUCKET INFO
+# CONVERSATION FILES
 # ============================================================================
 
-@router.get("/buckets")
-async def list_buckets():
-    """List available storage buckets and their limits."""
-    from core.storage import ALLOWED_MIME_TYPES, MAX_FILE_SIZES
-    
-    buckets = []
-    for bucket_id, max_size in MAX_FILE_SIZES.items():
-        allowed = ALLOWED_MIME_TYPES.get(bucket_id)
-        buckets.append({
-            "id": bucket_id,
-            "max_size_bytes": max_size,
-            "max_size_mb": max_size / (1024 * 1024),
-            "allowed_types": allowed if allowed else "All types",
-        })
-    
-    return {"buckets": buckets}
+@router.get("/conversations/{conversation_id}/files")
+async def get_conversation_files(
+    conversation_id: str,
+    user_id: str = Depends(get_current_user_id),
+):
+    """Get all files linked to a conversation."""
+    db = get_supabase()
+
+    conv = db.table("conversations").select("id").eq("id", conversation_id).eq(
+        "user_id", user_id
+    ).execute()
+    if not conv.data:
+        raise HTTPException(status_code=404, detail="Conversation not found.")
+
+    result = db.table("conversation_files").select(
+        "id, purpose, created_at, file_uploads(*)"
+    ).eq("conversation_id", conversation_id).execute()
+
+    files = []
+    for row in result.data or []:
+        fd = row.get("file_uploads") or {}
+        if fd:
+            files.append({
+                "link_id": row["id"],
+                "purpose": row["purpose"],
+                "linked_at": row["created_at"],
+                "file": {
+                    "id": fd.get("id"),
+                    "filename": fd.get("original_filename"),
+                    "content_type": fd.get("content_type"),
+                    "file_size": fd.get("file_size"),
+                    "status": fd.get("status"),
+                },
+            })
+
+    return {"conversation_id": conversation_id, "files": files}
 
 
 # ============================================================================
-# LINK FILE TO CONVERSATION
+# LINK FILE TO CONVERSATION (standalone, for post-upload linking)
 # ============================================================================
 
 @router.post("/files/{file_id}/link/{conversation_id}")
@@ -393,76 +508,57 @@ async def link_file_to_conversation(
     purpose: str = "reference",
     user_id: str = Depends(get_current_user_id),
 ):
-    """Link an uploaded file to a conversation."""
+    """Link an already-uploaded file to a conversation."""
     db = get_supabase()
-    
-    # Verify file ownership
-    storage = get_storage_helper()
-    file_info = await storage.get_file(file_id, user_id)
-    if not file_info:
-        raise HTTPException(status_code=404, detail="File not found")
-    
-    # Verify conversation ownership
+
+    file_row = db.table("file_uploads").select("id").eq("id", file_id).eq(
+        "user_id", user_id
+    ).limit(1).execute()
+    if not file_row.data:
+        raise HTTPException(status_code=404, detail="File not found.")
+
     conv = db.table("conversations").select("id").eq("id", conversation_id).eq(
         "user_id", user_id
     ).execute()
-    
     if not conv.data:
-        raise HTTPException(status_code=404, detail="Conversation not found")
-    
-    # Create link
+        raise HTTPException(status_code=404, detail="Conversation not found.")
+
     try:
-        result = db.table("conversation_files").insert({
+        db.table("conversation_files").insert({
             "conversation_id": conversation_id,
             "file_id": file_id,
             "purpose": purpose,
         }).execute()
-        
         return {"status": "linked", "file_id": file_id, "conversation_id": conversation_id}
-        
     except Exception as e:
-        # May already be linked
         if "unique" in str(e).lower() or "duplicate" in str(e).lower():
             return {"status": "already_linked", "file_id": file_id, "conversation_id": conversation_id}
-        raise HTTPException(status_code=500, detail=f"Failed to link file: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Failed to link file: {e}")
 
 
-@router.get("/conversations/{conversation_id}/files")
-async def get_conversation_files(
-    conversation_id: str,
-    user_id: str = Depends(get_current_user_id),
-):
-    """Get all files linked to a conversation."""
-    db = get_supabase()
-    
-    # Verify conversation ownership
-    conv = db.table("conversations").select("id").eq("id", conversation_id).eq(
-        "user_id", user_id
-    ).execute()
-    
-    if not conv.data:
-        raise HTTPException(status_code=404, detail="Conversation not found")
-    
-    # Get linked files
-    result = db.table("conversation_files").select(
-        "id, purpose, created_at, file_uploads(*)"
-    ).eq("conversation_id", conversation_id).execute()
-    
-    files = []
-    for row in result.data or []:
-        file_data = row.get("file_uploads", {})
-        if file_data:
-            files.append({
-                "link_id": row["id"],
-                "purpose": row["purpose"],
-                "linked_at": row["created_at"],
-                "file": {
-                    "id": file_data.get("id"),
-                    "filename": file_data.get("original_filename"),
-                    "content_type": file_data.get("content_type"),
-                    "file_size": file_data.get("file_size"),
-                    "status": file_data.get("status"),
-                }
-            })
-    
-    return {"conversation_id": conversation_id, "files": files}
+# ============================================================================
+# STORAGE INFO
+# ============================================================================
+
+@router.get("/info")
+async def storage_info():
+    """Return storage root and disk usage stats."""
+    uploads_dir = os.path.join(STORAGE_ROOT, "uploads")
+    total_bytes = 0
+    file_count = 0
+
+    if os.path.exists(uploads_dir):
+        for dirpath, _, filenames in os.walk(uploads_dir):
+            for fn in filenames:
+                try:
+                    total_bytes += os.path.getsize(os.path.join(dirpath, fn))
+                    file_count += 1
+                except OSError:
+                    pass
+
+    return {
+        "storage_root": STORAGE_ROOT,
+        "uploads_dir": uploads_dir,
+        "total_files": file_count,
+        "total_size_mb": round(total_bytes / (1024 * 1024), 2),
+    }

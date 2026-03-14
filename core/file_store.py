@@ -27,7 +27,7 @@ from typing import Dict, Optional, List
 logger = logging.getLogger(__name__)
 
 # ── Bucket configuration ──────────────────────────────────────────────────────
-_BUCKET_NAME = "generated-files"
+_BUCKET_NAME = "user-uploads"
 _bucket_verified = False
 _bucket_lock = threading.Lock()
 

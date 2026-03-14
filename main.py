@@ -31,7 +31,7 @@ _ALLOWED_ORIGINS = [
     "https://analystbypotomac.vercel.app",
     "https://www.analystbypotomac.vercel.app",
     "https://abpfrontend.vercel.app",
-    "https://abpfrontend-sohaib1.vercel.app",
+    "https://potomacanalyst12.vercel.app",
     "http://localhost:3000",
     "http://localhost:3001",
     "http://127.0.0.1:3000",
