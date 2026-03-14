@@ -670,6 +670,58 @@ async def _fetch_kb_context(db, user_message: str) -> str:
     return ""
 
 
+
+async def _fetch_kb_doc_refs(db, user_message: str, max_chars: int = 6000) -> str:
+    """
+    Parse [kb-doc: filename] markers from the user message and inject
+    the full raw_content of those documents into the system prompt.
+    """
+    import re
+    refs = re.findall(r'\[kb-doc:\s*([^\]]+)\]', user_message, re.IGNORECASE)
+    if not refs:
+        return ""
+
+    snippets = []
+    for ref_name in refs:
+        ref_name = ref_name.strip()
+        try:
+            # Match by filename or title (case-insensitive)
+            result = db.table("brain_documents").select(
+                "id, title, filename, raw_content, category"
+            ).or_(
+                f"filename.ilike.%{ref_name}%,title.ilike.%{ref_name}%"
+            ).limit(1).execute()
+
+            if result.data:
+                doc = result.data[0]
+                raw = (doc.get("raw_content") or "").strip()
+                if raw:
+                    preview = raw[:max_chars]
+                    snippets.append(
+                        f"### Referenced Document: {doc.get('filename') or doc.get('title')}\n"
+                        f"Category: {doc.get('category', 'general')}\n"
+                        f"```\n{preview}\n```"
+                    )
+                else:
+                    snippets.append(
+                        f"### Referenced Document: {ref_name}\n"
+                        f"Note: This document is stored but has no extracted text content yet."
+                    )
+        except Exception as e:
+            import logging
+            logging.getLogger(__name__).warning(f"_fetch_kb_doc_refs failed for {ref_name}: {e}")
+
+    if not snippets:
+        return ""
+
+    return (
+        "\n\n## Explicitly Referenced Knowledge Base Documents:\n"
+        "The user has specifically selected these documents for you to analyse. "
+        "Read and reference them directly in your response.\n\n"
+        + "\n\n".join(snippets)
+    )
+
+
 @router.post("/v6")
 async def chat_v6_stream(
     data: MessageCreate,
@@ -707,6 +759,9 @@ async def chat_v6_stream(
     file_context = await _fetch_file_context(db, conversation_id)
     kb_context = await _fetch_kb_context(db, data.content)
 
+    # Extract [kb-doc: filename] references from the user message and inject full content
+    kb_doc_context = await _fetch_kb_doc_refs(db, data.content)
+
     async def generate_stream():
         encoder = VercelAIStreamEncoder()
         builder = GenerativeUIStreamBuilder()
@@ -719,7 +774,7 @@ async def chat_v6_stream(
 
             system_prompt = (
                 f"{get_base_prompt()}\n\n{get_chat_prompt()}"
-                f"{file_context}{kb_context}"
+                f"{file_context}{kb_context}{kb_doc_context}"
                 f"{_AFL_RULES}{_STREAM_TOOLS_LIST}"
             )
 
