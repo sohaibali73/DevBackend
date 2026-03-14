@@ -97,15 +97,21 @@ async def _execute_skill_task(task: BackgroundTask, skill_slug: str, message: st
     task.message = f"Running skill: {skill_slug}..."
     await asyncio.sleep(0.1)
 
-    # Execute the skill (blocking call wrapped in executor)
+    # Execute the skill with a per-executor timeout (separate from the task-level timeout)
     loop = asyncio.get_event_loop()
-    result = await loop.run_in_executor(
-        None,
-        lambda: gateway.execute(
-            skill_slug=skill_slug,
-            user_message=message,
+    try:
+        result = await asyncio.wait_for(
+            loop.run_in_executor(
+                None,
+                lambda: gateway.execute(
+                    skill_slug=skill_slug,
+                    user_message=message,
+                )
+            ),
+            timeout=540,  # 9 min — under the 10 min task-level timeout
         )
-    )
+    except asyncio.TimeoutError:
+        raise RuntimeError(f"Skill '{skill_slug}' execution timed out after 9 minutes")
 
     task.progress = 90
     task.message = "Processing results..."
@@ -188,13 +194,32 @@ TASK_EXECUTORS = {
 # ============================================================
 
 async def _get_user_api_key(user_id: str) -> str:
-    """Get the user's Anthropic API key (or fall back to system key)."""
+    """Get the user's Anthropic API key from Supabase, fall back to system key."""
     try:
-        from api.dependencies import get_user_api_keys
-        keys = await get_user_api_keys(user_id)
-        return keys.get("anthropic_api_key") or get_settings().anthropic_api_key
-    except Exception:
-        return get_settings().anthropic_api_key
+        from db.supabase_client import get_supabase
+        from core.encryption import decrypt_value
+        db = get_supabase()
+        result = db.table("user_profiles").select(
+            "claude_api_key_encrypted, claude_api_key"
+        ).eq("user_id", user_id).limit(1).execute()
+
+        if result.data:
+            row = result.data[0]
+            # Try encrypted key first
+            encrypted = row.get("claude_api_key_encrypted")
+            if encrypted:
+                try:
+                    return decrypt_value(encrypted)
+                except Exception:
+                    pass
+            # Fall back to plain key column
+            plain = row.get("claude_api_key")
+            if plain:
+                return plain
+    except Exception as e:
+        logger.warning(f"Could not fetch user API key for {user_id}: {e}")
+
+    return get_settings().anthropic_api_key
 
 
 # ============================================================

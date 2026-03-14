@@ -187,6 +187,9 @@ class TaskManager:
         logger.info(f"[TaskManager] Submitted task {task_id}: {title} (type={task_type.value})")
         return task_id
 
+    # Maximum wall-clock seconds a task is allowed to run before being killed
+    TASK_TIMEOUT_SECONDS: int = 600  # 10 minutes
+
     async def _run_task(
         self,
         task: BackgroundTask,
@@ -198,7 +201,11 @@ class TaskManager:
         task.message = "Starting..."
 
         try:
-            await coroutine_factory(task)
+            # Hard timeout — prevents any task from running forever
+            await asyncio.wait_for(
+                coroutine_factory(task),
+                timeout=self.TASK_TIMEOUT_SECONDS,
+            )
 
             # If the coroutine didn't set status, mark complete
             if task.status == TaskStatus.RUNNING:
@@ -212,6 +219,14 @@ class TaskManager:
                 f"[TaskManager] Task {task.id} completed in {elapsed:.1f}s: {task.title}"
             )
 
+        except asyncio.TimeoutError:
+            task.status = TaskStatus.FAILED
+            task.completed_at = time.time()
+            task.error = f"Task timed out after {self.TASK_TIMEOUT_SECONDS}s"
+            task.message = "Timed out — task took too long"
+            task.progress = 0
+            logger.error(f"[TaskManager] Task {task.id} timed out after {self.TASK_TIMEOUT_SECONDS}s")
+
         except asyncio.CancelledError:
             task.status = TaskStatus.CANCELLED
             task.completed_at = time.time()
@@ -223,6 +238,7 @@ class TaskManager:
             task.completed_at = time.time()
             task.error = str(e)
             task.message = f"Failed: {str(e)[:200]}"
+            task.progress = 0
             logger.error(f"[TaskManager] Task {task.id} failed: {e}", exc_info=True)
 
     def get_task(self, task_id: str) -> Optional[BackgroundTask]:
