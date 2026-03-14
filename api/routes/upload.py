@@ -90,27 +90,44 @@ def _delete_file(path: str) -> bool:
     return False
 
 
+# Binary file types — never try to decode as text
+_BINARY_EXTENSIONS = {
+    "pdf", "doc", "docx", "ppt", "pptx", "xls", "xlsx",
+    "png", "jpg", "jpeg", "gif", "webp", "svg", "bmp", "ico",
+    "zip", "tar", "gz", "rar", "7z",
+    "mp3", "mp4", "wav", "avi", "mov",
+    "exe", "bin", "dll", "so",
+}
+
+
 def _extract_text(content: bytes, content_type: str, filename: str) -> str:
-    """Best-effort text extraction from file bytes."""
+    """Best-effort text extraction from file bytes.
+
+    Returns empty string for binary types where extraction is not possible —
+    never returns raw binary decoded as UTF-8 garbage.
+    """
     ct = (content_type or "").lower()
     fn = (filename or "").lower()
+    ext = fn.rsplit(".", 1)[-1] if "." in fn else ""
 
-    # Plain text / CSV / JSON / Markdown
-    if ct.startswith("text/") or fn.endswith((".txt", ".md", ".csv", ".json", ".xml")):
+    # Plain text / CSV / JSON / Markdown — safe to decode directly
+    if ct.startswith("text/") or ext in ("txt", "md", "csv", "json", "xml", "log", "sql", "py", "js", "ts", "html", "htm"):
         return content.decode("utf-8", errors="ignore")
 
-    # PDF — use pypdf if available
-    if ct == "application/pdf" or fn.endswith(".pdf"):
+    # PDF — use pypdf; return empty if not available (binary will be served directly)
+    if ct == "application/pdf" or ext == "pdf":
         try:
             import io
             from pypdf import PdfReader
             reader = PdfReader(io.BytesIO(content))
-            return "\n".join(page.extract_text() or "" for page in reader.pages)
+            text = "\n".join(page.extract_text() or "" for page in reader.pages)
+            return text.strip()
         except Exception as e:
-            logger.warning(f"PDF extraction failed: {e}")
+            logger.warning(f"PDF text extraction failed (pypdf): {e}")
+        return ""  # ← never fall through to binary decode for PDFs
 
     # DOCX
-    if fn.endswith(".docx") or "wordprocessingml" in ct:
+    if ext == "docx" or "wordprocessingml" in ct:
         try:
             import io
             import docx
@@ -118,9 +135,39 @@ def _extract_text(content: bytes, content_type: str, filename: str) -> str:
             return "\n".join(p.text for p in doc.paragraphs)
         except Exception as e:
             logger.warning(f"DOCX extraction failed: {e}")
+        return ""
 
-    # Fallback — decode whatever we can
-    return content.decode("utf-8", errors="ignore")
+    # XLSX / XLS — extract cell values
+    if ext in ("xlsx", "xls") or "spreadsheetml" in ct or "ms-excel" in ct:
+        try:
+            import io
+            import openpyxl
+            wb = openpyxl.load_workbook(io.BytesIO(content), read_only=True, data_only=True)
+            rows = []
+            for ws in wb.worksheets:
+                for row in ws.iter_rows(values_only=True):
+                    row_text = "\t".join(str(c) if c is not None else "" for c in row)
+                    if row_text.strip():
+                        rows.append(row_text)
+            return "\n".join(rows)
+        except Exception as e:
+            logger.warning(f"Excel extraction failed: {e}")
+        return ""
+
+    # Any other known binary type — return empty, don't decode
+    if ext in _BINARY_EXTENSIONS:
+        return ""
+
+    # Unknown type — attempt UTF-8 decode but only if it looks like text
+    try:
+        decoded = content.decode("utf-8")
+        # Heuristic: if >15% of chars are non-printable, treat as binary
+        non_printable = sum(1 for c in decoded if ord(c) < 32 and c not in "\n\r\t")
+        if non_printable / max(len(decoded), 1) > 0.15:
+            return ""
+        return decoded
+    except UnicodeDecodeError:
+        return ""
 
 
 # ============================================================================
