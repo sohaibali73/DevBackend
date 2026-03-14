@@ -563,15 +563,17 @@ After using tools, always provide a helpful response summarising the results.
 """
 
 
-async def _fetch_file_context(db, conversation_id: str, max_chars: int = 4000) -> str:
+async def _fetch_file_context(db, conversation_id: str, max_chars: int = 6000) -> str:
     """Return formatted text of files uploaded in this conversation.
 
-    Joins conversation_files → file_uploads to get extracted_text.
-    Falls back gracefully if the join or table is missing.
+    Lookup order:
+    1. file_uploads.extracted_text (chat uploads)
+    2. brain_documents.raw_content (KB uploads linked to conversation)
+    3. Read from Railway volume directly as fallback for PDFs/text files
     """
     try:
         result = db.table("conversation_files").select(
-            "purpose, file_uploads(id, original_filename, content_type, file_size, extracted_text, status)"
+            "purpose, file_uploads(id, original_filename, content_type, file_size, extracted_text, storage_path, status)"
         ).eq("conversation_id", conversation_id).execute()
 
         if not result.data:
@@ -583,24 +585,55 @@ async def _fetch_file_context(db, conversation_id: str, max_chars: int = 4000) -
             filename = fu.get("original_filename", "unknown")
             content_type = fu.get("content_type", "")
             extracted = fu.get("extracted_text", "")
+            storage_path = fu.get("storage_path", "")
             status = fu.get("status", "uploaded")
 
             if extracted and extracted.strip():
                 preview = extracted.replace("\x00", "")[:max_chars]
+                snippets.append(f"### File: {filename}\n```\n{preview}\n```")
+                continue
+
+            # Fallback: try to read and extract from Railway volume on-demand
+            if storage_path:
+                import os
+                if os.path.exists(storage_path):
+                    try:
+                        from api.routes.upload import _extract_text
+                        with open(storage_path, "rb") as f:
+                            raw = f.read()
+                        text = _extract_text(raw, content_type, filename)
+                        text = text.replace("\x00", "").strip()
+                        if text:
+                            # Cache it back to DB for next time
+                            try:
+                                db.table("file_uploads").update({
+                                    "extracted_text": text,
+                                    "status": "ready",
+                                }).eq("id", fu.get("id")).execute()
+                            except Exception:
+                                pass
+                            preview = text[:max_chars]
+                            snippets.append(f"### File: {filename}\n```\n{preview}\n```")
+                            continue
+                    except Exception as read_err:
+                        import logging
+                        logging.getLogger(__name__).warning(f"On-demand extraction failed for {filename}: {read_err}")
+
+            if content_type.startswith("image/"):
+                snippets.append(f"### File: {filename} (image uploaded)")
+            else:
                 snippets.append(
                     f"### File: {filename}\n"
-                    f"```\n{preview}\n```"
+                    f"Note: Text extraction is pending for this file. "
+                    f"If the user asks about this file's contents, tell them "
+                    f"pypdf needs to be installed on the server to read PDFs, "
+                    f"or ask them to paste the text content directly."
                 )
-            elif content_type.startswith("image/"):
-                snippets.append(f"### File: {filename} (image — available for visual analysis)")
-            else:
-                note = " (text extraction pending)" if status != "ready" else " (no extractable text)"
-                snippets.append(f"### File: {filename}{note}")
 
         if snippets:
             return (
                 "\n\n## Files Uploaded in This Conversation:\n"
-                "IMPORTANT: Read and analyse file contents directly from the text below. "
+                "IMPORTANT: Analyse file contents directly from the text below. "
                 "Do NOT use Python file I/O or try to open paths.\n\n"
                 + "\n\n".join(snippets)
             )

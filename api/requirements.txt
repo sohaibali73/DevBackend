@@ -1,8 +1,68 @@
-python-dotenv==1.0.0
-pydantic==2.5.0
+# ============================================================
+# Potomac Analyst Workbench — Backend Requirements
+# ============================================================
+
+# ── Core Framework ───────────────────────────────────────────
 fastapi==0.104.1
-python-jose[cryptography]==3.3.0
 uvicorn==0.24.0
-fastapi-cors==0.0.6
+python-multipart==0.0.6          # Required for FastAPI file uploads (UploadFile)
+pydantic==2.5.0
+pydantic-settings==2.1.0         # BaseSettings for config/env vars
+
+# ── Environment & Config ─────────────────────────────────────
+python-dotenv==1.0.0
+
+# ── Database — Supabase ──────────────────────────────────────
+supabase==2.3.0
+postgrest==0.16.1                # Supabase PostgREST client (pinned for compat)
+storage3==0.7.0                  # Supabase Storage client
+
+# ── Auth / JWT ───────────────────────────────────────────────
+python-jose[cryptography]==3.3.0
+passlib[bcrypt]==1.7.4
+bcrypt==4.0.1                    # Explicit pin — bcrypt 4.1+ breaks passlib
+
+# ── Anthropic Claude SDK ─────────────────────────────────────
+anthropic>=0.40.0                # Streaming + tool use + async support
+
+# ── Document Parsing (for Knowledge Base & file uploads) ─────
+pypdf>=4.0.0                     # PDF text extraction
+python-docx>=1.1.0               # DOCX read/write (also aliased as docx)
+openpyxl>=3.1.2                  # XLSX read/write
+
+# ── HTTP / Networking ────────────────────────────────────────
+httpx>=0.25.0                    # Async HTTP client (used by Anthropic SDK)
+requests>=2.31.0                 # Sync HTTP (tools, web search fallback)
+
+# ── TTS ──────────────────────────────────────────────────────
+edge-tts>=6.1.9                  # Microsoft Edge TTS (no API key required)
+
+# ── Code Execution Sandbox ───────────────────────────────────
+e2b-code-interpreter>=1.0.0      # E2B sandbox for execute_python tool
+
+# ── Data / Finance Tools ────────────────────────────────────
+yfinance>=0.2.36                 # Yahoo Finance stock data
+pandas>=2.1.0                    # DataFrame support for yfinance & data tools
+numpy>=1.26.0                    # Numerical computations
+
+# ── Presentation / PPTX Generation ──────────────────────────
+python-pptx>=0.6.23              # PPTX creation for presentation tools
+
+# ── CORS ─────────────────────────────────────────────────────
+# Note: fastapi-cors==0.0.6 is a thin wrapper — use FastAPI's built-in instead:
+# app.add_middleware(CORSMiddleware, ...) — no extra package needed
+# fastapi-cors==0.0.6  # Keep only if your app explicitly imports it
+
+# ── SQLAlchemy (keep if used for any ORM models) ─────────────
 sqlalchemy==2.0.39
-e2b-code-interpreter>=1.0.0
+
+# ── Encryption (for API key storage) ────────────────────────
+cryptography>=41.0.0             # AES-256 encryption for stored API keys
+
+# ── Web Search (Tavily) ──────────────────────────────────────
+tavily-python>=0.3.0             # Tavily web search tool
+
+# ── Utilities ────────────────────────────────────────────────
+python-dateutil>=2.8.2
+aiofiles>=23.2.1                 # Async file I/O
+Pillow>=10.0.0                   # Image processing (if used in tools)
