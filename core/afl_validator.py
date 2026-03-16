@@ -101,7 +101,6 @@ DOUBLE_ARG_FUNCTIONS: Dict[str, int] = {
     "LLVBars": 2,
     "StDev": 2,
     "Sum": 2,
-    "Cum": 1,  # Special - takes 1 arg (array)
     "Ref": 2,
     "LinearReg": 2,
     "LinRegSlope": 2,
@@ -114,6 +113,10 @@ DOUBLE_ARG_FUNCTIONS: Dict[str, int] = {
 
 # Multi-argument functions
 MULTI_ARG_FUNCTIONS: Dict[str, Tuple[int, int]] = {  # (min_args, max_args)
+    # FIX-09: Cum moved here from DOUBLE_ARG_FUNCTIONS.
+    # Cum(array) takes exactly 1 arg — an array, no period.
+    # It was wrong in DOUBLE_ARG_FUNCTIONS (which implies array+period).
+    "Cum": (1, 1),
     "BBandTop": (3, 3),
     "BBandBot": (3, 3),
     "MACD": (0, 2),
@@ -185,7 +188,7 @@ NO_ARG_FUNCTIONS: Set[str] = {
 
 VALID_PLOT_STYLES: Set[str] = {
     "styleLine",
-    "styleHistogram", 
+    "styleHistogram",
     "styleCandle",
     "styleBar",
     "styleArea",
@@ -273,7 +276,7 @@ class ValidationResult:
     reserved_word_issues: List[str] = field(default_factory=list)
     style_issues: List[str] = field(default_factory=list)
     suggestions: List[str] = field(default_factory=list)
-    
+
     def to_dict(self) -> Dict[str, Any]:
         return {
             "is_valid": self.is_valid,
@@ -301,22 +304,28 @@ class AFLValidator:
     - Reserved words (not used as variables)
     - Plot styles and shapes
     """
-    
+
     def __init__(self):
+        # FIX-04: Previously only SINGLE_ARG_FUNCTIONS and DOUBLE_ARG_FUNCTIONS
+        # were merged, so MACD, Plot, IIf, ExRem, Cross, OBV, etc. used as variable
+        # names were never caught by _validate_reserved_words.  All four function
+        # dicts are now included so the check covers every built-in AFL function.
         self.all_functions = {
             **{k: v for k, v in SINGLE_ARG_FUNCTIONS.items()},
             **{k: v for k, v in DOUBLE_ARG_FUNCTIONS.items()},
+            **{k: v[0] for k, v in MULTI_ARG_FUNCTIONS.items()},  # min_args as sentinel
+            **{k: 0 for k in NO_ARG_FUNCTIONS},
         }
-    
+
     def validate(self, code: str) -> ValidationResult:
         """
         Perform comprehensive validation of AFL code.
         """
         result = ValidationResult(is_valid=True)
-        
+
         # Remove comments for analysis
         clean_code = self._remove_comments(code)
-        
+
         # Run all validations
         self._validate_colors(clean_code, result)
         self._validate_functions(clean_code, result)
@@ -324,16 +333,16 @@ class AFLValidator:
         self._validate_plot_styles(clean_code, result)
         self._validate_shapes(clean_code, result)
         self._validate_syntax(code, result)
-        
+
         # Determine overall validity
         result.is_valid = (
-            len(result.errors) == 0 and 
+            len(result.errors) == 0 and
             len(result.color_issues) == 0 and
             len(result.function_issues) == 0
         )
-        
+
         return result
-    
+
     def _remove_comments(self, code: str) -> str:
         """Remove single-line and multi-line comments."""
         # Remove multi-line comments /* */
@@ -341,17 +350,30 @@ class AFLValidator:
         # Remove single-line comments //
         code = re.sub(r'//.*$', '', code, flags=re.MULTILINE)
         return code
-    
+
     def _validate_colors(self, code: str, result: ValidationResult):
         """
         Validate that only official AmiBroker colors are used.
         No custom RGB values allowed.
         """
-        # Find all color references (words starting with 'color')
+        # FIX-08: Removed re.IGNORECASE — AmiBroker color constants are case-sensitive
+        # camelCase (e.g. colorGreen, colorDarkRed).  With IGNORECASE, colorred would
+        # match the pattern but fail the VALID_COLORS lookup, producing a false positive.
         color_pattern = r'\bcolor[A-Za-z0-9_]*'
-        found_colors = re.findall(color_pattern, code, re.IGNORECASE)
-        
+        found_colors = re.findall(color_pattern, code)
+
+        # Build a set of variable names assigned via ColorRGB() so we don't
+        # flag them as "invalid colors" in the loop below.
+        # Pattern: MyColor = ColorRGB(...) — capture the LHS variable name
+        colorrgb_vars: set = set()
+        colorrgb_assign_pattern = r'\b([A-Za-z_][A-Za-z0-9_]*)\s*=\s*ColorRGB\s*\('
+        for m in re.finditer(colorrgb_assign_pattern, code):
+            colorrgb_vars.add(m.group(1))
+
         for color in found_colors:
+            # Skip variables that were legitimately assigned via ColorRGB()
+            if color in colorrgb_vars:
+                continue
             # Check if it's a valid color constant
             if color not in VALID_COLORS:
                 # Check if it's close to a valid color (typo)
@@ -364,21 +386,21 @@ class AFLValidator:
                     result.color_issues.append(
                         f"Invalid color '{color}'. Use only official AmiBroker colors like colorRed, colorGreen, colorBlue, etc."
                     )
-        
-        # Check for custom RGB usage (not allowed except in specific functions)
-        rgb_pattern = r'\bRGB\s*\(\s*\d+\s*,\s*\d+\s*,\s*\d+\s*\)'
-        rgb_matches = re.findall(rgb_pattern, code)
-        
-        for rgb in rgb_matches:
-            # Check if RGB is inside ColorRGB function (allowed)
-            if f"ColorRGB{rgb}" not in code.replace(" ", ""):
+
+        # FIX-06: ColorRGB() is valid AFL when assigned to a UNIQUE variable name.
+        # The only error is when a ColorRGB() result is stored in a variable that
+        # shadows a predefined color constant (e.g. colorGreen = ColorRGB(...)).
+        # Blanket rejection of all ColorRGB() calls was wrong — the skill and
+        # AmiBroker itself support custom colors.
+        colorrgb_shadow_pattern = r'\b(color[A-Za-z0-9_]+)\s*=\s*ColorRGB\s*\('
+        for m in re.finditer(colorrgb_shadow_pattern, code):
+            var_name = m.group(1)
+            if var_name in VALID_COLORS:
                 result.color_issues.append(
-                    f"Custom RGB color '{rgb}' detected. Use predefined colors like colorRed, colorGreen instead."
+                    f"'{var_name}' shadows a predefined AmiBroker color constant. "
+                    f"Use a unique name like 'My{var_name[5:]}' or 'Custom{var_name[5:]}' instead."
                 )
-                result.suggestions.append(
-                    "Replace custom RGB with: colorRed, colorGreen, colorBlue, colorYellow, colorOrange, colorWhite, colorBlack"
-                )
-        
+
         # Check for ColorHSB usage (discouraged)
         hsb_pattern = r'\bColorHSB\s*\('
         if re.search(hsb_pattern, code):

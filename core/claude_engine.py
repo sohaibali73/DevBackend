@@ -83,8 +83,11 @@ class StrategyType(str, Enum):
     COMPOSITE = "composite"    # Only strategy logic (no plotting/settings)
 
 # ── Top-level defaults ────────────────────────────────────────────────────────
-DEFAULT_MODEL       = "claude-haiku-4-5-20251001"
-MAX_TOKENS          = 4096
+DEFAULT_MODEL       = "claude-sonnet-4-6"  # FIX-12: was claude-haiku-4-5-20251001
+                                           # AFL generation requires complex multi-step
+                                           # reasoning; Haiku produces lower quality output
+MAX_TOKENS          = 8192  # FIX-03: was 4096 — AFL strategies with full Param/Optimize,
+                            # indicators, ExRem, Plot, and AddColumn easily exceed 4096 tokens
 AMIBROKER_SKILL_ID  = "skill_01GG6E88EuXr9H9tqLp51sH5"
 
 SKILLS_CONTAINER = {
@@ -113,22 +116,34 @@ class BacktestSettings:
     position_size:     str                = "100"
     position_size_type: str               = "spsPercentOfEquity"
     max_positions:     int                = 10
-    commission:        float              = 0.001   # 0.1% per trade
+    commission:        float              = 0.0005   # 0.05% per trade — FIX-02: was 0.001
     trade_delays:      Tuple[int, int, int, int] = (0, 0, 0, 0)
     margin_requirement: float             = 100
 
     def to_afl(self) -> str:
-        """Return AFL code that encodes these settings."""
+        """Return AFL code that encodes these settings.
+
+        FIX-02: CommissionMode corrected from 1 (flat dollar) to 2 (percentage).
+        Default commission updated from 0.001 to 0.0005 (0.05%) to match the
+        system prompt, skill templates, and SKILL.md — all of which use Mode 2.
+        Added the three missing SetOption lines that were in the system prompt
+        but absent from this output: UsePrevBarEquityForPosSizing, AllowPositionShrinking,
+        and AccountMargin.
+        PositionSize now uses a plain assignment (AFL standard) instead of the
+        non-existent SetPositionSize() call.
+        """
         d = self.trade_delays
         return (
             f'// Backtest Settings\n'
             f'SetOption("InitialEquity", {self.initial_equity});\n'
             f'SetOption("MaxOpenPositions", {self.max_positions});\n'
-            f'SetOption("CommissionMode", 1);\n'
+            f'SetOption("CommissionMode", 2);\n'
             f'SetOption("CommissionAmount", {self.commission});\n'
-            f'SetOption("MarginRequirement", {self.margin_requirement});\n'
+            f'SetOption("UsePrevBarEquityForPosSizing", True);\n'
+            f'SetOption("AllowPositionShrinking", True);\n'
+            f'SetOption("AccountMargin", {self.margin_requirement});\n'
             f'SetTradeDelays({d[0]}, {d[1]}, {d[2]}, {d[3]});\n'
-            f'SetPositionSize({self.position_size}, {self.position_size_type});\n'
+            f'PositionSize = {self.position_size};\n'
         )
 
 
@@ -159,10 +174,16 @@ class ClaudeAFLEngine:
     _request_cache_maxsize      = 128
 
     # ── AFL validation sets (frozensets for O(1) membership tests) ────────────
+    # FIX-01: OBV removed — OBV() takes ZERO arguments (not even a period).
+    # It was incorrectly listed here, which caused _SINGLE_ARG_PATTERNS to build
+    # a regex that would "fix" OBV(Close, n) → OBV(n) instead of OBV().
     SINGLE_ARG_FUNCTIONS = frozenset({
-        "RSI", "ATR", "ADX", "CCI", "MFI", "PDI", "MDI", "OBV",
+        "RSI", "ATR", "ADX", "CCI", "MFI", "PDI", "MDI",
         "StochK", "StochD",
     })
+
+    # Zero-argument functions — used by _validate_and_fix to catch OBV(n) misuse
+    NO_ARG_FUNCTIONS = frozenset({"OBV"})
 
     DOUBLE_ARG_FUNCTIONS = frozenset({
         "MA", "EMA", "SMA", "WMA", "DEMA", "TEMA", "ROC",
@@ -192,6 +213,12 @@ class ClaudeAFLEngine:
     _DOUBLE_ARG_PATTERNS: Dict[str, re.Pattern] = {
         func: re.compile(rf'{func}\s*\(\s*(\d+)\s*\)')
         for func in DOUBLE_ARG_FUNCTIONS
+    }
+
+    # FIX-01: Patterns to detect OBV being called with any argument(s)
+    _NO_ARG_PATTERNS: Dict[str, re.Pattern] = {
+        func: re.compile(rf'{func}\s*\(\s*\S')
+        for func in NO_ARG_FUNCTIONS
     }
 
     _RESERVED_WORD_PATTERNS: Dict[str, re.Pattern] = {
@@ -264,6 +291,7 @@ class ClaudeAFLEngine:
         messages:   List[Dict],
         max_tokens: int  = MAX_TOKENS,
         stream:     bool = False,
+        use_skill:  bool = True,
     ):
         """
         Single entry point for all Claude API calls.
@@ -272,6 +300,12 @@ class ClaudeAFLEngine:
         ───────
         • stream=False → plain text string extracted from the response
         • stream=True  → async generator yielding {"type": ..., "content": ...} dicts
+
+        FIX-13: Added ``use_skill`` parameter (default True).  When False, the
+        skills beta headers, container, and code execution tool are NOT attached.
+        This prevents explain/debug/chat calls from spinning up a skill container
+        unnecessarily, saving ~1–3 seconds of latency and reducing API cost.
+        Only generate_afl() passes use_skill=True.
 
         FIX #8: previously had two identical except branches (APIError + Exception)
         both doing log + re-raise.  Collapsed into one except block.
@@ -283,10 +317,13 @@ class ClaudeAFLEngine:
             "max_tokens": max_tokens,
             "system":    system,
             "messages":  messages,
-            "betas":     SKILLS_BETAS,
-            "container": SKILLS_CONTAINER,
-            "tools":     [CODE_EXECUTION_TOOL],
         }
+
+        # FIX-13: Only attach skills infrastructure when actually generating AFL
+        if use_skill:
+            kwargs["betas"]     = SKILLS_BETAS
+            kwargs["container"] = SKILLS_CONTAINER
+            kwargs["tools"]     = [CODE_EXECUTION_TOOL]
 
         try:
             if stream:
@@ -295,7 +332,13 @@ class ClaudeAFLEngine:
                 return self._stream_wrapper(**kwargs)
 
             # Non-streaming path: await the coroutine and extract text
-            response = await self.client.beta.messages.create(**kwargs)
+            if use_skill:
+                response = await self.client.beta.messages.create(**kwargs)
+            else:
+                # Non-skill calls use the standard (non-beta) API
+                standard_kwargs = {k: v for k, v in kwargs.items()
+                                   if k not in ("betas", "container", "tools")}
+                response = await self.client.messages.create(**standard_kwargs)
 
             # Log token usage when the API exposes it (useful for cost tracking)
             usage = getattr(response, "usage", None)
@@ -311,8 +354,6 @@ class ClaudeAFLEngine:
 
         except Exception as e:
             # FIX #8: single handler covers both anthropic.APIError and anything else.
-            # Both cases want the same behaviour: log the full traceback, then re-raise
-            # so callers can decide whether to surface the error to the user.
             logger.error("Claude API error: %s\n%s", e, traceback.format_exc())
             raise
 
@@ -614,6 +655,7 @@ class ClaudeAFLEngine:
         raw = await self._call_claude(
             system="You are an expert AFL debugger. Fix syntax and logic issues. Return corrected code only in ```afl block.",
             messages=[{"role": "user", "content": prompt}],
+            use_skill=False,
         )
         code_out, _ = self._parse_response(raw)
         return code_out
@@ -625,6 +667,7 @@ class ClaudeAFLEngine:
         raw = await self._call_claude(
             system="You are an AFL optimization expert. Improve performance and style. Return improved code only in ```afl block.",
             messages=[{"role": "user", "content": prompt}],
+            use_skill=False,
         )
         code_out, _ = self._parse_response(raw)
         return code_out
@@ -639,6 +682,7 @@ class ClaudeAFLEngine:
         return await self._call_claude(
             system="Explain AFL code clearly and concisely for non-programmers.",
             messages=[{"role": "user", "content": prompt}],
+            use_skill=False,
         )
 
     async def chat(
@@ -668,7 +712,7 @@ class ClaudeAFLEngine:
             messages.extend(history[-MAX_RECENT_MESSAGES:])
         messages.append({"role": "user", "content": message})
 
-        return await self._call_claude(system, messages, stream=stream)
+        return await self._call_claude(system, messages, stream=stream, use_skill=False)
 
     async def stream_chat(
         self,
@@ -751,6 +795,14 @@ class ClaudeAFLEngine:
                     errors.append(f"Fixed: {func}(Close, x) → {func}(x)")
                 else:
                     errors.append(f"{func}() misused with Close as first argument")
+
+        # ── 1b. Warn on no-arg functions called with arguments: OBV(n) ─────────
+        for func, pat in self._NO_ARG_PATTERNS.items():
+            if pat.search(code):
+                warnings.append(
+                    f"{func}() takes NO arguments — found {func}(…). "
+                    f"Correct usage: {func}()"
+                )
 
         # ── 2. Warn on double-arg functions missing their array argument ───────
         for func, pat in self._DOUBLE_ARG_PATTERNS.items():
