@@ -23,14 +23,14 @@ logger = logging.getLogger(__name__)
 app = FastAPI(
     title="Analyst by Potomac API",
     description="AI-powered AmiBroker AFL development platform with streaming support",
-    version="1.2.0",
+    version="2.0",
 )
 
 # CORS middleware — locked down to allowed origins only
 _ALLOWED_ORIGINS = [
     "https://analystbypotomac.vercel.app",
     "https://www.analystbypotomac.vercel.app",
-    "https://abpfrontend.vercel.app",
+    "https://potomacdeveloper.vercel.app",
     "https://potomacanalyst12.vercel.app",
     "http://localhost:3000",
     "http://localhost:3001",
@@ -311,7 +311,7 @@ async def root():
     """Root endpoint."""
     return {
         "name": "Analyst by Potomac API",
-        "version": "1.3.7",
+        "version": "2.0",
         "status": "online",
         "routers_loaded": routers_loaded,
         "routers_failed": [name for name, _ in routers_failed] if routers_failed else None,

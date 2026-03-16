@@ -44,7 +44,7 @@ class Settings(BaseSettings):
     smtp_password: str = ""
     
     # Frontend URL for password reset links
-    frontend_url: str = "https://analystbypotomac.vercel.app"
+    frontend_url: str = "https://potomacdeveloper.vercel.app"
 
     # Storage settings
     max_upload_size_mb: int = 50
