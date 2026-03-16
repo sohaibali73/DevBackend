@@ -473,15 +473,36 @@ async def stream_claude_response(
                     "content": result_str,
                 })
 
-            # Append user turn with tool results
+            # Append user turn with tool results so Claude can see them
             messages.append({
                 "role": "user",
                 "content": tool_results,
             })
 
-            # Emit step finish so frontend knows a tool step completed
+            # Emit step finish so frontend knows the tool step completed
             yield encoder.encode_finish_step("tool-calls", usage, is_continued=True)
-            # Loop back to call Claude again with tool results
+
+            # BUG FIX: emit a: (tool result) frames for every tool that executed.
+            #
+            # Previously this block was completely absent. Without a: frames the
+            # Vercel AI SDK useChat hook never transitions tool parts from
+            # state="input-available" to state="output-available", so part.output
+            # is always undefined on the frontend. As a result:
+            #   - Tool cards (weather, AFL, etc.) can't render their data
+            #   - Claude has no proper channel to surface the result, so it echoes
+            #     the raw JSON string in its continuation text (the 0: text stream),
+            #     which is what causes the raw JSON blob visible in the chat UI
+            #
+            # Emitting the a: frame here fixes both symptoms:
+            #   1. part.output is populated → cards render from structured data
+            #   2. Claude no longer needs to echo the JSON → clean text response
+            for result in tool_results:
+                yield encoder.encode_tool_result(
+                    result["tool_use_id"],
+                    result["content"],
+                )
+
+            # Loop back to call Claude again with the tool results in context
 
     except Exception as e:
         logger.error(f"Streaming error: {e}", exc_info=True)
@@ -498,10 +519,10 @@ async def stream_with_artifacts(
 ) -> AsyncGenerator[str, None]:
     """
     Stream response with automatic artifact detection and streaming.
-    
+
     Detects code artifacts (React, Mermaid, etc.) in the response and
     streams them as Generative UI components.
-    
+
     Args:
         client: Anthropic client
         model: Model to use
@@ -509,16 +530,16 @@ async def stream_with_artifacts(
         messages: Message history
         tools: Available tools (optional)
         max_tokens: Maximum tokens in response
-        
+
     Yields:
         AI SDK Data Stream Protocol formatted strings including artifacts
     """
     from core.artifact_parser import ArtifactParser
-    
+
     encoder = VercelAIStreamEncoder()
     ui_builder = GenerativeUIStreamBuilder()
     accumulated_content = ""
-    
+
     try:
         request_kwargs = {
             "model": model,
@@ -526,10 +547,10 @@ async def stream_with_artifacts(
             "system": system_prompt,
             "messages": messages,
         }
-        
+
         if tools:
             request_kwargs["tools"] = tools
-        
+
         async with client.messages.stream(**request_kwargs) as stream:
             async for event in stream:
                 if event.type == "content_block_delta":
@@ -537,22 +558,22 @@ async def stream_with_artifacts(
                         text = event.delta.text
                         accumulated_content += text
                         yield encoder.encode_text(text)
-            
+
             # Get final message
             final_message = stream.get_final_message()
             usage = {
                 "promptTokens": final_message.usage.input_tokens,
                 "completionTokens": final_message.usage.output_tokens,
             }
-        
+        #test
         # Detect and stream artifacts
         artifacts = ArtifactParser.extract_artifacts(accumulated_content)
-        
+
         for artifact in artifacts:
             artifact_type = artifact.get('type', 'code')
             code = artifact.get('code', '')
             language = artifact.get('language', artifact_type)
-            
+
             if artifact_type == 'react' or language in ['jsx', 'tsx']:
                 yield ui_builder.add_react_component(
                     code=code,
@@ -567,9 +588,9 @@ async def stream_with_artifacts(
                     language=language,
                     artifact_id=artifact.get('id')
                 )
-        
+
         yield encoder.encode_finish_message("stop", usage)
-        
+
     except Exception as e:
         logger.error(f"Streaming with artifacts error: {e}", exc_info=True)
         yield encoder.encode_error(str(e))
