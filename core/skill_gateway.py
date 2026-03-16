@@ -34,7 +34,7 @@ from core.skills import (
 logger = logging.getLogger(__name__)
 
 # Default model (same as the rest of the platform)
-DEFAULT_MODEL = "claude-haiku-4-5-20251001"
+DEFAULT_MODEL = "claude-sonnet-4-6"  # FIX-12: was claude-haiku-4-5-20251001
 
 
 class SkillGateway:
@@ -406,6 +406,72 @@ class SkillGateway:
                     "text": "",
                 })
         return results
+
+    # ------------------------------------------------------------------
+    # Async wrappers for FastAPI / asyncio contexts  (FIX-14)
+    # ------------------------------------------------------------------
+    # SkillGateway uses the synchronous anthropic.Anthropic client, which
+    # blocks the calling thread for the full duration of the API call.
+    # When called directly from an async FastAPI route this stalls the
+    # event loop, preventing other requests from being served.
+    #
+    # These thin wrappers run the synchronous methods in a thread-pool
+    # executor so the event loop stays free.  Use them everywhere you
+    # would previously have called execute() / execute_multi() from async
+    # code.
+    # ------------------------------------------------------------------
+
+    async def execute_async(
+        self,
+        skill_slug: str,
+        user_message: str,
+        *,
+        system_prompt: Optional[str] = None,
+        conversation_history: Optional[List[Dict[str, Any]]] = None,
+        max_tokens: Optional[int] = None,
+        extra_context: str = "",
+    ) -> Dict[str, Any]:
+        """
+        Async wrapper around ``execute()`` for use in FastAPI routes.
+
+        Runs the synchronous Anthropic client call in a thread-pool executor
+        so the asyncio event loop is not blocked.
+
+        Example::
+
+            result = await gateway.execute_async("backtest-expert", user_msg)
+        """
+        import asyncio
+        loop = asyncio.get_event_loop()
+        return await loop.run_in_executor(
+            None,
+            lambda: self.execute(
+                skill_slug,
+                user_message,
+                system_prompt=system_prompt,
+                conversation_history=conversation_history,
+                max_tokens=max_tokens,
+                extra_context=extra_context,
+            ),
+        )
+
+    async def execute_multi_async(
+        self,
+        skill_requests: List[Dict[str, Any]],
+    ) -> List[Dict[str, Any]]:
+        """
+        Async wrapper around ``execute_multi()`` for use in FastAPI routes.
+
+        Each skill request runs sequentially in a thread-pool executor.
+        For parallel execution, call ``execute_async()`` individually with
+        ``asyncio.gather()``.
+        """
+        import asyncio
+        loop = asyncio.get_event_loop()
+        return await loop.run_in_executor(
+            None,
+            lambda: self.execute_multi(skill_requests),
+        )
 
     # ------------------------------------------------------------------
     # Internal helpers

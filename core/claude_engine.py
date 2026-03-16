@@ -65,6 +65,10 @@ import anthropic
 from core.skills import SKILLS_BETAS, CODE_EXECUTION_TOOL
 from core.context_manager import truncate_context, MAX_RECENT_MESSAGES
 from core.streaming import stream_claude_response
+# AFL system prompt rules — the detailed function reference, naming conventions,
+# Param/Optimize standard, color rules, and code structure requirements.
+# These were previously dead code because generate_afl() used an inline stub.
+from core.afl import get_base_prompt, get_chat_prompt
 
 # Training manager is optional — gracefully degraded if the module is absent
 try:
@@ -573,6 +577,12 @@ class ClaudeAFLEngine:
             return cached
 
         # ── Build system prompt ────────────────────────────────────────────────
+        # ROOT-CAUSE FIX: Previously this used a 3-line inline stub:
+        #   "Generate high-quality AFL code for AmiBroker. Follow best practices..."
+        # That meant ALL the rules in afl.py (FUNCTION_REFERENCE, RESERVED_KEYWORDS,
+        # PARAM_OPTIMIZE_STRUCTURE, COLOR_RULES, validation checklist) were never
+        # sent to Claude — get_base_prompt() was imported by nothing and called by
+        # nothing. get_base_prompt() is now used as the base for every generation.
         training_text = ""
         if include_training:
             raw_training = await self._get_training_context()
@@ -582,11 +592,7 @@ class ClaudeAFLEngine:
         kb_trunc = truncate_context(kb_context, max_tokens=600) if kb_context else ""
 
         system = self._build_system_prompt(
-            base=(
-                "Generate high-quality AFL code for AmiBroker. "
-                "Follow best practices, use proper syntax, include comments. "
-                "If important details are missing, ask clarifying questions."
-            ),
+            base=get_base_prompt(),
             training=training_text,
             user_answers=user_answers,
             kb=kb_trunc,
@@ -700,10 +706,7 @@ class ClaudeAFLEngine:
         kb = truncate_context(context, max_tokens=600) if context else ""
 
         system = self._build_system_prompt(
-            base=(
-                "You are an expert AFL / AmiBroker / quantitative trading assistant. "
-                "Answer clearly, write correct code when asked, explain concepts."
-            ),
+            base=get_chat_prompt(),   # was an inline stub — now uses the real prompt
             kb=kb,
         )
 
