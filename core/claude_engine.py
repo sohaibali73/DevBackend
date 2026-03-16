@@ -65,10 +65,47 @@ import anthropic
 from core.skills import SKILLS_BETAS, CODE_EXECUTION_TOOL
 from core.context_manager import truncate_context, MAX_RECENT_MESSAGES
 from core.streaming import stream_claude_response
-# AFL system prompt rules — the detailed function reference, naming conventions,
-# Param/Optimize standard, color rules, and code structure requirements.
-# These were previously dead code because generate_afl() used an inline stub.
-from core.afl import get_base_prompt, get_chat_prompt
+
+# Import the AFL system prompt builders from core/prompts/afl.py.
+# Fallbacks kept so a wrong path never crashes all routers at startup.
+try:
+    from core.prompts.afl import get_base_prompt, get_chat_prompt
+    _AFL_IMPORT_SOURCE = "core.prompts.afl"
+except ImportError:
+    try:
+        from routes.afl import get_base_prompt, get_chat_prompt
+        _AFL_IMPORT_SOURCE = "routes.afl"
+    except ImportError:
+        try:
+            from afl import get_base_prompt, get_chat_prompt
+            _AFL_IMPORT_SOURCE = "afl"
+        except ImportError:
+            _AFL_IMPORT_SOURCE = "inline-fallback"
+            logger.warning(
+                "afl.py not found at 'core.prompts.afl', 'routes.afl', or 'afl' — "
+                "using minimal inline prompts. Deploy afl.py to fix this."
+            )
+            def get_base_prompt() -> str:
+                return (
+                    "You are an expert AmiBroker Formula Language (AFL) developer.\n"
+                    "CRITICAL RULES:\n"
+                    "- RSI(14) not RSI(Close,14). MA(Close,20) not MA(20). OBV() no args.\n"
+                    "- Never shadow built-ins: use RSI_Val not RSI, MALength not MA.\n"
+                    "- Always ExRem(Buy,Sell) and ExRem(Sell,Buy).\n"
+                    "- RAG Param pattern: varDefault/Min/Max/Step → Var_Dflt=Param() → Var=Optimize().\n"
+                    "- CommissionMode 2 only (0.0005). Never mode 3.\n"
+                    "- ParamToggle needs 3 args: ParamToggle('x','No|Yes',0).\n"
+                    "- Never GetBacktesterObject(). Never if(Status('mode')==1).\n"
+                    "- _SECTION_BEGIN/_SECTION_END for all sections.\n"
+                    "- Use colorViolet not colorPurple (colorPurple does not exist).\n"
+                )
+            def get_chat_prompt() -> str:
+                return (
+                    "You are an expert AFL/AmiBroker assistant. "
+                    "Write correct AFL code following all syntax rules. "
+                    "RSI(14) not RSI(Close,14). MA(Close,20) not MA(20). "
+                    "Always use ExRem() and Param()/Optimize() patterns."
+                )
 
 # Training manager is optional — gracefully degraded if the module is absent
 try:
