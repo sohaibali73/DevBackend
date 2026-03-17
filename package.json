@@ -1,0 +1,22 @@
+{
+  "name": "potomac-presentation-generator",
+  "version": "1.0.0",
+  "description": "Potomac presentation generation with PptxGenJS",
+  "main": "scripts/generate-enhanced-presentation.js",
+  "scripts": {
+    "start": "node scripts/generate-enhanced-presentation.js",
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "dependencies": {
+    "pptxgenjs": "^3.12.0"
+  },
+  "devDependencies": {},
+  "keywords": [
+    "pptx",
+    "presentation",
+    "potomac",
+    "powerpoint"
+  ],
+  "author": "Potomac",
+  "license": "MIT"
+}

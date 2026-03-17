@@ -289,6 +289,16 @@ except Exception as e:
     logger.error(f"✗ Failed to load tasks router: {e}")
     logger.debug(traceback.format_exc())
 
+try:
+    from api.routes import generate_presentation
+    app.include_router(generate_presentation.router)
+    routers_loaded.append("generate_presentation")
+    logger.info("✓ Loaded generate_presentation router (Complete presentation editor with images, charts, and tables)")
+except Exception as e:
+    routers_failed.append(("generate_presentation", str(e)))
+    logger.error(f"✗ Failed to load generate_presentation router: {e}")
+    logger.debug(traceback.format_exc())
+
 # Start background task cleanup loop on app startup
 @app.on_event("startup")
 async def startup_task_manager():

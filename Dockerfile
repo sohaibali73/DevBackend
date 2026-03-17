@@ -14,7 +14,12 @@ ENV PORT=8000
 RUN apt-get update && apt-get install -y \
     gcc \
     libffi-dev \
+    curl \
     && rm -rf /var/lib/apt/lists/*
+
+# Install Node.js and npm for presentation generation
+RUN curl -fsSL https://deb.nodesource.com/setup_18.x | bash - && \
+    apt-get install -y nodejs
 
 # Copy requirements first for better layer caching
 COPY requirements.txt .
@@ -23,12 +28,17 @@ COPY requirements.txt .
 RUN pip install --no-cache-dir --upgrade pip && \
     pip install --no-cache-dir -r requirements.txt
 
+# Copy package.json and install Node.js dependencies
+COPY package.json .
+RUN npm install
+
 # Copy application code (order matters: least changed to most changed)
 COPY config.py .
 COPY api/ ./api/
 COPY core/ ./core/
 COPY db/ ./db/
 COPY main.py .
+COPY Claude\ Skills/ ./Claude\ Skills/
 
 # Expose the port (Note: Railway ignores this, but it's good practice)
 EXPOSE 8000

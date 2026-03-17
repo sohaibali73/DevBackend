@@ -48,3 +48,11 @@ pydub
 
 # Optional: Embeddings (for vector search)
 sentence-transformers==2.2.2
+
+# Presentation Generation Dependencies
+aiofiles
+base64
+json
+asyncio
+subprocess
+pathlib

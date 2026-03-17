@@ -1,390 +1,247 @@
 #!/usr/bin/env node
 
 /**
- * Potomac Enhanced Presentation Generator - Phase 2
- * Smart template selection and universal presentation system
+ * Potomac Enhanced Presentation Generator - Complete Backend Integration
+ * Handles all element types: images, charts, tables, text, and shapes
  * 
- * Usage: node generate-enhanced-presentation.js --type research --title "MARKET ANALYSIS" --output "research.pptx"
+ * Usage: node generate-enhanced-presentation.js --input <file> --output <file> --type enhanced --compliance strict
  */
 
-const { PotomacPresentationBuilder } = require('../templates/presentation-builder.js');
+const fs = require('fs');
 const path = require('path');
+const PptxGenJS = require('pptxgenjs');
+const { PotomacVisualElements } = require('../infographics/visual-elements.js');
+const { PotomacDynamicTables } = require('../data-tables/dynamic-tables.js');
 
-// PRESENTATION TYPE CONFIGURATIONS
-const PRESENTATION_TYPES = {
-  research: {
-    name: 'Research Presentation',
-    description: 'Investment research and market analysis',
-    defaultTitle: 'INVESTMENT RESEARCH',
-    defaultSubtitle: 'Market Analysis & Strategic Insights',
-    palette: 'STANDARD',
-    sampleData: {
-      keyFindings: [
-        { value: '12.5%', label: 'Expected Return' },
-        { value: '15%', label: 'Volatility' },
-        { value: '0.83', label: 'Sharpe Ratio' }
-      ],
-      currentEnvironment: 'Current Environment:\n\n• Market volatility remains elevated\n• Interest rate uncertainty persists\n• Inflation concerns moderate\n• Geopolitical tensions continue',
-      outlook: 'Our Outlook:\n\n• Selective opportunities emerging\n• Quality factor outperforming\n• Defensive positioning preferred\n• Active management advantage evident',
-      implications: [
-        'Focus on high-quality, dividend-paying stocks',
-        'Maintain geographic and sector diversification',
-        'Consider alternative investments for yield',
-        'Monitor Federal Reserve policy changes closely'
-      ]
-    }
-  },
+// Parse command line arguments
+const args = process.argv.slice(2);
+let inputFile = '';
+let outputFile = '';
+let complianceMode = 'strict';
 
-  pitch: {
-    name: 'Client Pitch',
-    description: 'Client presentation and business development',
-    defaultTitle: 'POTOMAC INVESTMENT SOLUTIONS',
-    defaultSubtitle: 'Your Partner in Conquering Risk',
-    palette: 'STANDARD',
-    sampleData: {
-      approach: [
-        { title: 'Discovery', description: 'Comprehensive assessment of your goals, constraints, and risk tolerance' },
-        { title: 'Strategy', description: 'Custom investment strategy design based on your unique situation' },
-        { title: 'Implementation', description: 'Professional execution and portfolio construction' },
-        { title: 'Management', description: 'Ongoing monitoring, rebalancing, and optimization' }
-      ],
-      valueProps: [
-        'Experience:\n\n• 15+ years in institutional investing\n• Proven track record across cycles\n• Deep market expertise\n• Rigorous research process',
-        'Technology:\n\n• Advanced portfolio analytics\n• Real-time risk monitoring\n• Proprietary screening tools\n• Institutional-grade platforms',
-        'Service:\n\n• Dedicated relationship management\n• Quarterly performance reviews\n• 24/7 client portal access\n• Transparent fee structure'
-      ],
-      results: [
-        { value: '94%', label: 'Client Retention' },
-        { value: '$2.5B', label: 'Assets Under Management' },
-        { value: '8.2%', label: 'Average Annual Return' }
-      ]
-    }
-  },
+for (let i = 0; i < args.length; i++) {
+  if (args[i] === '--input') inputFile = args[i + 1];
+  if (args[i] === '--output') outputFile = args[i + 1];
+  if (args[i] === '--compliance') complianceMode = args[i + 1];
+}
 
-  outlook: {
-    name: 'Market Outlook',
-    description: 'Market commentary and forward-looking analysis',
-    defaultTitle: 'MARKET OUTLOOK 2025',
-    defaultSubtitle: 'Navigating Uncertainty with Confidence',
-    palette: 'INVESTMENT',
-    sampleData: {
-      challenges: 'Key Challenges:\n\n• Persistent inflation pressures\n• Central bank policy uncertainty\n• Geopolitical risk factors\n• Supply chain disruptions',
-      opportunities: 'Emerging Opportunities:\n\n• Energy transition investments\n• Technology sector recovery\n• International diversification\n• Fixed income normalization',
-      indicators: [
-        { value: '3.2%', label: 'GDP Growth Forecast' },
-        { value: '2.8%', label: 'Core Inflation Target' },
-        { value: '4.5%', label: '10-Year Treasury' }
-      ],
-      strategy: [
-        'Overweight quality growth companies with pricing power',
-        'Maintain defensive allocations in utilities and healthcare',
-        'Increase exposure to international developed markets',
-        'Selective opportunities in emerging market debt'
-      ]
-    }
-  },
+if (!inputFile || !outputFile) {
+  console.error('Usage: node generate-enhanced-presentation.js --input <file> --output <file> --type enhanced --compliance strict');
+  process.exit(1);
+}
 
-  demo: {
-    name: 'Feature Demo',
-    description: 'Demonstration of all Phase 2 template types',
-    defaultTitle: 'POTOMAC TEMPLATE SHOWCASE',
-    defaultSubtitle: 'Phase 2 Universal Template System',
-    palette: 'STANDARD',
-    sampleData: {} // Will be handled by custom demo generation
-  }
+// Read input data
+const inputData = JSON.parse(fs.readFileSync(inputFile, 'utf8'));
+
+// Create presentation
+const pptx = new PptxGenJS();
+
+// Set Potomac theme
+pptx.defineLayout({ name: 'POTOMAC', width: 10, height: 5.625 });
+pptx.layout = 'POTOMAC';
+
+// Potomac brand colors
+const COLORS = {
+  YELLOW: 'FEC00F',
+  DARK_GRAY: '212121',
+  TURQUOISE: '00DED1',
+  WHITE: 'FFFFFF',
 };
 
-class EnhancedPresentationCLI {
-  constructor() {
-    this.availableTypes = Object.keys(PRESENTATION_TYPES);
-  }
+// Initialize Potomac visual systems
+const visualElements = new PotomacVisualElements(pptx);
+const dynamicTables = new PotomacDynamicTables(pptx);
 
-  parseArgs() {
-    const args = process.argv.slice(2);
-    const options = {
-      type: 'demo',
-      title: null,
-      subtitle: null,
-      output: null,
-      palette: null,
-      help: false
-    };
+// Add slides
+inputData.slides.forEach((slideData, index) => {
+  const slide = pptx.addSlide();
 
-    for (let i = 0; i < args.length; i += 2) {
-      const flag = args[i];
-      const value = args[i + 1];
+  // Set background
+  slide.background = { color: slideData.background || COLORS.WHITE };
 
-      switch (flag) {
-        case '--type':
-          if (this.availableTypes.includes(value)) {
-            options.type = value;
-          } else {
-            console.error(`❌ Invalid type: ${value}. Available types: ${this.availableTypes.join(', ')}`);
-            process.exit(1);
-          }
-          break;
-        case '--title':
-          options.title = value;
-          break;
-        case '--subtitle':
-          options.subtitle = value;
-          break;
-        case '--output':
-          options.output = value;
-          break;
-        case '--palette':
-          options.palette = value;
-          break;
-        case '--help':
-          options.help = true;
-          break;
-      }
-    }
+  // Process each content element
+  slideData.content.forEach((element) => {
+    switch (element.type) {
+      case 'text':
+        // Add text element
+        slide.addText(element.content, {
+          x: element.x / 100,
+          y: element.y / 100,
+          w: element.width / 100,
+          h: element.height / 100,
+          fontSize: element.style.fontSize || 16,
+          bold: element.style.fontWeight === 'bold',
+          fontFace: element.style.fontFamily || 'Quicksand',
+          color: element.style.color?.replace('#', '') || COLORS.DARK_GRAY,
+          align: element.style.textAlign || 'left',
+          valign: 'top',
+        });
+        break;
 
-    // Set defaults based on presentation type
-    const typeConfig = PRESENTATION_TYPES[options.type];
-    if (!options.title) options.title = typeConfig.defaultTitle;
-    if (!options.subtitle) options.subtitle = typeConfig.defaultSubtitle;
-    if (!options.palette) options.palette = typeConfig.palette;
-    if (!options.output) options.output = `${options.type}-presentation.pptx`;
+      case 'shape':
+        // Add shape element
+        slide.addShape('rect', {
+          x: element.x / 100,
+          y: element.y / 100,
+          w: element.width / 100,
+          h: element.height / 100,
+          fill: { color: element.style.backgroundColor?.replace('#', '') || COLORS.YELLOW },
+        });
+        break;
 
-    return options;
-  }
+      case 'image':
+        // Add image element
+        slide.addImage({
+          path: element.content.src, // File path from temp
+          x: element.x / 100,
+          y: element.y / 100,
+          w: element.width / 100,
+          h: element.height / 100,
+        });
+        break;
 
-  showHelp() {
-    console.log(`
-🎯 Potomac Enhanced Presentation Generator - Phase 2
+      case 'chart':
+        // Add Potomac chart using visual elements system
+        const chartType = element.content.type;
+        const chartConfig = {
+          startX: element.x / 100,
+          startY: element.y / 100,
+          width: element.width / 100,
+          height: element.height / 100,
+        };
 
-USAGE:
-  node generate-enhanced-presentation.js [options]
-
-OPTIONS:
-  --type <type>       Presentation type (default: demo)
-  --title <title>     Custom presentation title
-  --subtitle <sub>    Custom subtitle  
-  --output <file>     Output filename
-  --palette <name>    Color palette (STANDARD, DARK, INVESTMENT, FUNDS)
-  --help             Show this help
-
-PRESENTATION TYPES:
-${Object.entries(PRESENTATION_TYPES).map(([key, config]) => 
-  `  ${key.padEnd(10)} - ${config.description}`
-).join('\n')}
-
-EXAMPLES:
-  # Generate research presentation
-  node generate-enhanced-presentation.js --type research --title "Q1 2025 MARKET ANALYSIS"
-  
-  # Generate client pitch
-  node generate-enhanced-presentation.js --type pitch --palette INVESTMENT
-  
-  # Generate market outlook  
-  node generate-enhanced-presentation.js --type outlook --output "market-outlook-2025.pptx"
-  
-  # Generate demo of all templates
-  node generate-enhanced-presentation.js --type demo
-
-PHASE 2 FEATURES:
-  ✨ Smart template selection based on content analysis
-  🎨 Universal template system with 11+ slide types
-  📊 Automatic content classification and layout optimization
-  🛡️ Enhanced brand compliance with zero-tolerance enforcement
-  🚀 Presentation type generators (research, pitch, outlook)
-    `);
-  }
-
-  generateDemoPresentation(builder) {
-    console.log('🎭 Generating Phase 2 Feature Demo...');
-
-    // Title slide
-    builder.addSlide({
-      title: 'POTOMAC TEMPLATE SHOWCASE',
-      subtitle: 'Phase 2 Universal Template System Demonstration',
-      role: 'title',
-      isFirst: true
-    });
-
-    // Section divider
-    builder.addSlide({
-      title: 'TITLE SLIDE VARIANTS',
-      description: 'Multiple title slide options for different presentation types',
-      role: 'divider',
-      isSection: true
-    });
-
-    // Executive title slide demo
-    builder.addSlide({
-      title: 'EXECUTIVE PRESENTATION',
-      subtitle: 'Premium dark theme for high-impact presentations',
-      tagline: 'Built to Conquer Risk®'
-    });
-
-    // Content slide variants section
-    builder.addSlide({
-      title: 'CONTENT SLIDE TEMPLATES',
-      description: 'Smart template selection based on content analysis',
-      role: 'divider',
-      isSection: true
-    });
-
-    // Two-column comparison
-    builder.addSlide({
-      title: 'MARKET COMPARISON',
-      hasComparison: true,
-      leftContent: 'Traditional Approach:\n\n• Static asset allocation\n• Benchmark-relative performance\n• Limited risk controls\n• Quarterly rebalancing',
-      rightContent: 'Potomac Approach:\n\n• Dynamic asset allocation\n• Absolute risk management\n• Systematic guardrails\n• Continuous monitoring'
-    });
-
-    // Three-column layout
-    builder.addSlide({
-      title: 'INVESTMENT PILLARS',
-      columns: [
-        'Research:\n\n• Quantitative analysis\n• Fundamental research\n• Risk assessment\n• Market intelligence',
-        'Strategy:\n\n• Portfolio construction\n• Asset allocation\n• Risk budgeting\n• Performance attribution',
-        'Execution:\n\n• Trade optimization\n• Cost management\n• Liquidity planning\n• Operational efficiency'
-      ]
-    });
-
-    // Metrics slide
-    builder.addSlide({
-      title: 'KEY PERFORMANCE METRICS',
-      type: 'metrics',
-      metrics: [
-        { value: '12.8%', label: 'Annualized Return' },
-        { value: '11.2%', label: 'Volatility' },
-        { value: '1.14', label: 'Sharpe Ratio' },
-        { value: '94%', label: 'Client Retention' },
-        { value: '$2.5B', label: 'Assets Under Management' },
-        { value: '8.5%', label: 'Maximum Drawdown' }
-      ],
-      context: 'Performance data represents composite results from 2019-2024. Past performance does not guarantee future results.'
-    });
-
-    // Process slide
-    builder.addSlide({
-      title: 'INVESTMENT PROCESS',
-      type: 'process',
-      steps: [
-        { title: 'Research', description: 'Comprehensive market and security analysis using quantitative and fundamental techniques' },
-        { title: 'Strategy', description: 'Portfolio construction based on risk-adjusted return optimization and client objectives' },
-        { title: 'Implementation', description: 'Efficient trade execution with attention to market impact and transaction costs' },
-        { title: 'Monitoring', description: 'Continuous risk monitoring and portfolio rebalancing using systematic guardrails' }
-      ]
-    });
-
-    // Quote slide
-    builder.addSlide({
-      type: 'quote',
-      quote: 'Potomac\'s systematic approach to risk management has helped us navigate volatile markets while maintaining our long-term investment objectives.',
-      attribution: 'Chief Investment Officer',
-      context: 'Large Institutional Client'
-    });
-
-    // Specialized slides section
-    builder.addSlide({
-      title: 'SPECIALIZED TEMPLATES',
-      description: 'Advanced layouts for specific content types',
-      role: 'divider',
-      isSection: true
-    });
-
-    // Call to action slide
-    builder.addSlide({
-      title: 'EXPERIENCE THE DIFFERENCE',
-      role: 'cta',
-      isClosing: true,
-      actionText: 'Ready to see how Potomac\'s systematic approach can enhance your portfolio? Let\'s schedule a consultation to discuss your specific needs and objectives.',
-      buttonText: 'Schedule Consultation',
-      contactInfo: 'potomac.com | (305) 824-2702 | info@potomac.com'
-    });
-
-    return builder;
-  }
-
-  async run() {
-    const options = this.parseArgs();
-
-    if (options.help) {
-      this.showHelp();
-      return;
-    }
-
-    const typeConfig = PRESENTATION_TYPES[options.type];
-    
-    console.log('🎯 Potomac Enhanced Presentation Generator - Phase 2');
-    console.log(`Type: ${typeConfig.name}`);
-    console.log(`Title: ${options.title}`);
-    console.log(`Subtitle: ${options.subtitle}`);
-    console.log(`Palette: ${options.palette}`);
-    console.log(`Output: ${options.output}`);
-    console.log('---');
-
-    try {
-      // Create enhanced builder
-      const builder = new PotomacPresentationBuilder({
-        title: options.title,
-        subtitle: options.subtitle,
-        palette: options.palette,
-        presentationType: options.type,
-        strictCompliance: true
-      });
-
-      // Generate presentation based on type
-      switch (options.type) {
-        case 'research':
-          builder.generateResearchPresentation(typeConfig.sampleData);
-          break;
-        case 'pitch':
-          builder.generateClientPitch(typeConfig.sampleData);
-          break;
-        case 'outlook':
-          builder.generateMarketOutlook(typeConfig.sampleData);
-          break;
-        case 'demo':
-          this.generateDemoPresentation(builder);
-          break;
-        default:
-          throw new Error(`Unknown presentation type: ${options.type}`);
-      }
-
-      // Validate compliance
-      const compliance = await builder.validateCompliance();
-      if (!compliance.compliant && builder.options.strictCompliance) {
-        console.error('❌ Presentation failed enhanced brand compliance. Generation aborted.');
-        if (compliance.report) {
-          console.log('Compliance Report:', JSON.stringify(compliance.report, null, 2));
+        switch (chartType) {
+          case 'process_flow':
+            visualElements.createInvestmentProcessFlow(slide, chartConfig);
+            break;
+          case 'performance':
+            visualElements.createStrategyPerformanceViz(slide, element.content.data, chartConfig);
+            break;
+          case 'communication':
+            visualElements.createCommunicationFlow(slide, chartConfig);
+            break;
+          case 'firm_structure':
+            visualElements.createFirmStructureInfographic(slide, chartConfig);
+            break;
+          case 'ocio_triangle':
+            visualElements.createOCIOTriangle(slide, chartConfig);
+            break;
+          default:
+            console.warn(`Unknown chart type: ${chartType}`);
         }
-        process.exit(1);
-      }
+        break;
 
-      // Save presentation
-      const outputPath = await builder.save(options.output);
+      case 'table':
+        // Add Potomac table using dynamic tables system
+        const tableType = element.content.type;
+        const tablePosition = {
+          x: element.x / 100,
+          y: element.y / 100,
+          w: element.width / 100,
+          h: element.height / 100,
+        };
 
-      console.log('---');
-      console.log('🎉 Enhanced Potomac presentation generated successfully!');
-      console.log(`📄 File: ${outputPath}`);
-      console.log('✅ Enhanced brand compliance: PASSED');
-      console.log(`🤖 Smart template selection: ACTIVE`);
-      
-      if (compliance.report && compliance.report.templateUsage) {
-        console.log(`📊 Template usage: ${compliance.report.templateUsage}`);
-      }
+        // Convert frontend table data to backend format
+        const tableData = convertTableData(tableType, element.content);
 
-    } catch (error) {
-      console.error('❌ Error generating enhanced presentation:', error.message);
-      console.error(error.stack);
-      process.exit(1);
+        switch (tableType) {
+          case 'passive_active':
+            dynamicTables.createPassiveActiveTable(slide, tableData, tablePosition);
+            break;
+          case 'afg':
+            dynamicTables.createAFGTable(slide, tableData, tablePosition);
+            break;
+          case 'annualized_return':
+            dynamicTables.createAnnualizedReturnTable(slide, tableData, tablePosition);
+            break;
+          case 'strategy_overview':
+            dynamicTables.createStrategyOverviewTable(slide, tableData, tablePosition);
+            break;
+          case 'attribution':
+            dynamicTables.createAttributionTable(slide, tableData, tablePosition);
+            break;
+          case 'risk_metrics':
+            dynamicTables.createRiskMetricsTable(slide, tableData, tablePosition);
+            break;
+          default:
+            console.warn(`Unknown table type: ${tableType}`);
+        }
+        break;
+
+      default:
+        console.warn(`Unknown element type: ${element.type}`);
     }
+  });
+
+  // Add notes
+  if (slideData.notes) {
+    slide.addNotes(slideData.notes);
+  }
+});
+
+// Helper function to convert table data
+function convertTableData(tableType, content) {
+  // Each table type expects different data formats
+  // Convert from frontend format (headers + rows) to backend expected format
+  
+  switch (tableType) {
+    case 'passive_active':
+      return {
+        timeframes: content.rows.map(row => row[0]),
+        passive: content.rows.map(row => row[1]),
+        active: content.rows.map(row => row[2]),
+        outperformance: content.rows.map(row => row[3]),
+      };
+
+    case 'afg':
+      return {
+        assetRanges: content.rows.map(row => row[0]),
+        managementFees: content.rows.map(row => row[1]),
+        performanceFees: content.rows.map(row => row[2]),
+        totalFees: content.rows.map(row => row[3]),
+      };
+
+    case 'annualized_return':
+      return {
+        strategies: content.rows.map(row => row[0]),
+        ytd: content.rows.map(row => row[1]),
+        oneYear: content.rows.map(row => row[2]),
+        threeYear: content.rows.map(row => row[3]),
+        fiveYear: content.rows.map(row => row[4]),
+        inception: content.rows.map(row => row[5]),
+      };
+
+    case 'attribution':
+      return {
+        factors: content.rows.map(row => row[0]),
+        contributions: content.rows.map(row => row[1]),
+        weights: content.rows.map(row => row[2]),
+      };
+
+    case 'risk_metrics':
+      return {
+        metrics: content.rows.map(row => row[0]),
+        portfolio: content.rows.map(row => row[1]),
+        benchmark: content.rows.map(row => row[2]),
+        relative: content.rows.map(row => row[3]),
+      };
+
+    default:
+      // Generic table format
+      return {
+        headers: content.headers,
+        rows: content.rows,
+      };
   }
 }
 
-// Run CLI
-if (require.main === module) {
-  const cli = new EnhancedPresentationCLI();
-  cli.run();
-}
-
-module.exports = {
-  EnhancedPresentationCLI,
-  PRESENTATION_TYPES
-};
+// Save presentation
+pptx.writeFile({ fileName: outputFile })
+  .then(() => {
+    console.log(`Presentation generated: ${outputFile}`);
+    process.exit(0);
+  })
+  .catch((err) => {
+    console.error('Error generating presentation:', err);
+    process.exit(1);
+  });
