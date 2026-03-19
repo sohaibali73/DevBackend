@@ -1,52 +1,87 @@
+# =============================================================================
+# Dockerfile — BULLETPROOF EDITION
+# FastAPI backend on Railway
+# =============================================================================
+
 # Use Python 3.11 slim image
 FROM python:3.11-slim
 
 # Set working directory
 WORKDIR /app
 
-# Set environment variables
 # Prevents Python from writing .pyc files and keeps logs moving in real-time
 ENV PYTHONDONTWRITEBYTECODE=1
 ENV PYTHONUNBUFFERED=1
 ENV PORT=8000
 
-# Install system dependencies
+# =============================================================================
+# SYSTEM DEPENDENCIES
+# =============================================================================
+
 RUN apt-get update && apt-get install -y \
+    # Build tools
     gcc \
     libffi-dev \
     curl \
+    # OCR (required by pytesseract + unstructured)
+    tesseract-ocr \
+    tesseract-ocr-eng \
+    # Magic byte detection (required by filetype + unstructured)
+    libmagic1 \
+    # PyMuPDF system libs (crashes without these)
+    libgl1 \
+    libglib2.0-0 \
+    # PDF parsing (required by pdfplumber + unstructured)
+    poppler-utils \
+    # Old Office format conversion .doc/.ppt/.xls (required by unstructured)
+    libreoffice \
+    # Audio processing (required by pydub)
+    ffmpeg \
     && rm -rf /var/lib/apt/lists/*
 
-# Install Node.js and npm for presentation generation
-RUN curl -fsSL https://deb.nodesource.com/setup_18.x | bash - && \
-    apt-get install -y nodejs
+# =============================================================================
+# NODE.JS + PPTXGENJS
+# =============================================================================
 
-# Copy requirements first for better layer caching
+RUN curl -fsSL https://deb.nodesource.com/setup_18.x | bash - && \
+    apt-get install -y nodejs && \
+    npm install -g pptxgenjs && \
+    rm -rf /var/lib/apt/lists/*
+
+# =============================================================================
+# PYTHON DEPENDENCIES
+# =============================================================================
+
 COPY requirements.txt .
 
-# Install Python dependencies
 RUN pip install --no-cache-dir --upgrade pip && \
     pip install --no-cache-dir -r requirements.txt
 
-# Install Node.js dependencies
-RUN curl -fsSL https://deb.nodesource.com/setup_18.x | bash - && \
-    apt-get install -y nodejs && \
-    npm install -g pptxgenjs
+# =============================================================================
+# APPLICATION CODE
+# Ordered least-changed to most-changed for optimal layer caching
+# =============================================================================
 
-# Copy application code (order matters: least changed to most changed)
 COPY config.py .
-COPY api/ ./api/
-COPY core/ ./core/
 COPY db/ ./db/
-COPY main.py .
+COPY core/ ./core/
+COPY api/ ./api/
 COPY ClaudeSkills/ ./ClaudeSkills/
+COPY main.py .
 
-# Expose the port (Note: Railway ignores this, but it's good practice)
+# =============================================================================
+# RUNTIME
+# =============================================================================
+
+# Railway manages port binding via $PORT env var
 EXPOSE 8000
 
-# We omit the Docker HEALTHCHECK here because Railway uses its own
-# networking layer to probe your /health endpoint.
-
-# Start command
-# Using the list format ensures signals (like SIGTERM) are handled correctly
-CMD ["python", "main.py"]
+# Gunicorn with UvicornWorker for production-grade async handling
+# --timeout 120 matches keep-alive in main.py for long-running skill API calls
+# --workers 2 is safe for Railway's default memory limits
+CMD ["gunicorn", "main:app", \
+     "--worker-class", "uvicorn.workers.UvicornWorker", \
+     "--workers", "2", \
+     "--bind", "0.0.0.0:8000", \
+     "--timeout", "120", \
+     "--keep-alive", "120"]
