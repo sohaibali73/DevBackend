@@ -3854,6 +3854,7 @@ def _invoke_skill(tool_input: Dict, api_key: str) -> Dict:
 
         return base_response
     except Exception as e:
+        logger.error("invoke_skill failed for slug '%s': %s", tool_input.get("skill_slug", "?"), e, exc_info=True)
         return {"success": False, "error": f"Skill invocation failed: {str(e)}", "tool": "invoke_skill"}
 
 
