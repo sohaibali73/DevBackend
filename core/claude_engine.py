@@ -54,7 +54,7 @@ import hashlib
 import time
 import logging
 import traceback
-from typing import Dict, Any, Optional, List, Tuple
+from typing import Dict, Any, Optional, List, Tuple, Union
 from dataclasses import dataclass
 from collections import OrderedDict
 from enum import Enum
@@ -123,10 +123,47 @@ class StrategyType(str, Enum):
     STANDALONE = "standalone"  # Complete strategy with all sections
     COMPOSITE = "composite"    # Only strategy logic (no plotting/settings)
 
+class ClaudeModel(str, Enum):
+    """Available Claude models for AFL generation."""
+    OPUS_4 = "claude-opus-4-6"
+    SONNET_4 = "claude-sonnet-4-6"
+    HAIKU_4 = "claude-haiku-4-5-20251001"
+    
+    @classmethod
+    def from_string(cls, model_str: str) -> "ClaudeModel":
+        normalized = model_str.lower().strip()
+        for model in cls:
+            if model.value == model_str:
+                return model
+        if "opus" in normalized:
+            return cls.OPUS_4
+        elif "haiku" in normalized:
+            return cls.HAIKU_4
+        return cls.SONNET_4
+    
+    @classmethod
+    def supports_extended_thinking(cls, model: "ClaudeModel") -> bool:
+        return model in (cls.OPUS_4, cls.SONNET_4)
+
+class ThinkingMode(str, Enum):
+    DISABLED = "disabled"
+    ENABLED = "enabled"
+
+@dataclass
+class ThinkingConfig:
+    mode: ThinkingMode = ThinkingMode.DISABLED
+    budget_tokens: Optional[int] = None
+    
+    def to_api_params(self) -> Optional[Dict[str, Any]]:
+        if self.mode == ThinkingMode.DISABLED:
+            return None
+        params = {"type": "enabled"}
+        if self.budget_tokens is not None:
+            params["budget_tokens"] = self.budget_tokens
+        return params
+
 # ── Top-level defaults ────────────────────────────────────────────────────────
-DEFAULT_MODEL       = "claude-sonnet-4-6"  # FIX-12: was claude-haiku-4-5-20251001
-                                           # AFL generation requires complex multi-step
-                                           # reasoning; Haiku produces lower quality output
+DEFAULT_MODEL       = ClaudeModel.SONNET_4
 MAX_TOKENS          = 8192  # FIX-03: was 4096 — AFL strategies with full Param/Optimize,
                             # indicators, ExRem, Plot, and AddColumn easily exceed 4096 tokens
 AMIBROKER_SKILL_ID  = "skill_01GG6E88EuXr9H9tqLp51sH5"
@@ -286,10 +323,30 @@ class ClaudeAFLEngine:
     def __init__(
         self,
         api_key: Optional[str] = None,
-        model:   Optional[str] = None,
+        model:   Optional[Union[str, ClaudeModel]] = None,
+        thinking_config: Optional[ThinkingConfig] = None,
     ):
         self.api_key = api_key
-        self.model   = model or DEFAULT_MODEL
+
+        # Normalize model to string value
+        if model is None:
+            self.model = DEFAULT_MODEL.value
+        elif isinstance(model, ClaudeModel):
+            self.model = model.value
+        elif isinstance(model, str):
+            self.model = ClaudeModel.from_string(model).value
+        else:
+            logger.warning(f"Invalid model type {type(model)}, using default")
+            self.model = DEFAULT_MODEL.value
+
+        # Store and validate thinking config
+        self.thinking_config = thinking_config or ThinkingConfig(mode=ThinkingMode.DISABLED)
+        model_enum = ClaudeModel.from_string(self.model)
+        if (self.thinking_config.mode != ThinkingMode.DISABLED and 
+            not ClaudeModel.supports_extended_thinking(model_enum)):
+            logger.warning(f"{self.model} does not support extended thinking. Disabling.")
+            self.thinking_config = ThinkingConfig(mode=ThinkingMode.DISABLED)
+
         self.client: Optional[anthropic.AsyncAnthropic] = None
 
         # Eagerly create the client if we already have a key
@@ -333,6 +390,7 @@ class ClaudeAFLEngine:
         max_tokens: int  = MAX_TOKENS,
         stream:     bool = False,
         use_skill:  bool = True,
+        enable_thinking: Optional[bool] = None,
     ):
         """
         Single entry point for all Claude API calls.
@@ -360,6 +418,16 @@ class ClaudeAFLEngine:
             "messages":  messages,
         }
 
+        # Add extended thinking if enabled
+        thinking_enabled = (
+            enable_thinking if enable_thinking is not None 
+            else self.thinking_config.mode != ThinkingMode.DISABLED
+        )
+        if thinking_enabled:
+            thinking_params = self.thinking_config.to_api_params()
+            if thinking_params:
+                kwargs["thinking"] = thinking_params
+
         # FIX-13: Only attach skills infrastructure when actually generating AFL
         if use_skill:
             kwargs["betas"]     = SKILLS_BETAS
@@ -384,12 +452,14 @@ class ClaudeAFLEngine:
             # Log token usage when the API exposes it (useful for cost tracking)
             usage = getattr(response, "usage", None)
             if usage:
-                logger.info(
-                    "Claude usage: input=%d, output=%d, total=%d",
-                    usage.input_tokens,
-                    usage.output_tokens,
-                    usage.input_tokens + usage.output_tokens,
+                thinking_tokens = getattr(usage, "thinking_tokens", 0)
+                log_msg = (
+                    f"Claude usage (model={self.model}): "
+                    f"input={usage.input_tokens}, output={usage.output_tokens}"
                 )
+                if thinking_tokens > 0:
+                    log_msg += f", thinking={thinking_tokens}"
+                logger.info(log_msg)
 
             return self._extract_text_from_response(response)
 

@@ -342,7 +342,7 @@ async def health():
 if __name__ == "__main__":
     import uvicorn
 
-    port = int(os.environ.get("PORT", 8070))
+    port = int(os.environ.get("PORT", 8080))
 
     logger.info(f"Starting Analyst by Potomac API server on port {port}")
     logger.info(f"Environment: {os.getenv('ENVIRONMENT', 'development')}")

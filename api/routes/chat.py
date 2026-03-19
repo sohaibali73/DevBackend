@@ -223,6 +223,8 @@ def _build_tool_parts(tools_used: list) -> list:
 class MessageCreate(BaseModel):
     content: str
     conversation_id: Optional[str] = None
+    thinking_mode: Optional[str] = None
+    thinking_budget: Optional[int] = None
 
 
 class ConversationCreate(BaseModel):
@@ -411,7 +413,19 @@ async def send_message(
     messages = sanitize_message_history(history + [{"role": "user", "content": data.content}])
 
     try:
+        # Create thinking config if provided
+        thinking_config = None
+        if data.thinking_mode:
+            from core.claude_engine import ThinkingMode, ThinkingConfig
+            mode = ThinkingMode.ENABLED if data.thinking_mode.lower() == "enabled" else ThinkingMode.DISABLED
+            thinking_config = ThinkingConfig(
+                mode=mode,
+                budget_tokens=data.thinking_budget
+            )
+        
         engine = _get_engine(api_keys["claude"])
+        if thinking_config:
+            engine.thinking_config = thinking_config
         system_prompt = f"{get_base_prompt()}\n\n{get_chat_prompt()}{_SYSTEM_PROMPT_TOOLS}"
         tools = get_all_tools()
         tools_used = []
@@ -550,16 +564,51 @@ _AFL_RULES = """
 """
 
 _STREAM_TOOLS_LIST = """
-## Tools Available (use when helpful):
+## Tools Available — USE THESE PROACTIVELY:
+
+### File & Document Creation (ALWAYS use these — NEVER say you can't create files):
+- **create_word_document**: Create a downloadable Potomac-branded Word (.docx) file.
+  USE THIS whenever the user asks for a Word document, report, memo, fact sheet, proposal, or any written document.
+- **create_pptx_with_skill**: Create a downloadable Potomac-branded PowerPoint (.pptx) file.
+  USE THIS whenever the user asks for a presentation, slide deck, pitch deck, or PowerPoint.
+- **invoke_skill**: Invoke any Claude beta skill for advanced file creation and analysis.
+  USE THIS with skill_slug='potomac-xlsx' or 'xlsx' whenever the user asks for an Excel spreadsheet, .xlsx, or any tabular data file.
+  USE THIS with skill_slug='potomac-docx-skill' for complex branded Word docs.
+  USE THIS with skill_slug='potomac-pptx' for complex branded PowerPoints.
+  USE THIS with skill_slug='dcf-model' for DCF valuation models in Excel.
+  USE THIS with skill_slug='doc-interpreter' to read/extract data from images and PDFs.
+
+### Research & Analysis:
+- **run_financial_deep_research**: Institutional-grade financial research on any company/topic
+- **run_backtest_analysis**: Expert backtest analysis and strategy evaluation
+- **run_quant_analysis**: Factor models, portfolio optimization, systematic strategy design
+- **run_bubble_detection**: Bubble risk analysis for US equities
+
+### Market Data:
 - **web_search**: Search the internet for current information
 - **get_stock_data**: Real-time stock prices (cached 5min)
-- **search_knowledge_base**: User's uploaded documents
-- **generate_afl_code**: Create AFL trading systems
-- **validate_afl/sanity_check_afl**: Verify AFL code before presenting it
-- **execute_python**: Run calculations
+- **technical_analysis**: RSI, MACD, Bollinger Bands, ADX for any stock
+- **get_stock_chart**: Full OHLCV candlestick data
+- **get_market_overview**: Indices, VIX, commodities, crypto
+- **get_market_sentiment**: Fear/greed, put/call ratio, VIX
+- **compare_stocks**: Side-by-side stock comparison
 
-Be direct and helpful. ALWAYS use sanity_check_afl before presenting any AFL code.
-After using tools, always provide a helpful response summarising the results.
+### AFL Code:
+- **generate_afl_code**: Create AFL trading systems
+- **generate_afl_with_skill**: Premium AFL generation for complex strategies
+- **validate_afl/sanity_check_afl**: Verify AFL code — ALWAYS run before presenting AFL code
+
+### Other:
+- **search_knowledge_base**: User's uploaded documents
+- **execute_python**: Run calculations and data analysis
+- **edgar_get_financials / edgar_get_filings**: Official SEC financial data
+
+CRITICAL RULES:
+1. NEVER say "I don't have the ability to create files" — you DO have create_word_document, create_pptx_with_skill, and invoke_skill tools
+2. ALWAYS use sanity_check_afl before presenting any AFL code
+3. For Excel/spreadsheet requests → use invoke_skill with skill_slug='potomac-xlsx'
+4. For Word document requests → use create_word_document tool directly
+5. For PowerPoint requests → use create_pptx_with_skill tool directly
 """
 
 
@@ -770,6 +819,19 @@ async def chat_v6_stream(
         final_message = None  # guard against unbound reference in usage dict
 
         try:
+            # Create thinking config if provided
+            thinking_config = None
+            if data.thinking_mode:
+                from core.claude_engine import ThinkingMode, ThinkingConfig
+                mode = ThinkingMode.ENABLED if data.thinking_mode.lower() == "enabled" else ThinkingMode.DISABLED
+                thinking_config = ThinkingConfig(
+                    mode=mode,
+                    budget_tokens=data.thinking_budget
+                )
+            
+            engine = _get_engine(api_keys["claude"])
+            if thinking_config:
+                engine.thinking_config = thinking_config
             client = anthropic.AsyncAnthropic(api_key=api_keys["claude"])
 
             system_prompt = (
@@ -793,7 +855,7 @@ async def chat_v6_stream(
                 pending_tool_calls = []
 
                 async with client.messages.stream(
-                    model="claude-haiku-4-5-20251001",
+                    model=engine.model,
                     max_tokens=3000,
                     system=system_prompt,
                     messages=messages,
@@ -837,6 +899,23 @@ async def chat_v6_stream(
 
                                 yield encoder.encode_tool_call(tool_call_id, tool_name, tool_input)
 
+                                if tool_name == "invoke_skill":
+                                    _SKILL_LABELS = {
+                                        "potomac-pptx":            "Creating PowerPoint presentation…",
+                                        "potomac-pptx-skill":      "Creating PowerPoint presentation…",
+                                        "potomac-docx-skill":      "Creating Word document…",
+                                        "potomac-xlsx":            "Creating Excel spreadsheet…",
+                                        "dcf-model":               "Building DCF model…",
+                                        "doc-interpreter":         "Reading document…",
+                                        "amibroker-afl-developer": "Generating AFL code…",
+                                        "backtest-expert":         "Running backtest analysis…",
+                                        "quant-analyst":           "Running quant analysis…",
+                                        "us-market-bubble-detector": "Analysing bubble risk…",
+                                    }
+                                    _slug = tool_input.get("skill_slug", "")
+                                    _label = _SKILL_LABELS.get(_slug, f"Running {_slug} skill…")
+                                    yield encoder.encode_data({"skill_status": _label, "skill_slug": _slug})
+
                                 if tool_name not in ["web_search"]:
                                     try:
                                         result = await asyncio.to_thread(
@@ -859,6 +938,8 @@ async def chat_v6_stream(
                                         "toolCallId": tool_call_id,
                                         "input": tool_input,
                                         "result": result_data,
+                                        "skill_slug": result_data.get("skill", tool_input.get("skill_slug", "")) if tool_name == "invoke_skill" else "",
+                                        "skill_name": result_data.get("skill_name", "") if tool_name == "invoke_skill" else "",
                                     })
 
                                     yield encoder.encode_tool_result(tool_call_id, result)

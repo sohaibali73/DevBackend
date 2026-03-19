@@ -98,7 +98,7 @@ async def _execute_skill_task(task: BackgroundTask, skill_slug: str, message: st
     await asyncio.sleep(0.1)
 
     # Execute the skill with a per-executor timeout (separate from the task-level timeout)
-    loop = asyncio.get_event_loop()
+    loop = asyncio.get_running_loop()
     try:
         result = await asyncio.wait_for(
             loop.run_in_executor(
@@ -125,13 +125,35 @@ async def _execute_skill_task(task: BackgroundTask, skill_slug: str, message: st
         "execution_time": result.get("execution_time", 0),
     }
 
-    # Check for generated files
+    # Download and persist any generated files to Railway via file_store
     files = result.get("files", [])
     if files:
-        file_info = files[0] if isinstance(files, list) and files else files
-        task_result["files"] = files
-        task_result["has_file"] = True
-        task_result["filename"] = file_info.get("filename", "") if isinstance(file_info, dict) else ""
+        try:
+            from core.file_store import store_file
+            downloaded = gateway.download_files(files)
+            for dl in downloaded:
+                fname = dl.get("filename", "")
+                data = dl.get("content", b"") or dl.get("data", b"")
+                claude_file_id = dl.get("file_id", "")
+                if data and fname:
+                    ext = fname.rsplit(".", 1)[-1].lower() if "." in fname else "bin"
+                    entry = store_file(
+                        data=data,
+                        filename=fname,
+                        file_type=ext,
+                        tool_name=f"background_task:{skill_slug}",
+                        file_id=claude_file_id or None,
+                    )
+                    task_result["file_id"] = entry.file_id
+                    task_result["filename"] = entry.filename
+                    task_result["file_type"] = entry.file_type
+                    task_result["file_size_kb"] = entry.size_kb
+                    task_result["download_url"] = f"/files/{entry.file_id}/download"
+                    task_result["has_file"] = True
+                    break
+        except Exception as dl_err:
+            logger.warning("Background task file download failed for %s: %s", skill_slug, dl_err)
+            task_result["has_file"] = False
 
     task.result = task_result
     task.progress = 100
@@ -145,7 +167,7 @@ async def _execute_document_task(task: BackgroundTask, message: str, api_key: st
     task.message = "Initializing document engine..."
 
     # Try using the skill gateway for document generation
-    skill_slug = (params or {}).get("skill_slug", "create-word-document")
+    skill_slug = (params or {}).get("skill_slug", "potomac-docx-skill")
 
     await _execute_skill_task(task, skill_slug, message, api_key)
 
@@ -155,7 +177,7 @@ async def _execute_presentation_task(task: BackgroundTask, message: str, api_key
     task.progress = 5
     task.message = "Initializing presentation engine..."
 
-    skill_slug = (params or {}).get("skill_slug", "create-pptx-with-skill")
+    skill_slug = (params or {}).get("skill_slug", "potomac-pptx-skill")
 
     await _execute_skill_task(task, skill_slug, message, api_key)
 
@@ -165,7 +187,7 @@ async def _execute_research_task(task: BackgroundTask, message: str, api_key: st
     task.progress = 5
     task.message = "Starting research pipeline..."
 
-    skill_slug = (params or {}).get("skill_slug", "run-financial-deep-research")
+    skill_slug = (params or {}).get("skill_slug", "backtest-expert")
 
     await _execute_skill_task(task, skill_slug, message, api_key)
 

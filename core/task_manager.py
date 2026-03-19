@@ -104,9 +104,7 @@ class TaskManager:
         """Start the periodic cleanup loop (call once at app startup)."""
         if self._cleanup_task is None:
             try:
-                loop = asyncio.get_event_loop()
-                if loop.is_running():
-                    self._cleanup_task = asyncio.create_task(self._cleanup_loop())
+                self._cleanup_task = asyncio.create_task(self._cleanup_loop())
             except RuntimeError:
                 pass
 

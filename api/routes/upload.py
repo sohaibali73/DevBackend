@@ -28,6 +28,7 @@ from pydantic import BaseModel
 
 from api.dependencies import get_current_user_id
 from db.supabase_client import get_supabase
+from document_parser import DocumentParser
 
 router = APIRouter(prefix="/upload", tags=["Upload"])
 logger = logging.getLogger(__name__)
@@ -90,83 +91,18 @@ def _delete_file(path: str) -> bool:
     return False
 
 
-# Binary file types — never try to decode as text
-_BINARY_EXTENSIONS = {
-    "pdf", "doc", "docx", "ppt", "pptx", "xls", "xlsx",
-    "png", "jpg", "jpeg", "gif", "webp", "svg", "bmp", "ico",
-    "zip", "tar", "gz", "rar", "7z",
-    "mp3", "mp4", "wav", "avi", "mov",
-    "exe", "bin", "dll", "so",
-}
-
-
-def _extract_text(content: bytes, content_type: str, filename: str) -> str:
-    """Best-effort text extraction from file bytes.
-
-    Returns empty string for binary types where extraction is not possible —
-    never returns raw binary decoded as UTF-8 garbage.
-    """
-    ct = (content_type or "").lower()
-    fn = (filename or "").lower()
-    ext = fn.rsplit(".", 1)[-1] if "." in fn else ""
-
-    # Plain text / CSV / JSON / Markdown — safe to decode directly
-    if ct.startswith("text/") or ext in ("txt", "md", "csv", "json", "xml", "log", "sql", "py", "js", "ts", "html", "htm"):
-        return content.decode("utf-8", errors="ignore")
-
-    # PDF — use pypdf; return empty if not available (binary will be served directly)
-    if ct == "application/pdf" or ext == "pdf":
-        try:
-            import io
-            from pypdf import PdfReader
-            reader = PdfReader(io.BytesIO(content))
-            text = "\n".join(page.extract_text() or "" for page in reader.pages)
-            return text.strip()
-        except Exception as e:
-            logger.warning(f"PDF text extraction failed (pypdf): {e}")
-        return ""  # ← never fall through to binary decode for PDFs
-
-    # DOCX
-    if ext == "docx" or "wordprocessingml" in ct:
-        try:
-            import io
-            import docx
-            doc = docx.Document(io.BytesIO(content))
-            return "\n".join(p.text for p in doc.paragraphs)
-        except Exception as e:
-            logger.warning(f"DOCX extraction failed: {e}")
-        return ""
-
-    # XLSX / XLS — extract cell values
-    if ext in ("xlsx", "xls") or "spreadsheetml" in ct or "ms-excel" in ct:
-        try:
-            import io
-            import openpyxl
-            wb = openpyxl.load_workbook(io.BytesIO(content), read_only=True, data_only=True)
-            rows = []
-            for ws in wb.worksheets:
-                for row in ws.iter_rows(values_only=True):
-                    row_text = "\t".join(str(c) if c is not None else "" for c in row)
-                    if row_text.strip():
-                        rows.append(row_text)
-            return "\n".join(rows)
-        except Exception as e:
-            logger.warning(f"Excel extraction failed: {e}")
-        return ""
-
-    # Any other known binary type — return empty, don't decode
-    if ext in _BINARY_EXTENSIONS:
-        return ""
-
-    # Unknown type — attempt UTF-8 decode but only if it looks like text
+def _extract_text(storage_path: str) -> str:
+    """Use the production-grade universal DocumentParser (OCR, tables, archives, magic bytes, etc.)."""
     try:
-        decoded = content.decode("utf-8")
-        # Heuristic: if >15% of chars are non-printable, treat as binary
-        non_printable = sum(1 for c in decoded if ord(c) < 32 and c not in "\n\r\t")
-        if non_printable / max(len(decoded), 1) > 0.15:
-            return ""
-        return decoded
-    except UnicodeDecodeError:
+        parsed = DocumentParser.parse(storage_path)
+        if parsed.success and parsed.content.strip():
+            logger.info(f"Extracted {len(parsed.content)} chars from {os.path.basename(storage_path)}")
+            return parsed.content.strip()
+        if parsed.error:
+            logger.warning(f"Parser warning for {storage_path}: {parsed.error}")
+        return ""
+    except Exception as e:
+        logger.warning(f"DocumentParser failed for {storage_path}: {e}")
         return ""
 
 
@@ -305,18 +241,15 @@ async def upload_to_conversation(
 
     db = get_supabase()
 
-    # ── Auto-extract text so Claude can read it immediately ───────────────────
+    # ── Auto-extract text using the bulletproof parser ────────────────────────
     try:
-        raw = _read_file(file_info.storage_path)
-        if raw:
-            text = _extract_text(raw, file_info.content_type or "", file_info.original_filename)
-            text = text.replace("\x00", "").strip()
-            if text:
-                db.table("file_uploads").update({
-                    "extracted_text": text,
-                    "status": "ready",
-                    "processed_at": datetime.now(timezone.utc).isoformat(),
-                }).eq("id", file_info.id).execute()
+        text = _extract_text(file_info.storage_path)
+        if text:
+            db.table("file_uploads").update({
+                "extracted_text": text,
+                "status": "ready",
+                "processed_at": datetime.now(timezone.utc).isoformat(),
+            }).eq("id", file_info.id).execute()
     except Exception as ex:
         logger.warning(f"Auto-extract failed for {file_info.original_filename}: {ex}")
 
@@ -481,11 +414,7 @@ async def extract_text(
         raise HTTPException(status_code=404, detail="File not found.")
 
     r = result.data[0]
-    content = _read_file(r["storage_path"])
-    if content is None:
-        raise HTTPException(status_code=404, detail="File data missing from storage.")
-
-    text = _extract_text(content, r.get("content_type", ""), r["original_filename"])
+    text = _extract_text(r["storage_path"])
     if not text.strip():
         raise HTTPException(status_code=400, detail="Could not extract text from this file.")
 

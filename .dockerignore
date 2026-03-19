@@ -13,7 +13,6 @@ venv/
 
 # Node/Frontend (not needed for backend)
 node_modules/
-package.json
 package-lock.json
 Uidesignkit-main/
 

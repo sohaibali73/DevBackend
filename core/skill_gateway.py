@@ -442,7 +442,7 @@ class SkillGateway:
             result = await gateway.execute_async("backtest-expert", user_msg)
         """
         import asyncio
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
         return await loop.run_in_executor(
             None,
             lambda: self.execute(
@@ -467,7 +467,7 @@ class SkillGateway:
         ``asyncio.gather()``.
         """
         import asyncio
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
         return await loop.run_in_executor(
             None,
             lambda: self.execute_multi(skill_requests),

@@ -10,6 +10,10 @@ from db.supabase_client import get_supabase
 
 router = APIRouter(prefix="/backtest", tags=["Backtest Analysis"])
 
+# Model to use for all backtest analysis
+BACKTEST_MODEL = "claude-opus-4-6"
+
+
 @router.post("/upload")
 async def upload_backtest(
         file: UploadFile = File(...),
@@ -39,15 +43,15 @@ async def upload_backtest(
 
     backtest_id = backtest_result.data[0]["id"]
 
-    # Analyze with Claude
+    # Analyze with Claude Opus 4
     try:
         import anthropic
         client = anthropic.AsyncAnthropic(api_key=api_keys["claude"])
 
         # Get analysis
         analysis_response = await client.messages.create(
-            model="claude-3-5-sonnet-20241022",
-            max_tokens=4000,
+            model=BACKTEST_MODEL,
+            max_tokens=8000,
             system=get_backtest_analysis_prompt(),
             messages=[{"role": "user", "content": f"Analyze these backtest results:\n\n{content[:10000]}"}],
         )
@@ -63,8 +67,8 @@ Return ONLY JSON:
 """
 
         metrics_response = await client.messages.create(
-            model="claude-3-5-sonnet-20241022",
-            max_tokens=500,
+            model=BACKTEST_MODEL,
+            max_tokens=1000,
             messages=[{"role": "user", "content": metrics_prompt}],
         )
 
@@ -87,8 +91,8 @@ Provide 5 specific recommendations as JSON array:
 """
 
         rec_response = await client.messages.create(
-            model="claude-3-5-sonnet-20241022",
-            max_tokens=1500,
+            model=BACKTEST_MODEL,
+            max_tokens=2000,
             messages=[{"role": "user", "content": rec_prompt}],
         )
 

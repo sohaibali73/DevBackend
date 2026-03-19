@@ -68,6 +68,8 @@ class GenerateRequest(BaseModel):
     stream: Optional[bool] = Field(False, description="Enable streaming responses")
     uploaded_file_ids: Optional[List[str]] = None  # File references for context
     kb_context: Optional[str] = None  # Additional knowledge base context
+    thinking_mode: Optional[str] = Field(None, description="Extended thinking mode: enabled or disabled")
+    thinking_budget: Optional[int] = Field(None, description="Thinking budget tokens (if enabled)")
 
 
 class OptimizeRequest(BaseModel):
@@ -124,7 +126,17 @@ async def _generate_simple(
 ) -> Dict[str, Any]:
     """Simple one-shot AFL generation without conversation workflow."""
     try:
-        engine = ClaudeAFLEngine(api_key=api_keys["claude"])
+        # Create thinking config if provided
+        thinking_config = None
+        if request.thinking_mode:
+            from core.claude_engine import ThinkingMode, ThinkingConfig
+            mode = ThinkingMode.ENABLED if request.thinking_mode.lower() == "enabled" else ThinkingMode.DISABLED
+            thinking_config = ThinkingConfig(
+                mode=mode,
+                budget_tokens=request.thinking_budget
+            )
+        
+        engine = ClaudeAFLEngine(api_key=api_keys["claude"], thinking_config=thinking_config)
 
         # Parse strategy type
         strat_type = StrategyType.STANDALONE
@@ -285,7 +297,17 @@ async def _generate_with_conversation(
         phase = GenerationPhase.INITIAL
 
     try:
-        engine = ClaudeAFLEngine(api_key=api_keys["claude"])
+        # Create thinking config if provided
+        thinking_config = None
+        if request.thinking_mode:
+            from core.claude_engine import ThinkingMode, ThinkingConfig
+            mode = ThinkingMode.ENABLED if request.thinking_mode.lower() == "enabled" else ThinkingMode.DISABLED
+            thinking_config = ThinkingConfig(
+                mode=mode,
+                budget_tokens=request.thinking_budget
+            )
+        
+        engine = ClaudeAFLEngine(api_key=api_keys["claude"], thinking_config=thinking_config)
 
         # PHASE 1: Ask mandatory questions
         if phase == GenerationPhase.INITIAL:

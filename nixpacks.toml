@@ -2,7 +2,9 @@
 providers = ["python"]
 
 [phases.setup]
-nixPkgs = ["python311", "gcc"]
+# Keep ALL default Railway/Nixpacks packages + our OCR dependencies
+# (the "..." is required — it preserves Python, gcc, etc. that Nixpacks auto-adds)
+nixPkgs = ["...", "python311", "gcc", "poppler_utils", "tesseract5"]
 
 [phases.install]
 cmds = ["pip install --upgrade pip", "pip install -r requirements.txt"]

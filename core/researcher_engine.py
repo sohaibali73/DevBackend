@@ -749,3 +749,30 @@ class ResearcherEngine:
             return 'dovish'
         else:
             return 'neutral'
+
+    def _get_market_sentiment_score(self) -> float:
+        """Get a composite market sentiment score between 0.0 and 1.0"""
+        fear_greed = self._get_fear_greed_index()
+        # Normalize fear/greed (0-100) to 0.0-1.0
+        return fear_greed / 100.0
+
+    async def _generate_macro_outlook(
+        self,
+        economic_data: Dict[str, Any],
+        market_sentiment: Dict[str, Any],
+        fed_policy: Dict[str, Any],
+    ) -> str:
+        """Generate a macro outlook narrative using Claude"""
+        prompt = f"""
+        Based on the following macroeconomic data, provide a concise market outlook:
+
+        Economic Indicators: {economic_data}
+        Market Sentiment: {market_sentiment}
+        Fed Policy: {fed_policy}
+
+        Provide:
+        1. Overall market environment assessment
+        2. Key risks and opportunities
+        3. Short-term outlook (1-3 months)
+        """
+        return self.claude.chat(message=prompt)

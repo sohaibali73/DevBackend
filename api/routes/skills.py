@@ -46,6 +46,8 @@ class SkillCategory(str, Enum):
     MARKET_ANALYSIS = "market_analysis"
     QUANT = "quant"
     RESEARCH = "research"
+    FINANCIAL_MODELING = "financial_modeling"
+    DATA = "data"
 
 
 # ---------------------------------------------------------------------------
@@ -65,9 +67,20 @@ class SkillDefinition:
     enabled: bool = True
     # If True, the skill result is streamed back to the caller
     supports_streaming: bool = True
+    # Anthropic built-in skills have no skill_id — set is_builtin=True
+    is_builtin: bool = False
 
     def to_container(self) -> Dict[str, Any]:
         """Return the ``container`` param for ``client.beta.messages.create()``."""
+        if self.is_builtin:
+            return {
+                "skills": [
+                    {
+                        "name": self.slug,
+                        "type": "anthropic",
+                    }
+                ]
+            }
         return {
             "skills": [
                 {
@@ -89,6 +102,7 @@ class SkillDefinition:
             "tags": self.tags,
             "enabled": self.enabled,
             "supports_streaming": self.supports_streaming,
+            "is_builtin": self.is_builtin,
         }
 
 
@@ -106,7 +120,83 @@ def _register(skill: SkillDefinition) -> SkillDefinition:
     return skill
 
 
-# ── 1. AmiBroker AFL Developer (existing) ──────────────────────────────────
+# ===========================================================================
+# ANTHROPIC BUILT-IN SKILLS
+# These are hosted by Anthropic — no skill_id required.
+# ===========================================================================
+
+# ── B1. Anthropic XLSX ─────────────────────────────────────────────────────
+_register(SkillDefinition(
+    skill_id="",
+    name="Excel (xlsx)",
+    slug="xlsx",
+    description=(
+        "Comprehensive Microsoft Excel (.xlsx) document creation, editing, and "
+        "analysis with support for formulas, formatting, data analysis, and "
+        "visualization. Triggers for: Excel, spreadsheet, .xlsx, data table, "
+        "budget, financial model, chart, graph, tabular data, xls."
+    ),
+    category=SkillCategory.DATA,
+    max_tokens=8192,
+    tags=["excel", "xlsx", "spreadsheet", "data", "formulas"],
+    is_builtin=True,
+))
+
+# ── B2. Anthropic PPTX ─────────────────────────────────────────────────────
+_register(SkillDefinition(
+    skill_id="",
+    name="PowerPoint (pptx)",
+    slug="pptx",
+    description=(
+        "Create, read, edit, and manipulate PowerPoint (.pptx) presentations. "
+        "Triggers whenever a .pptx file is involved — creating decks, pitch decks, "
+        "editing existing slides, extracting text, combining files, working with "
+        "templates, layouts, speaker notes, or comments."
+    ),
+    category=SkillCategory.PRESENTATION,
+    max_tokens=8192,
+    tags=["pptx", "powerpoint", "slides", "presentation", "deck"],
+    is_builtin=True,
+))
+
+# ── B3. Anthropic PDF ──────────────────────────────────────────────────────
+_register(SkillDefinition(
+    skill_id="",
+    name="PDF",
+    slug="pdf",
+    description=(
+        "Comprehensive PDF manipulation toolkit for extracting text and tables, "
+        "creating new PDFs, merging/splitting documents, and handling forms. "
+        "Triggers for: PDF, .pdf, form, extract, merge, split."
+    ),
+    category=SkillCategory.DOCUMENT,
+    max_tokens=8192,
+    tags=["pdf", "extract", "merge", "split", "forms", "documents"],
+    is_builtin=True,
+))
+
+# ── B4. Anthropic DOCX ─────────────────────────────────────────────────────
+_register(SkillDefinition(
+    skill_id="",
+    name="Word Document (docx)",
+    slug="docx",
+    description=(
+        "Create, read, edit, or manipulate Word documents (.docx files). "
+        "Triggers for: Word doc, word document, .docx, reports with formatting, "
+        "tables of contents, headings, page numbers, or letterheads."
+    ),
+    category=SkillCategory.DOCUMENT,
+    max_tokens=8192,
+    tags=["docx", "word", "document", "report", "memo", "letter"],
+    is_builtin=True,
+))
+
+
+# ===========================================================================
+# CUSTOM SKILLS
+# ===========================================================================
+
+# ── 1. AmiBroker AFL Developer ─────────────────────────────────────────────
 _register(SkillDefinition(
     skill_id="skill_01GG6E88EuXr9H9tqLp51sH5",
     name="AmiBroker AFL Developer",
@@ -116,17 +206,16 @@ _register(SkillDefinition(
         "and explains AmiBroker Formula Language code from natural language."
     ),
     category=SkillCategory.AFL,
-    # FIX-10: Replaced the generic "follow best practices" prompt with a precise
-    # rule set that mirrors SKILL.md.  The old prompt mentioned nothing about
-    # function signatures, variable naming, ExRem, or color constraints — so those
-    # rules were only present in the skill's SKILL.md context, not the system
-    # prompt that SkillGateway injects when calling the API directly.
     system_prompt=(
         "You are an expert AmiBroker AFL developer. Always follow these rules:\n\n"
         "FUNCTION SIGNATURES:\n"
         "- Single-arg: RSI(14), ATR(14), ADX(14), CCI(20), MFI(14) — NEVER RSI(Close, 14)\n"
         "- Double-arg: MA(Close, 20), EMA(Close, 20), HHV(High, 20) — NEVER MA(20)\n"
-        "- OBV() takes NO arguments — NEVER OBV(14) or OBV(Close, 14)\n\n"
+        "- OBV() takes NO arguments — NEVER OBV(14) or OBV(Close, 14)\n"
+        "- ParamToggle needs 3 args: ParamToggle('name', 'No|Yes', 0) — 2nd arg MUST be a pipe-separated STRING\n"
+        "- ParamList needs 3 args: ParamList('name', 'A|B|C', 0) — 2nd arg MUST be a pipe-separated STRING\n"
+        "- Param needs 5 args: Param('name', default, min, max, step)\n"
+        "- Optimize needs 5 args: Optimize('name', param_var, min, max, step)\n\n"
         "VARIABLE NAMING:\n"
         "- NEVER shadow built-in functions as variable names\n"
         "- Use RSI_Val not RSI; MALength not MA; RSIPeriod not RSI for param vars\n"
@@ -144,12 +233,16 @@ _register(SkillDefinition(
         "- Custom ColorRGB() allowed ONLY with a unique non-colliding variable name\n"
         "- NEVER assign ColorRGB() to a variable that matches a predefined color name\n\n"
         "BACKTEST SETTINGS (standalone strategies only):\n"
-        "- SetOption('CommissionMode', 2)  ← percentage mode, not flat dollar\n"
+        "- SetOption('CommissionMode', 2)  ← ONLY values 0,1,2 are valid. Mode 3 does NOT exist.\n"
         "- SetOption('CommissionAmount', 0.0005)  ← 0.05% per trade\n"
         "- SetOption('UsePrevBarEquityForPosSizing', True)\n"
         "- SetOption('AllowPositionShrinking', True)\n"
         "- SetOption('InitialEquity', 100000)\n"
         "- PositionSize = 100\n\n"
+        "NEVER DO THESE — they are hallucinations:\n"
+        "- NEVER add if(Status('mode')==1) blocks to run Optimize() — Optimize() works unconditionally\n"
+        "- NEVER use GetBacktesterObject() or bo.GetStats() — this API does not exist in AFL\n"
+        "- NEVER assign plots to panels via a Param variable — panel layout is set in the chart UI\n\n"
         "COMPOSITE MODULES:\n"
         "- Export signals via StaticVarSet('name', Buy) — NOT #include files\n"
         "- Composite modules must NOT contain backtest settings or Plot() calls\n\n"
@@ -157,11 +250,11 @@ _register(SkillDefinition(
         "Parameters → Backtest Settings → Indicators → Trading Logic → "
         "ExRem cleanup → Chart Visualization → Exploration (Filter + AddColumn)\n"
     ),
-    max_tokens=8192,  # FIX-03 alignment: match MAX_TOKENS in claude_engine.py
+    max_tokens=8192,
     tags=["afl", "amibroker", "trading", "code-generation"],
 ))
 
-# ── 2. Potomac Document Generator (potomac-docx-skill) ─────────────────────
+# ── 2. Potomac DOCX ────────────────────────────────────────────────────────
 _register(SkillDefinition(
     skill_id="skill_01Jhf6196usgAdPmnZQGedXM",
     name="Potomac DOCX Skill",
@@ -188,14 +281,14 @@ _register(SkillDefinition(
     tags=["document", "docx", "word", "report", "financial", "writing", "potomac", "fact-sheet", "memo"],
 ))
 
-# Keep backward-compat alias for existing code that uses old slug
+# Backward-compat alias
 SKILL_REGISTRY["potomac-document-generator"] = SKILL_REGISTRY["potomac-docx-skill"]
 
-# ── 3. Potomac PowerPoint Generator (potomac-pptx skill) ──────────────────
+# ── 3. Potomac PPTX ────────────────────────────────────────────────────────
 _register(SkillDefinition(
     skill_id="skill_01R8PDacb1KDHZLR68VsEQ3h",
     name="Potomac PPTX Skill",
-    slug="potomac-pptx-skill",
+    slug="potomac-pptx",                  # Fixed: matches portal slug
     description=(
         "Enhanced PPTX skill with strict Potomac brand compliance. Inherits all "
         "capabilities from the base PPTX skill (markitdown extraction, template "
@@ -216,19 +309,20 @@ _register(SkillDefinition(
     tags=["presentation", "powerpoint", "pptx", "slides", "potomac", "brand"],
 ))
 
-# Keep backward-compat alias for existing code that uses old slug
-SKILL_REGISTRY["potomac-powerpoint-generator"] = SKILL_REGISTRY["potomac-pptx-skill"]
+# Backward-compat aliases for old slug
+SKILL_REGISTRY["potomac-pptx-skill"] = SKILL_REGISTRY["potomac-pptx"]
+SKILL_REGISTRY["potomac-powerpoint-generator"] = SKILL_REGISTRY["potomac-pptx"]
 
-# ── 4. Vercel AI Elements ──────────────────────────────────────────────────
+# ── 4. AI Elements (Vercel AI SDK) ─────────────────────────────────────────
 _register(SkillDefinition(
     skill_id="skill_01ACJvCz8aYdVA91GAqaq2Wx",
-    name="Vercel AI Elements",
-    slug="vercel-ai-elements",
+    name="AI Elements",
+    slug="ai-elements",                   # Fixed: matches portal slug
     description=(
-        "Generates interactive React UI components, charts, diagrams, and "
-        "generative UI elements compatible with the Vercel AI SDK. "
-        "Creates Recharts visualizations, Tailwind-styled components, and "
-        "Mermaid diagrams."
+        "Create new AI chat interface components for the ai-elements library "
+        "following established composable patterns, shadcn/ui integration, and "
+        "Vercel AI SDK conventions. Use when creating new components in "
+        "packages/elements/src or when the user asks to add a new component to ai-elements."
     ),
     category=SkillCategory.UI,
     system_prompt=(
@@ -238,8 +332,11 @@ _register(SkillDefinition(
         "Components must be self-contained and export as default."
     ),
     max_tokens=4096,
-    tags=["ui", "react", "components", "charts", "vercel", "generative-ui"],
+    tags=["ui", "react", "components", "charts", "vercel", "generative-ui", "ai-elements"],
 ))
+
+# Backward-compat alias for old slug
+SKILL_REGISTRY["vercel-ai-elements"] = SKILL_REGISTRY["ai-elements"]
 
 # ── 5. Backtest Expert ─────────────────────────────────────────────────────
 _register(SkillDefinition(
@@ -304,7 +401,7 @@ _register(SkillDefinition(
     tags=["quant", "quantitative", "factor", "portfolio", "statistics", "systematic"],
 ))
 
-# ── 8. Financial Deep Research ──────────────────────────────────────────────
+# ── 8. Financial Deep Research ─────────────────────────────────────────────
 _register(SkillDefinition(
     skill_id="skill_01PdnyT3jcLshnCQJmdPqTR6",
     name="Financial Deep Research",
@@ -347,6 +444,171 @@ _register(SkillDefinition(
     tags=["backtest", "framework", "walk-forward", "monte-carlo", "validation"],
 ))
 
+# ── 10. Doc Interpreter (NEW) ──────────────────────────────────────────────
+_register(SkillDefinition(
+    skill_id="skill_019kkuGzHQxn9uo5wZcZm7tp",
+    name="Document Interpreter",
+    slug="doc-interpreter",
+    description=(
+        "Intelligently read, interpret, and extract structured information from "
+        "images, PDFs, and scanned documents using the Anthropic API. Use whenever "
+        "the user needs to process any visual or document file — including photos, "
+        "screenshots, scanned pages, multi-page PDFs, invoices, contracts, financial "
+        "reports, forms, charts, tables, handwritten notes, or any file where content "
+        "must be seen rather than just read as text. Triggers for: 'read this PDF', "
+        "'extract data from this image', 'OCR this', 'parse this invoice/form/report', "
+        "'interpret this scan', or any file path with .pdf, .png, .jpg, .jpeg, .tiff, "
+        ".bmp, .webp, .gif alongside a question about its contents."
+    ),
+    category=SkillCategory.DOCUMENT,
+    system_prompt=(
+        "You are an expert document analyst and OCR specialist. Read, interpret, "
+        "and extract structured information from images, scanned documents, PDFs, "
+        "invoices, contracts, forms, charts, tables, and handwritten notes. "
+        "Support all extraction modes: general, OCR, table, form, invoice, "
+        "financial, chart, id_document, contract, receipt, handwritten, and "
+        "structured JSON extraction. Be thorough and preserve all information."
+    ),
+    max_tokens=8192,
+    tags=["ocr", "pdf", "image", "document", "extraction", "scan", "invoice", "vision"],
+))
+
+# ── 11. Potomac XLSX (NEW) ─────────────────────────────────────────────────
+_register(SkillDefinition(
+    skill_id="skill_01Av4tiB8MZNEH4goGHnX5Kv",
+    name="Potomac Excel (XLSX)",
+    slug="potomac-xlsx",
+    description=(
+        "Create, read, edit, and modify Potomac-branded Excel spreadsheets (.xlsx) "
+        "for any business purpose. Potomac is a tactical fund manager — spreadsheets "
+        "include performance reports, portfolio trackers, risk dashboards, trade logs, "
+        "fee schedules, budget models, data exports, onboarding checklists, and "
+        "financial models. Use whenever the user requests any Excel or spreadsheet "
+        "work for Potomac, regardless of complexity. Always triggers for .xlsx, .xls, "
+        ".csv tasks involving Potomac content or branding."
+    ),
+    category=SkillCategory.DATA,
+    system_prompt=(
+        "You are an expert Potomac Excel specialist. Create professional, "
+        "brand-compliant Excel spreadsheets using Potomac colors (Yellow #FEC00F, "
+        "Dark Gray #212121), Calibri fonts, and industry-standard financial "
+        "formatting. Always use Excel formulas rather than hardcoded values. "
+        "Apply zebra-stripe row formatting, yellow column headers (ALL CAPS), "
+        "and include disclosure footers on external documents. "
+        "Follow financial color-coding: blue=inputs, black=formulas, green=links."
+    ),
+    max_tokens=8192,
+    tags=["excel", "xlsx", "spreadsheet", "potomac", "financial", "brand", "performance", "portfolio"],
+))
+
+# ── 12. DCF Model (NEW) ────────────────────────────────────────────────────
+_register(SkillDefinition(
+    skill_id="skill_017iHXZfu3T1HKQYTPn9t7KE",
+    name="DCF Model",
+    slug="dcf-model",
+    description=(
+        "Real DCF (Discounted Cash Flow) model creation for equity valuation. "
+        "Retrieves financial data from SEC filings and analyst reports, builds "
+        "comprehensive cash flow projections with proper WACC calculations, performs "
+        "sensitivity analysis, and outputs professional Excel models with executive "
+        "summaries. Use when users need to value a company using DCF methodology, "
+        "request intrinsic value analysis, or ask for detailed financial modeling "
+        "with growth projections and terminal value calculations."
+    ),
+    category=SkillCategory.FINANCIAL_MODELING,
+    system_prompt=(
+        "You are an expert equity valuation analyst specializing in DCF modeling. "
+        "Build rigorous discounted cash flow models with: multi-year FCFF/FCFE "
+        "projections, WACC calculations (cost of equity via CAPM, cost of debt, "
+        "capital structure weighting), terminal value (Gordon Growth and exit "
+        "multiple methods), sensitivity tables (WACC vs growth rate), and "
+        "bridge from enterprise value to equity value per share. "
+        "Always source inputs from SEC filings, cite assumptions, and flag key risks."
+    ),
+    max_tokens=16384,
+    tags=["dcf", "valuation", "financial-model", "excel", "equity", "wacc", "intrinsic-value"],
+))
+
+# ── 13. Initiating Coverage (NEW) ─────────────────────────────────────────
+_register(SkillDefinition(
+    skill_id="skill_01VkFAJJ8G8EQDYty8wA2kEb",
+    name="Initiating Coverage",
+    slug="initiating-coverage",
+    description=(
+        "Create institutional-quality equity research initiation reports through a "
+        "5-task workflow. Tasks must be executed individually with verified "
+        "prerequisites: (1) company research, (2) financial modeling, (3) valuation "
+        "analysis, (4) chart generation, (5) final report assembly. Each task "
+        "produces specific deliverables (markdown docs, Excel models, charts, or "
+        "DOCX reports). Tasks 3–5 have dependencies on earlier tasks."
+    ),
+    category=SkillCategory.RESEARCH,
+    system_prompt=(
+        "You are a senior equity research analyst producing institutional-grade "
+        "initiation of coverage reports. Follow a rigorous 5-task workflow: "
+        "1) Deep company research (business model, competitive moat, industry), "
+        "2) Financial model construction (income, balance sheet, cash flow), "
+        "3) Valuation (DCF, comps, precedent transactions, target price), "
+        "4) Chart generation (performance, financial trends, valuation comps), "
+        "5) Final report assembly (executive summary, investment thesis, risks, "
+        "catalysts, price target, rating). Produce analyst-quality prose."
+    ),
+    max_tokens=16384,
+    tags=["equity-research", "initiation", "coverage", "valuation", "financial-model", "report"],
+))
+
+# ── 14. Datapack Builder (NEW) ────────────────────────────────────────────
+_register(SkillDefinition(
+    skill_id="skill_01JqFHZGt3XKGHjuEukkB5x2",
+    name="Datapack Builder",
+    slug="datapack-builder",
+    description=(
+        "Build professional financial services data packs from various sources "
+        "including CIMs, offering memorandums, SEC filings, web search, or MCP "
+        "servers. Extract, normalize, and standardize financial data into investment "
+        "committee-ready Excel workbooks with consistent structure, proper formatting, "
+        "and documented assumptions. Use for M&A due diligence, private equity "
+        "analysis, investment committee materials, and standardizing financial "
+        "reporting across portfolio companies. Do not use for simple financial "
+        "calculations or working with already-completed data packs."
+    ),
+    category=SkillCategory.FINANCIAL_MODELING,
+    system_prompt=(
+        "You are an expert financial data analyst specializing in investment "
+        "committee materials and due diligence data packs. Extract and normalize "
+        "financial data from CIMs, offering memoranda, SEC filings, and other "
+        "sources. Standardize into consistent Excel workbooks with: income "
+        "statement, balance sheet, cash flow statement, KPI dashboard, "
+        "management projections vs actuals, and documented assumptions. "
+        "Flag data quality issues, missing information, and normalizations applied."
+    ),
+    max_tokens=16384,
+    tags=["datapack", "due-diligence", "private-equity", "m-and-a", "excel", "financial-data", "cim"],
+))
+
+# ── 15. Artifacts Builder (NEW) ───────────────────────────────────────────
+_register(SkillDefinition(
+    skill_id="skill_01XonCKm9QM3jUbtxt9Gtm9Q",
+    name="Artifacts Builder",
+    slug="artifacts-builder",
+    description=(
+        "Suite of tools for creating elaborate, multi-component claude.ai HTML "
+        "artifacts using modern frontend web technologies (React, Tailwind CSS, "
+        "shadcn/ui). Use for complex artifacts requiring state management, routing, "
+        "or shadcn/ui components — not for simple single-file HTML/JSX artifacts."
+    ),
+    category=SkillCategory.UI,
+    system_prompt=(
+        "You are an expert frontend engineer building complex, multi-component "
+        "React artifacts. Use Tailwind CSS for styling, shadcn/ui for components, "
+        "and proper state management (useState, useReducer, Context) for "
+        "interactivity. Build modular, well-structured components with clear "
+        "separation of concerns. All artifacts must be self-contained and functional."
+    ),
+    max_tokens=8192,
+    tags=["artifacts", "react", "tailwind", "shadcn", "ui", "components", "frontend"],
+))
+
 
 # ---------------------------------------------------------------------------
 # Helper functions
@@ -368,30 +630,113 @@ def get_skill_by_id(skill_id: str) -> Optional[SkillDefinition]:
 def list_skills(
     category: Optional[SkillCategory] = None,
     enabled_only: bool = True,
+    include_builtins: bool = True,
 ) -> List[SkillDefinition]:
     """List skills, optionally filtered by category."""
     skills = list(SKILL_REGISTRY.values())
     if enabled_only:
         skills = [s for s in skills if s.enabled]
+    if not include_builtins:
+        skills = [s for s in skills if not s.is_builtin]
     if category:
         skills = [s for s in skills if s.category == category]
-    return skills
+    # Deduplicate (aliases share the same object — compare by skill_id+slug)
+    seen, unique = set(), []
+    for s in skills:
+        key = (s.skill_id, s.slug)
+        if key not in seen:
+            seen.add(key)
+            unique.append(s)
+    return unique
 
 
 def list_skills_dict(
     category: Optional[str] = None,
     enabled_only: bool = True,
+    include_builtins: bool = True,
 ) -> List[Dict[str, Any]]:
     """List skills as serializable dicts."""
     cat = SkillCategory(category) if category else None
-    return [s.to_dict() for s in list_skills(category=cat, enabled_only=enabled_only)]
+    return [s.to_dict() for s in list_skills(
+        category=cat, enabled_only=enabled_only, include_builtins=include_builtins
+    )]
 
 
 def get_categories() -> List[Dict[str, Any]]:
-    """Return list of categories with counts."""
+    """Return list of categories with counts (deduped, no aliases)."""
     from collections import Counter
-    counts = Counter(s.category.value for s in SKILL_REGISTRY.values() if s.enabled)
+    counts = Counter(
+        s.category.value
+        for s in list_skills(enabled_only=True)
+    )
     return [
-        {"category": cat.value, "label": cat.value.replace("_", " ").title(), "count": counts.get(cat.value, 0)}
+        {
+            "category": cat.value,
+            "label": cat.value.replace("_", " ").title(),
+            "count": counts.get(cat.value, 0),
+        }
         for cat in SkillCategory
     ]
+
+
+# ---------------------------------------------------------------------------
+# FastAPI Router
+# ---------------------------------------------------------------------------
+
+from fastapi import APIRouter, HTTPException, Depends, Query  # noqa: E402
+from api.dependencies import get_current_user_id  # noqa: E402
+
+router = APIRouter(prefix="/skills", tags=["Skills"])
+
+
+@router.get("")
+async def list_all_skills(
+    category: Optional[str] = Query(None, description="Filter by category slug"),
+    include_builtins: bool = Query(True, description="Include Anthropic built-in skills"),
+    user_id: str = Depends(get_current_user_id),
+):
+    """List all registered custom beta skills, optionally filtered by category."""
+    skills = list_skills_dict(
+        category=category,
+        enabled_only=True,
+        include_builtins=include_builtins,
+    )
+    return {"skills": skills, "count": len(skills)}
+
+
+@router.get("/categories")
+async def list_skill_categories(
+    user_id: str = Depends(get_current_user_id),
+):
+    """List all skill categories with skill counts."""
+    return {"categories": get_categories()}
+
+
+@router.get("/jobs")
+async def list_skill_jobs(
+    user_id: str = Depends(get_current_user_id),
+):
+    """
+    List active skill execution jobs.
+    Skills are executed synchronously/streamed — this returns an empty list
+    but is kept for frontend API compatibility.
+    """
+    return {"jobs": [], "count": 0}
+
+
+@router.get("/{slug}")
+async def get_skill_detail(
+    slug: str,
+    user_id: str = Depends(get_current_user_id),
+):
+    """Get full details for a specific skill by its slug."""
+    skill = get_skill(slug)
+    if skill is None:
+        available = sorted(
+            {s.slug for s in list_skills(enabled_only=False, include_builtins=True)}
+        )
+        raise HTTPException(
+            status_code=404,
+            detail=f"Skill '{slug}' not found. Available slugs: {available}",
+        )
+    return skill.to_dict()

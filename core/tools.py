@@ -57,7 +57,34 @@ import urllib.parse
 from typing import Dict, Any, List, Optional, Tuple
 from datetime import datetime, timedelta
 from collections import OrderedDict
-from functools import lru_cache
+
+# ---------------------------------------------------------------------------
+# Tool Search — tool-type constants (no extra beta headers required)
+# ---------------------------------------------------------------------------
+# Adding tool_search_tool_regex or tool_search_tool_bm25 to the tools list
+# activates deferred (on-demand) loading of tool definitions.
+# This keeps context usage low when large tool catalogs are in use.
+# See: https://platform.claude.com/docs/en/agents-and-tools/tool-use/tool-search-tool
+
+TOOL_SEARCH_REGEX_ENTRY: Dict[str, str] = {
+    "type": "tool_search_tool_regex_20251119",
+    "name": "tool_search_tool_regex",
+}
+
+TOOL_SEARCH_BM25_ENTRY: Dict[str, str] = {
+    "type": "tool_search_tool_bm25_20251119",
+    "name": "tool_search_tool_bm25",
+}
+
+# Tools always loaded immediately (not deferred) even in tool-search mode.
+# Keep this to 3-5 most frequently used tools.
+TOOL_SEARCH_NON_DEFERRED: frozenset = frozenset({
+    "web_search",           # built-in, always present
+    "execute_python",       # used on nearly every request
+    "search_knowledge_base",
+    "get_stock_data",
+    "technical_analysis",
+})
 
 # ── Optional heavy dependencies — guarded with try/except at use sites ────────
 try:
@@ -432,6 +459,7 @@ TOOL_DEFINITIONS = [
     # Custom: AFL Validator
     {
         "name": "validate_afl",
+        "defer_loading": True,
         "description": "Validate AFL (AmiBroker Formula Language) code for syntax errors and common issues.",
         "input_schema": {
             "type": "object",
@@ -444,6 +472,7 @@ TOOL_DEFINITIONS = [
     # Custom: Generate AFL
     {
         "name": "generate_afl_code",
+        "defer_loading": True,
         "description": "Generate AmiBroker AFL code from a natural language description.",
         "input_schema": {
             "type": "object",
@@ -457,6 +486,7 @@ TOOL_DEFINITIONS = [
     # Custom: Debug AFL
     {
         "name": "debug_afl_code",
+        "defer_loading": True,
         "description": "Debug and fix errors in AFL code.",
         "input_schema": {
             "type": "object",
@@ -470,6 +500,7 @@ TOOL_DEFINITIONS = [
     # Custom: Explain AFL
     {
         "name": "explain_afl_code",
+        "defer_loading": True,
         "description": "Explain AFL code in plain English.",
         "input_schema": {
             "type": "object",
@@ -482,6 +513,7 @@ TOOL_DEFINITIONS = [
     # Custom: Sanity Check AFL
     {
         "name": "sanity_check_afl",
+        "defer_loading": True,
         "description": "Performs comprehensive sanity check on AFL code and automatically fixes common issues. USE THIS BEFORE PRESENTING ANY AFL CODE TO THE USER.",
         "input_schema": {
             "type": "object",
@@ -495,6 +527,7 @@ TOOL_DEFINITIONS = [
     # Custom: Stock Chart
     {
         "name": "get_stock_chart",
+        "defer_loading": True,
         "description": "Fetch full OHLCV candlestick data for rendering interactive stock charts.",
         "input_schema": {
             "type": "object",
@@ -523,6 +556,7 @@ TOOL_DEFINITIONS = [
     # Custom: Weather
     {
         "name": "get_weather",
+        "defer_loading": True,
         "description": "Get current weather conditions and forecast for a location.",
         "input_schema": {
             "type": "object",
@@ -536,6 +570,7 @@ TOOL_DEFINITIONS = [
     # Custom: News Headlines
     {
         "name": "get_news",
+        "defer_loading": True,
         "description": "Fetch recent news headlines with summaries and sentiment analysis.",
         "input_schema": {
             "type": "object",
@@ -550,6 +585,7 @@ TOOL_DEFINITIONS = [
     # Custom: Chart Builder
     {
         "name": "create_chart",
+        "defer_loading": True,
         "description": "Create a data visualization chart.",
         "input_schema": {
             "type": "object",
@@ -567,6 +603,7 @@ TOOL_DEFINITIONS = [
     # Custom: Code Sandbox
     {
         "name": "code_sandbox",
+        "defer_loading": True,
         "description": "Create an interactive code sandbox with editable code, run capability, and output terminal.",
         "input_schema": {
             "type": "object",
@@ -582,6 +619,7 @@ TOOL_DEFINITIONS = [
     # Custom: Stock Screener
     {
         "name": "screen_stocks",
+        "defer_loading": True,
         "description": "Screen stocks by criteria like market cap, P/E ratio, sector, dividend yield.",
         "input_schema": {
             "type": "object",
@@ -597,6 +635,7 @@ TOOL_DEFINITIONS = [
     # Custom: Compare Stocks
     {
         "name": "compare_stocks",
+        "defer_loading": True,
         "description": "Compare multiple stocks side by side with key metrics.",
         "input_schema": {
             "type": "object",
@@ -610,6 +649,7 @@ TOOL_DEFINITIONS = [
     # Custom: Sector Performance
     {
         "name": "get_sector_performance",
+        "defer_loading": True,
         "description": "Get performance data for market sectors.",
         "input_schema": {
             "type": "object",
@@ -621,6 +661,7 @@ TOOL_DEFINITIONS = [
     # Custom: Position Size Calculator
     {
         "name": "calculate_position_size",
+        "defer_loading": True,
         "description": "Calculate optimal position size based on account size, risk tolerance, entry/stop-loss prices.",
         "input_schema": {
             "type": "object",
@@ -637,6 +678,7 @@ TOOL_DEFINITIONS = [
     # Custom: Correlation Matrix
     {
         "name": "calculate_correlation",
+        "defer_loading": True,
         "description": "Calculate the correlation matrix between multiple stocks.",
         "input_schema": {
             "type": "object",
@@ -650,6 +692,7 @@ TOOL_DEFINITIONS = [
     # Custom: Dividend Info
     {
         "name": "get_dividend_info",
+        "defer_loading": True,
         "description": "Get detailed dividend information for a stock.",
         "input_schema": {
             "type": "object",
@@ -660,6 +703,7 @@ TOOL_DEFINITIONS = [
     # Custom: Risk Metrics
     {
         "name": "calculate_risk_metrics",
+        "defer_loading": True,
         "description": "Calculate comprehensive risk metrics (Sharpe, Sortino, max drawdown, VaR, beta).",
         "input_schema": {
             "type": "object",
@@ -675,12 +719,14 @@ TOOL_DEFINITIONS = [
     # Custom: Market Overview
     {
         "name": "get_market_overview",
+        "defer_loading": True,
         "description": "Get a comprehensive market overview including major indices, VIX, commodities, crypto.",
         "input_schema": {"type": "object", "properties": {}}
     },
     # Custom: Quick Backtest
     {
         "name": "backtest_quick",
+        "defer_loading": True,
         "description": "Run a quick backtest of a simple trading strategy.",
         "input_schema": {
             "type": "object",
@@ -697,6 +743,7 @@ TOOL_DEFINITIONS = [
     # Custom: Options Snapshot
     {
         "name": "get_options_snapshot",
+        "defer_loading": True,
         "description": "Get options data overview for a stock.",
         "input_schema": {
             "type": "object",
@@ -707,6 +754,7 @@ TOOL_DEFINITIONS = [
     # Custom: Portfolio Analysis
     {
         "name": "portfolio_analysis",
+        "defer_loading": True,
         "description": "Analyze a portfolio's holdings, allocation, performance metrics, and risk.",
         "input_schema": {
             "type": "object",
@@ -720,6 +768,7 @@ TOOL_DEFINITIONS = [
     # Custom: Watchlist
     {
         "name": "get_watchlist",
+        "defer_loading": True,
         "description": "Get user's stock watchlist with current prices and changes.",
         "input_schema": {
             "type": "object",
@@ -731,6 +780,7 @@ TOOL_DEFINITIONS = [
     # Custom: Sector Heatmap
     {
         "name": "sector_heatmap",
+        "defer_loading": True,
         "description": "Generate sector performance heatmap data.",
         "input_schema": {
             "type": "object",
@@ -742,6 +792,7 @@ TOOL_DEFINITIONS = [
     # Custom: Options Chain
     {
         "name": "get_options_chain",
+        "defer_loading": True,
         "description": "Get detailed options chain data with strikes, expirations, Greeks, and volume.",
         "input_schema": {
             "type": "object",
@@ -755,12 +806,14 @@ TOOL_DEFINITIONS = [
     # Custom: Market Sentiment
     {
         "name": "get_market_sentiment",
+        "defer_loading": True,
         "description": "Get market sentiment indicators including fear/greed index, put/call ratios, VIX.",
         "input_schema": {"type": "object", "properties": {}}
     },
     # Custom: Crypto Data
     {
         "name": "get_crypto_data",
+        "defer_loading": True,
         "description": "Get cryptocurrency prices, market data, and basic metrics.",
         "input_schema": {
             "type": "object",
@@ -772,6 +825,7 @@ TOOL_DEFINITIONS = [
     # Custom: Trade Signal
     {
         "name": "generate_trade_signal",
+        "defer_loading": True,
         "description": "Generate trade signals with confidence levels.",
         "input_schema": {
             "type": "object",
@@ -785,6 +839,7 @@ TOOL_DEFINITIONS = [
     # Custom: Risk Assessment
     {
         "name": "risk_assessment",
+        "defer_loading": True,
         "description": "Comprehensive risk assessment for a stock.",
         "input_schema": {
             "type": "object",
@@ -798,6 +853,7 @@ TOOL_DEFINITIONS = [
     # Custom: News Digest
     {
         "name": "news_digest",
+        "defer_loading": True,
         "description": "Enhanced news digest with impact analysis.",
         "input_schema": {
             "type": "object",
@@ -811,6 +867,7 @@ TOOL_DEFINITIONS = [
     # Custom: Run Backtest
     {
         "name": "run_backtest",
+        "defer_loading": True,
         "description": "Enhanced backtesting with date range support.",
         "input_schema": {
             "type": "object",
@@ -826,6 +883,7 @@ TOOL_DEFINITIONS = [
     # Custom: Live Scores
     {
         "name": "get_live_scores",
+        "defer_loading": True,
         "description": "Get live and recent sports scores for NBA, NFL, MLB, NHL, soccer, and more.",
         "input_schema": {
             "type": "object",
@@ -839,6 +897,7 @@ TOOL_DEFINITIONS = [
     # Custom: Search Trends
     {
         "name": "get_search_trends",
+        "defer_loading": True,
         "description": "Get current trending search topics.",
         "input_schema": {
             "type": "object",
@@ -852,6 +911,7 @@ TOOL_DEFINITIONS = [
     # Custom: LinkedIn Post
     {
         "name": "create_linkedin_post",
+        "defer_loading": True,
         "description": "Generate a professional LinkedIn post preview.",
         "input_schema": {
             "type": "object",
@@ -867,6 +927,7 @@ TOOL_DEFINITIONS = [
     # Custom: Preview Website
     {
         "name": "preview_website",
+        "defer_loading": True,
         "description": "Get a preview of a website including metadata and status.",
         "input_schema": {
             "type": "object",
@@ -877,6 +938,7 @@ TOOL_DEFINITIONS = [
     # Custom: Order Food
     {
         "name": "order_food",
+        "defer_loading": True,
         "description": "Search for restaurants and food delivery.",
         "input_schema": {
             "type": "object",
@@ -891,6 +953,7 @@ TOOL_DEFINITIONS = [
     # Custom: Track Flight
     {
         "name": "track_flight",
+        "defer_loading": True,
         "description": "Track a flight by its flight number.",
         "input_schema": {
             "type": "object",
@@ -904,6 +967,7 @@ TOOL_DEFINITIONS = [
     # Custom: Search Flights
     {
         "name": "search_flights",
+        "defer_loading": True,
         "description": "Search for available flights between two cities/airports.",
         "input_schema": {
             "type": "object",
@@ -925,6 +989,7 @@ TOOL_DEFINITIONS = [
     # without any user-facing Skills page. Claude decides when to call them.
     {
         "name": "run_financial_deep_research",
+        "defer_loading": True,
         "description": (
             "Performs deep, institutional-grade financial research on a company or market topic. "
             "Use when the user needs comprehensive fundamental analysis, earnings quality assessment, "
@@ -948,6 +1013,7 @@ TOOL_DEFINITIONS = [
     },
     {
         "name": "run_backtest_analysis",
+        "defer_loading": True,
         "description": (
             "Performs expert-level backtest analysis on a trading strategy or equity curve. "
             "Use when the user shares backtest results, strategy performance data, or asks for deep "
@@ -971,6 +1037,7 @@ TOOL_DEFINITIONS = [
     },
     {
         "name": "run_quant_analysis",
+        "defer_loading": True,
         "description": (
             "Runs advanced quantitative analysis using factor models, portfolio optimization, "
             "statistical arbitrage, and systematic strategy construction. Use for complex quantitative "
@@ -994,6 +1061,7 @@ TOOL_DEFINITIONS = [
     },
     {
         "name": "run_bubble_detection",
+        "defer_loading": True,
         "description": (
             "Analyzes US equity markets or specific sectors for bubble indicators. "
             "Use when the user asks about market valuations, crash risk, bubble analysis, "
@@ -1017,6 +1085,7 @@ TOOL_DEFINITIONS = [
     },
     {
         "name": "generate_afl_with_skill",
+        "defer_loading": True,
         "description": (
             "Generates high-quality AmiBroker AFL code using the specialized AFL Developer skill. "
             "Use this for COMPLEX AFL generation requests that require expert-level code with proper "
@@ -1046,23 +1115,35 @@ TOOL_DEFINITIONS = [
             "required": ["request"]
         }
     },
-    # Generic Skill Invocation — use for document/presentation generation and specialist skills
+    # Generic Skill Invocation — use for document/presentation/excel generation and specialist skills
     {
         "name": "invoke_skill",
+        "defer_loading": True,
         "description": (
             "Invoke a registered Claude custom skill by its slug. Use this for document generation, "
-            "presentation creation, and specialist analysis. Available skill slugs:\n"
+            "presentation creation, Excel spreadsheets, and specialist analysis. Available skill slugs:\n"
             "- 'potomac-docx-skill': Create professional Potomac-branded Word documents (.docx) — "
             "reports, memos, fact sheets, market commentaries, proposals, SOPs, any business document\n"
-            "- 'potomac-pptx-skill': Create Potomac-branded PowerPoint presentations (.pptx) — "
+            "- 'potomac-pptx': Create Potomac-branded PowerPoint presentations (.pptx) — "
             "pitch decks, investor updates, quarterly reviews, strategy overviews with brand compliance\n"
+            "- 'potomac-xlsx': Create Potomac-branded Excel spreadsheets (.xlsx) — "
+            "performance reports, portfolio trackers, risk dashboards, trade logs, financial models, any spreadsheet\n"
+            "- 'xlsx': Anthropic built-in Excel skill — general Excel/spreadsheet creation and editing\n"
+            "- 'pptx': Anthropic built-in PowerPoint skill — general presentation creation and editing\n"
+            "- 'docx': Anthropic built-in Word skill — general Word document creation and editing\n"
+            "- 'pdf': Anthropic built-in PDF skill — PDF creation, extraction, and manipulation\n"
             "- 'amibroker-afl-developer': Expert AFL code generation for complex trading strategies\n"
             "- 'financial-deep-research': Deep institutional-grade financial research reports\n"
             "- 'backtest-expert': Expert backtest analysis and strategy evaluation\n"
             "- 'quant-analyst': Quantitative analysis, factor models, portfolio optimization\n"
             "- 'us-market-bubble-detector': Bubble risk analysis for US equities\n"
             "- 'backtesting-frameworks': Backtest framework design and walk-forward analysis\n"
-            "- 'vercel-ai-elements': React UI components and charts generation"
+            "- 'ai-elements': React UI components and charts generation\n"
+            "- 'doc-interpreter': Extract and interpret data from PDFs, images, scanned documents\n"
+            "- 'dcf-model': Build DCF valuation models in Excel\n"
+            "- 'initiating-coverage': Institutional equity research initiation reports\n"
+            "- 'datapack-builder': Financial data packs for M&A/PE due diligence\n"
+            "- 'artifacts-builder': Complex multi-component React/HTML artifacts"
         ),
         "input_schema": {
             "type": "object",
@@ -1083,6 +1164,7 @@ TOOL_DEFINITIONS = [
     # ── Document & Presentation Generation ────────────────────────────────────
     {
         "name": "create_word_document",
+        "defer_loading": True,
         "description": (
             "Create a professional Potomac-branded Word document (.docx). "
             "Use this when the user asks for a document, report, memo, fact sheet, "
@@ -1102,6 +1184,7 @@ TOOL_DEFINITIONS = [
     },
     {
         "name": "create_pptx_with_skill",
+        "defer_loading": True,
         "description": (
             "Create a professional Potomac-branded PowerPoint presentation (.pptx). "
             "Use this when the user asks for a presentation, pitch deck, slide deck, "
@@ -1125,6 +1208,7 @@ TOOL_DEFINITIONS = [
     # company identifiers for any publicly traded company.
     {
         "name": "edgar_get_security_id",
+        "defer_loading": True,
         "description": (
             "Resolve a stock ticker symbol or company name to its SEC EDGAR security identifiers. "
             "Returns the CIK (Central Index Key), padded CIK, company name, SIC code, SIC description, "
@@ -1144,6 +1228,7 @@ TOOL_DEFINITIONS = [
     },
     {
         "name": "edgar_search_companies",
+        "defer_loading": True,
         "description": (
             "Search the full SEC company registry for companies matching a name or ticker substring. "
             "Returns a ranked list of matching companies with their CIK, name, and ticker. "
@@ -1167,6 +1252,7 @@ TOOL_DEFINITIONS = [
     },
     {
         "name": "edgar_get_filings",
+        "defer_loading": True,
         "description": (
             "Fetch the list of SEC filings for a company identified by ticker symbol. "
             "Supports filtering by form type (10-K annual, 10-Q quarterly, 8-K material events, "
@@ -1202,6 +1288,7 @@ TOOL_DEFINITIONS = [
     },
     {
         "name": "edgar_get_financials",
+        "defer_loading": True,
         "description": (
             "Fetch official SEC-reported key financial metrics for a company using XBRL structured data. "
             "Returns the most recent values for: Revenues, NetIncomeLoss, EarningsPerShareBasic, "
@@ -1223,6 +1310,7 @@ TOOL_DEFINITIONS = [
     },
     {
         "name": "edgar_get_concept",
+        "defer_loading": True,
         "description": (
             "Fetch the full historical time-series for a single XBRL financial concept from SEC filings. "
             "Returns annual and quarterly values with fiscal period labels, filing dates, and accession numbers. "
@@ -1263,6 +1351,7 @@ TOOL_DEFINITIONS = [
     },
     {
         "name": "edgar_search_fulltext",
+        "defer_loading": True,
         "description": (
             "Search the full text of ALL SEC EDGAR filings using the SEC's EFTS full-text search engine. "
             "Supports boolean operators (AND, OR, NOT), exact phrases (in quotes), and filtering by "
@@ -1302,6 +1391,7 @@ TOOL_DEFINITIONS = [
     },
     {
         "name": "edgar_get_insider_transactions",
+        "defer_loading": True,
         "description": (
             "Fetch recent SEC Form 4 insider transaction filings for a company. "
             "Form 4 must be filed within 2 business days of any insider buy/sell/gift of company securities. "
@@ -1326,6 +1416,7 @@ TOOL_DEFINITIONS = [
     },
     {
         "name": "edgar_get_material_events",
+        "defer_loading": True,
         "description": (
             "Fetch recent 8-K (Current Report) filings for a company. "
             "8-Ks disclose material events including earnings releases, M&A activity, "
@@ -2599,6 +2690,18 @@ Return ONLY the JSON object, nothing else."""
         outline = json.loads(result_text)
         presentation_id, pptx_bytes = _write_pptx_to_memory(outline, title)
 
+        try:
+            from core.file_store import store_file
+            store_file(
+                data=pptx_bytes,
+                filename=f"{title.replace(' ', '_')}.pptx",
+                file_type="pptx",
+                tool_name="create_presentation",
+                file_id=presentation_id,
+            )
+        except Exception as _fs_err:
+            logger.warning("file_store persist failed for pptx: %s", _fs_err)
+
         return {
             "success": True, "tool": "create_presentation",
             "presentation_id": presentation_id,
@@ -2607,7 +2710,7 @@ Return ONLY the JSON object, nothing else."""
             "template_used": template_id, "template_id": template_id, "author": author,
             "slide_count": len(outline.get("slides", [])),
             "file_size_kb": round(len(pptx_bytes) / 1024, 1),
-            "download_url": f"/chat/presentation/{presentation_id}",
+            "download_url": f"/files/{presentation_id}/download",
             "method":      "potomac_pptx_generator",
             "fetch_time_ms": round((time.time() - start_time) * 1000, 2),
         }
@@ -2627,6 +2730,19 @@ Return ONLY the JSON object, nothing else."""
             fallback_slides.append({"type": "closing"})
             fallback_outline = {"title": title, "slides": fallback_slides}
             presentation_id, pptx_bytes = _write_pptx_to_memory(fallback_outline, title)
+
+            try:
+                from core.file_store import store_file
+                store_file(
+                    data=pptx_bytes,
+                    filename=f"{title.replace(' ', '_')}.pptx",
+                    file_type="pptx",
+                    tool_name="create_presentation",
+                    file_id=presentation_id,
+                )
+            except Exception as _fs_err:
+                logger.warning("file_store persist failed for pptx: %s", _fs_err)
+
             return {
                 "success": True, "tool": "create_presentation",
                 "presentation_id": presentation_id,
@@ -2634,7 +2750,7 @@ Return ONLY the JSON object, nothing else."""
                 "title":      title,
                 "slide_count": len(fallback_slides),
                 "file_size_kb": round(len(pptx_bytes) / 1024, 1),
-                "download_url": f"/chat/presentation/{presentation_id}",
+                "download_url": f"/files/{presentation_id}/download",
                 "method":     "potomac_pptx_generator_fallback",
                 "fetch_time_ms": round((time.time() - start_time) * 1000, 2),
             }
@@ -3630,7 +3746,7 @@ def _edgar_get_material_events(ti: Dict[str, Any]) -> Dict[str, Any]:
 
 def _invoke_skill(tool_input: Dict, api_key: str) -> Dict:
     """Invoke a registered skill by slug via the SkillGateway.
-    
+
     If the skill produces file artifacts (e.g. .docx, .pptx), downloads them
     from Claude's Files API and stores them in the local file_store for serving.
     """
@@ -3641,9 +3757,48 @@ def _invoke_skill(tool_input: Dict, api_key: str) -> Dict:
         from core.file_store import store_file
         gw     = SkillGateway(api_key=api_key)
         skill_slug = tool_input.get("skill_slug", "")
+
+        # Accept any reasonable field name for the user message — Claude sometimes
+        # uses "instructions", "prompt", "request", "description", "task", "text",
+        # "input", "task_description", or other variations instead of "message".
+        _KNOWN_META_FIELDS = {"skill_slug", "extra_context"}
+        user_message = (
+            tool_input.get("message")
+            or tool_input.get("instructions")
+            or tool_input.get("prompt")
+            or tool_input.get("request")
+            or tool_input.get("description")
+            or tool_input.get("content")
+            or tool_input.get("query")
+            or tool_input.get("task")
+            or tool_input.get("text")
+            or tool_input.get("input")
+            or tool_input.get("task_description")
+            or tool_input.get("user_message")
+            or ""
+        )
+
+        # Last resort: build message from any unknown fields Claude passed in
+        if not user_message:
+            extra_fields = {
+                k: v for k, v in tool_input.items()
+                if k not in _KNOWN_META_FIELDS and v and isinstance(v, str)
+            }
+            if extra_fields:
+                user_message = " | ".join(f"{k}: {v}" for k, v in extra_fields.items())
+
+        if not user_message:
+            # Absolute fallback — ask the skill to proceed with just the slug context
+            user_message = f"Please execute the {skill_slug} skill with your best capabilities."
+            logger.warning(
+                "invoke_skill called with no message field for slug '%s' — using default prompt. "
+                "tool_input keys: %s",
+                skill_slug, list(tool_input.keys()),
+            )
+
         result = gw.execute(
             skill_slug=skill_slug,
-            user_message=tool_input.get("message",""),
+            user_message=user_message,
             extra_context=tool_input.get("extra_context",""),
         )
 
@@ -3707,7 +3862,7 @@ def _invoke_skill(tool_input: Dict, api_key: str) -> Dict:
 def _create_word_document(tool_input: Dict, api_key: str) -> Dict:
     """
     Create a Potomac-branded Word document using the potomac-docx-skill.
-    
+
     Flow:
     1. Invoke the skill to generate document content
     2. Convert the markdown content to a branded .docx file
@@ -3715,14 +3870,14 @@ def _create_word_document(tool_input: Dict, api_key: str) -> Dict:
     """
     if not api_key:
         return {"success": False, "error": "API key required for document generation", "tool": "create_word_document"}
-    
+
     title = tool_input.get("title", "Untitled Document")
     description = tool_input.get("description", "")
     doc_type = tool_input.get("doc_type", "report")
     subtitle = tool_input.get("subtitle", "")
-    
+
     start_time = time.time()
-    
+
     try:
         from core.skill_gateway import SkillGateway
         from core.file_store import store_file
@@ -3861,12 +4016,9 @@ def _create_pptx_with_skill(tool_input: Dict, api_key: str) -> Dict:
             return {"success": False, "error": "Skill returned empty content", "tool": "create_pptx_with_skill"}
 
         # Try to parse JSON from the skill output
-        import re as _re
-
-        # Try to extract JSON from the response
         json_match = None
         # Look for JSON block in markdown fences
-        json_fenced = _re.search(r'```(?:json)?\s*\n([\s\S]*?)\n```', content_text)
+        json_fenced = re_mod.search(r'```(?:json)?\s*\n([\s\S]*?)\n```', content_text)
         if json_fenced:
             try:
                 json_match = json.loads(json_fenced.group(1))
@@ -3887,6 +4039,19 @@ def _create_pptx_with_skill(tool_input: Dict, api_key: str) -> Dict:
                 outline["title"] = title
             presentation_id, pptx_bytes = _write_pptx_to_memory(outline, title)
 
+            try:
+                from core.file_store import store_file
+                safe_title = title.replace(" ", "_").replace("/", "-")[:50]
+                store_file(
+                    data=pptx_bytes,
+                    filename=f"{safe_title}.pptx",
+                    file_type="pptx",
+                    tool_name="create_pptx_with_skill",
+                    file_id=presentation_id,
+                )
+            except Exception as _fs_err:
+                logger.warning("file_store persist failed for pptx: %s", _fs_err)
+
             return {
                 "success": True,
                 "tool": "create_pptx_with_skill",
@@ -3896,7 +4061,7 @@ def _create_pptx_with_skill(tool_input: Dict, api_key: str) -> Dict:
                 "subtitle": subtitle,
                 "slide_count": len(outline.get("slides", [])),
                 "file_size_kb": round(len(pptx_bytes) / 1024, 1),
-                "download_url": f"/chat/presentation/{presentation_id}",
+                "download_url": f"/files/{presentation_id}/download",
                 "method": "potomac_pptx_skill_assembled",
                 "skill_used": "potomac-pptx-skill",
                 "execution_time": skill_result.get("execution_time", 0),
@@ -3943,6 +4108,19 @@ def _create_pptx_with_skill(tool_input: Dict, api_key: str) -> Dict:
             outline = {"title": title, "slides": fallback_slides}
             presentation_id, pptx_bytes = _write_pptx_to_memory(outline, title)
 
+            try:
+                from core.file_store import store_file
+                safe_title = title.replace(" ", "_").replace("/", "-")[:50]
+                store_file(
+                    data=pptx_bytes,
+                    filename=f"{safe_title}.pptx",
+                    file_type="pptx",
+                    tool_name="create_pptx_with_skill",
+                    file_id=presentation_id,
+                )
+            except Exception as _fs_err:
+                logger.warning("file_store persist failed for pptx: %s", _fs_err)
+
             return {
                 "success": True,
                 "tool": "create_pptx_with_skill",
@@ -3952,7 +4130,7 @@ def _create_pptx_with_skill(tool_input: Dict, api_key: str) -> Dict:
                 "subtitle": subtitle,
                 "slide_count": len(fallback_slides),
                 "file_size_kb": round(len(pptx_bytes) / 1024, 1),
-                "download_url": f"/chat/presentation/{presentation_id}",
+                "download_url": f"/files/{presentation_id}/download",
                 "method": "potomac_pptx_skill_parsed",
                 "skill_used": "potomac-pptx-skill",
                 "execution_time": skill_result.get("execution_time", 0),
@@ -4085,6 +4263,123 @@ def handle_tool_call(
     except Exception as e:
         logger.error("Error in tool call %s: %s", tool_name, e, exc_info=True)
         return json.dumps({"error": str(e), "traceback": traceback.format_exc()[:500]})
+
+
+
+# =============================================================================
+# TOOL SEARCH SUPPORT
+# =============================================================================
+#
+# Tool search lets Claude discover tools on-demand instead of loading all
+# 60+ definitions upfront. Reduces context usage ~85% and keeps tool
+# selection accuracy high across large catalogs.
+#
+# Quick usage:
+#   tools = get_tools_for_api(tool_search=True, variant="regex")
+#   # Pass to client.messages.create(tools=tools, ...)
+#   # No extra beta headers required.
+#
+# The response may include server_tool_use and tool_search_tool_result blocks.
+# Use handle_tool_result_block() to route them correctly.
+
+def get_tools_for_api(
+    tool_search: bool = False,
+    variant: str = "regex",
+    extra_non_deferred: Optional[List[str]] = None,
+) -> List[Dict]:
+    """
+    Return the tools list to pass to the Claude API.
+
+    Args:
+        tool_search:         When True, prepend the tool search entry and
+                             keep all deferred tools as-is.  When False
+                             (default), return ALL_TOOLS unchanged.
+        variant:             "regex" (default) or "bm25".
+        extra_non_deferred:  Additional tool names to force-load immediately
+                             on top of TOOL_SEARCH_NON_DEFERRED.
+
+    Returns:
+        List of tool dicts for the API ``tools`` parameter.
+    """
+    if not tool_search:
+        return ALL_TOOLS
+
+    search_entry = (
+        TOOL_SEARCH_REGEX_ENTRY if variant == "regex" else TOOL_SEARCH_BM25_ENTRY
+    )
+    extra = set(extra_non_deferred or [])
+
+    result: List[Dict] = [search_entry]
+    for tool in ALL_TOOLS:
+        name = tool.get("name", "")
+        if name in TOOL_SEARCH_NON_DEFERRED or name in extra:
+            # Strip defer_loading so this tool is loaded immediately
+            t = {k: v for k, v in tool.items() if k != "defer_loading"}
+            result.append(t)
+        else:
+            result.append(tool)
+
+    return result
+
+
+def handle_tool_result_block(block: Dict[str, Any]) -> Optional[str]:
+    """
+    Route a content block from a Claude API response that may contain
+    tool-search internal blocks.
+
+    Block types introduced by tool search:
+
+      server_tool_use            Claude searched for tools. The API resolves
+                                 this server-side — no server action required.
+
+      tool_search_tool_result    Carries tool_references that the API expands
+                                 into full definitions automatically.
+                                 No server action required.
+
+    Returns:
+        The tool name (str) if this is a standard tool_use block that the
+        caller should dispatch via handle_tool_call().
+        None if the block is a tool-search internal type (handled server-side)
+        or any other non-dispatchable block (text, thinking, etc.).
+    """
+    block_type = block.get("type", "")
+
+    if block_type == "server_tool_use":
+        query = (block.get("input") or {}).get("query", "")
+        logger.debug(
+            "Tool search query dispatched: %r (id=%s)",
+            query, block.get("id", ""),
+        )
+        return None
+
+    if block_type == "tool_search_tool_result":
+        refs  = (block.get("content") or {}).get("tool_references", [])
+        names = [r.get("tool_name", "") for r in refs]
+        logger.debug("Tool search discovered: %s", names)
+        return None
+
+    if block_type == "tool_use":
+        return block.get("name")
+
+    return None
+
+
+def is_tool_search_block(block: Dict[str, Any]) -> bool:
+    """Return True if block is a tool-search internal block (not a real tool call)."""
+    return block.get("type") in ("server_tool_use", "tool_search_tool_result")
+
+
+def extract_tool_search_usage(response_usage: Dict[str, Any]) -> int:
+    """
+    Return the number of tool search requests made from a response usage dict.
+
+    The API reports this at:
+        response.usage.server_tool_use.tool_search_requests
+
+    Returns 0 if tool search was not used.
+    """
+    stu = response_usage.get("server_tool_use") or {}
+    return int(stu.get("tool_search_requests", 0))
 
 
 # =============================================================================

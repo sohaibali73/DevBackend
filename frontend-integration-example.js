@@ -1,769 +1,1183 @@
 /**
- * Frontend Integration Example - Complete Presentation Editor
- * 
- * This file demonstrates how to integrate the complete presentation editor
- * with images, charts, and tables into your frontend application.
+ * Frontend API Client — Analyst by Potomac
+ * ==========================================
+ * Fully corrected JavaScript API client that matches the live backend routes.
+ *
+ * Backend base URL  : process.env.NEXT_PUBLIC_API_URL  (e.g. https://your-app.up.railway.app)
+ * Auth              : Bearer JWT returned by /auth/login or /auth/register
+ * Streaming         : Vercel AI SDK Data Stream Protocol  (type-code:JSON\n lines)
+ * Canonical stream  : POST /chat/v6   (also aliased as /chat/stream for compat)
+ *
+ * Router prefixes in main.py
+ * ─────────────────────────────────────────────────────────────────
+ *  /auth           api/routes/auth.py
+ *  /chat           api/routes/chat.py   (stream = /chat/v6)
+ *  /afl            api/routes/afl.py
+ *  /brain          api/routes/brain.py
+ *  /backtest       api/routes/backtest.py
+ *  /train          api/routes/train.py
+ *  /researcher     api/routes/researcher.py
+ *  /upload         api/routes/upload.py
+ *  /skills         api/routes/skills.py
+ *  /preview        api/routes/preview.py
+ *  /health         api/routes/health.py
+ *  /tasks          api/routes/tasks.py
+ *  /generate_presentation  api/routes/generate_presentation.py
+ *  /yfinance       api/routes/yfinance.py
+ *  /edgar          api/routes/edgar.py
+ * ─────────────────────────────────────────────────────────────────
  */
 
-/**
- * Complete Presentation Editor Component
- * 
- * This component provides a full-featured presentation editor with:
- * - Text editing
- * - Image upload and embedding
- * - Potomac chart templates
- * - Potomac table templates
- * - Shape creation
- * - Export to PPTX
- */
+// ─── Helpers ─────────────────────────────────────────────────────────────────
 
-class PresentationEditor {
-  constructor(containerId) {
-    this.container = document.getElementById(containerId);
-    this.presentation = {
-      title: 'New Presentation',
-      slides: [],
-      theme: 'potomac'
-    };
-    this.currentSlideIndex = 0;
-    this.init();
+const _storage = {
+  getItem: (key) => {
+    try { return typeof localStorage !== 'undefined' ? localStorage.getItem(key) : null; }
+    catch { return null; }
+  },
+  setItem: (key, val) => {
+    try { if (typeof localStorage !== 'undefined') localStorage.setItem(key, val); }
+    catch { /* SSR / strict env */ }
+  },
+  removeItem: (key) => {
+    try { if (typeof localStorage !== 'undefined') localStorage.removeItem(key); }
+    catch { /* SSR / strict env */ }
+  },
+};
+
+// ─── API Client ───────────────────────────────────────────────────────────────
+
+class APIClient {
+  constructor() {
+    this.baseUrl = (typeof process !== 'undefined' && process.env?.NEXT_PUBLIC_API_URL) || '';
+    this._token = _storage.getItem('auth_token');
   }
 
-  init() {
-    this.render();
-    this.bindEvents();
+  // ── token helpers ──────────────────────────────────────────────
+
+  setToken(token) {
+    this._token = token;
+    _storage.setItem('auth_token', token);
   }
 
-  render() {
-    this.container.innerHTML = `
-      <div class="presentation-editor">
-        <div class="editor-header">
-          <input type="text" id="presentation-title" value="${this.presentation.title}" placeholder="Presentation Title">
-          <div class="editor-toolbar">
-            <button onclick="editor.addSlide()">Add Slide</button>
-            <button onclick="editor.addElement('text')">Add Text</button>
-            <button onclick="editor.addElement('image')">Add Image</button>
-            <button onclick="editor.addElement('chart')">Add Chart</button>
-            <button onclick="editor.addElement('table')">Add Table</button>
-            <button onclick="editor.addElement('shape')">Add Shape</button>
-            <button onclick="editor.exportPresentation()">Export PPTX</button>
-          </div>
-        </div>
-        <div class="editor-content">
-          <div class="slide-list">
-            ${this.presentation.slides.map((slide, index) => `
-              <div class="slide-thumbnail ${index === this.currentSlideIndex ? 'active' : ''}" onclick="editor.selectSlide(${index})">
-                <div class="slide-title">${slide.title || 'Untitled Slide'}</div>
-                <div class="slide-elements">${slide.content.length} elements</div>
-              </div>
-            `).join('')}
-          </div>
-          <div class="slide-editor" id="slide-editor">
-            ${this.renderSlideEditor()}
-          </div>
-        </div>
-      </div>
-    `;
+  getToken() {
+    if (this._token) return this._token;
+    const t = _storage.getItem('auth_token');
+    this._token = t;
+    return t;
   }
 
-  renderSlideEditor() {
-    const slide = this.presentation.slides[this.currentSlideIndex];
-    if (!slide) return '<div class="empty-slide">Select a slide or add a new one</div>';
-
-    return `
-      <div class="slide-preview" style="background: ${slide.background || '#FFFFFF'}">
-        <div class="slide-title-bar">
-          <input type="text" value="${slide.title || ''}" placeholder="Slide Title" oninput="editor.updateSlideTitle(event.target.value)">
-          <input type="text" value="${slide.subtitle || ''}" placeholder="Slide Subtitle" oninput="editor.updateSlideSubtitle(event.target.value)">
-        </div>
-        <div class="slide-content-area">
-          ${slide.content.map((element, index) => this.renderElement(element, index)).join('')}
-        </div>
-        <div class="slide-notes">
-          <textarea placeholder="Slide notes..." oninput="editor.updateSlideNotes(event.target.value)">${slide.notes || ''}</textarea>
-        </div>
-      </div>
-    `;
+  clearToken() {
+    this._token = null;
+    _storage.removeItem('auth_token');
   }
 
-  renderElement(element, index) {
-    switch (element.type) {
-      case 'text':
-        return `
-          <div class="element text-element" style="left: ${element.x}px; top: ${element.y}px; width: ${element.width}px; height: ${element.height}px;">
-            <textarea style="font-size: ${element.style.fontSize}px; font-family: ${element.style.fontFamily}; color: ${element.style.color}; text-align: ${element.style.textAlign};" oninput="editor.updateTextContent(${index}, event.target.value)">${element.content}</textarea>
-            <div class="element-controls">
-              <button onclick="editor.editElementStyle(${index})">Style</button>
-              <button onclick="editor.removeElement(${index})">Delete</button>
-            </div>
-          </div>
-        `;
-      
-      case 'image':
-        return `
-          <div class="element image-element" style="left: ${element.x}px; top: ${element.y}px; width: ${element.width}px; height: ${element.height}px;">
-            <img src="${element.content.src}" alt="${element.content.alt}">
-            <div class="element-controls">
-              <button onclick="editor.replaceImage(${index})">Replace</button>
-              <button onclick="editor.removeElement(${index})">Delete</button>
-            </div>
-          </div>
-        `;
-      
-      case 'chart':
-        return `
-          <div class="element chart-element" style="left: ${element.x}px; top: ${element.y}px; width: ${element.width}px; height: ${element.height}px;">
-            <div class="chart-preview">
-              <h4>${this.getChartTypeName(element.content.type)}</h4>
-              <p>Chart Type: ${element.content.type}</p>
-            </div>
-            <div class="element-controls">
-              <button onclick="editor.editChart(${index})">Configure</button>
-              <button onclick="editor.removeElement(${index})">Delete</button>
-            </div>
-          </div>
-        `;
-      
-      case 'table':
-        return `
-          <div class="element table-element" style="left: ${element.x}px; top: ${element.y}px; width: ${element.width}px; height: ${element.height}px;">
-            <div class="table-preview">
-              <h4>${this.getTableTypeName(element.content.type)}</h4>
-              <p>Table Type: ${element.content.type}</p>
-              <p>Rows: ${element.content.rows.length}</p>
-            </div>
-            <div class="element-controls">
-              <button onclick="editor.editTable(${index})">Configure</button>
-              <button onclick="editor.removeElement(${index})">Delete</button>
-            </div>
-          </div>
-        `;
-      
-      case 'shape':
-        return `
-          <div class="element shape-element" style="left: ${element.x}px; top: ${element.y}px; width: ${element.width}px; height: ${element.height}px; background-color: ${element.style.backgroundColor};">
-            <div class="element-controls">
-              <button onclick="editor.editShape(${index})">Style</button>
-              <button onclick="editor.removeElement(${index})">Delete</button>
-            </div>
-          </div>
-        `;
-      
-      default:
-        return '';
-    }
-  }
+  // ── core fetch ────────────────────────────────────────────────
 
-  getChartTypeName(type) {
-    const names = {
-      'process_flow': 'Investment Process Flow',
-      'performance': 'Strategy Performance Viz',
-      'communication': 'Communication Flow',
-      'firm_structure': 'Firm Structure Infographic',
-      'ocio_triangle': 'OCIO Triangle'
-    };
-    return names[type] || type;
-  }
+  /**
+   * @param {string}  endpoint    - path relative to baseUrl, e.g. '/auth/login'
+   * @param {string}  method      - HTTP verb
+   * @param {any}     body        - request body (JSON or FormData)
+   * @param {boolean} isFormData  - when true body is sent as-is (no JSON serialisation)
+   */
+  async request(endpoint, method = 'GET', body = undefined, isFormData = false) {
+    const headers = {};
+    const token = this.getToken();
+    if (token) headers['Authorization'] = `Bearer ${token}`;
+    if (!isFormData && method !== 'GET') headers['Content-Type'] = 'application/json';
 
-  getTableTypeName(type) {
-    const names = {
-      'passive_active': 'Passive vs Active Performance',
-      'afg': 'Asset Fee Grid',
-      'annualized_return': 'Annualized Returns',
-      'strategy_overview': 'Strategy Overview',
-      'attribution': 'Performance Attribution',
-      'risk_metrics': 'Risk Metrics'
-    };
-    return names[type] || type;
-  }
+    const config = { method, headers };
+    if (body !== undefined) config.body = isFormData ? body : JSON.stringify(body);
 
-  bindEvents() {
-    // Title input event
-    document.getElementById('presentation-title').addEventListener('input', (e) => {
-      this.presentation.title = e.target.value;
-    });
-  }
+    const url = `${this.baseUrl}${endpoint}`;
 
-  addSlide() {
-    this.presentation.slides.push({
-      title: 'New Slide',
-      content: [],
-      layout: 'blank',
-      notes: '',
-      background: '#FFFFFF'
-    });
-    this.currentSlideIndex = this.presentation.slides.length - 1;
-    this.render();
-  }
-
-  selectSlide(index) {
-    this.currentSlideIndex = index;
-    this.render();
-  }
-
-  addElement(type) {
-    const slide = this.presentation.slides[this.currentSlideIndex];
-    if (!slide) return;
-
-    const element = this.createElement(type);
-    slide.content.push(element);
-    this.render();
-  }
-
-  createElement(type) {
-    const baseElement = {
-      x: 100,
-      y: 100,
-      width: 200,
-      height: 100
-    };
-
-    switch (type) {
-      case 'text':
-        return {
-          ...baseElement,
-          type: 'text',
-          content: 'New Text',
-          style: {
-            fontSize: 16,
-            fontWeight: 'normal',
-            fontFamily: 'Quicksand',
-            color: '#212121',
-            textAlign: 'left'
-          }
-        };
-      
-      case 'image':
-        return {
-          ...baseElement,
-          type: 'image',
-          content: {
-            src: '',
-            alt: 'Image description'
-          }
-        };
-      
-      case 'chart':
-        return {
-          ...baseElement,
-          type: 'chart',
-          content: {
-            type: 'process_flow',
-            data: {},
-            config: {
-              skillFunction: 'createInvestmentProcessFlow'
-            }
-          }
-        };
-      
-      case 'table':
-        return {
-          ...baseElement,
-          type: 'table',
-          content: {
-            type: 'passive_active',
-            headers: ['TIME PERIOD', 'PASSIVE', 'ACTIVE', 'OUTPERFORMANCE'],
-            rows: [
-              ['1 Year', '5.2%', '7.8%', '+2.6%'],
-              ['3 Year', '7.8%', '9.4%', '+1.6%']
-            ],
-            config: {
-              skillFunction: 'createPassiveActiveTable'
-            }
-          }
-        };
-      
-      case 'shape':
-        return {
-          ...baseElement,
-          type: 'shape',
-          style: {
-            backgroundColor: '#FEC00F'
-          }
-        };
-      
-      default:
-        return baseElement;
-    }
-  }
-
-  updateSlideTitle(title) {
-    this.presentation.slides[this.currentSlideIndex].title = title;
-  }
-
-  updateSlideSubtitle(subtitle) {
-    this.presentation.slides[this.currentSlideIndex].subtitle = subtitle;
-  }
-
-  updateSlideNotes(notes) {
-    this.presentation.slides[this.currentSlideIndex].notes = notes;
-  }
-
-  updateTextContent(index, content) {
-    this.presentation.slides[this.currentSlideIndex].content[index].content = content;
-  }
-
-  removeElement(index) {
-    this.presentation.slides[this.currentSlideIndex].content.splice(index, 1);
-    this.render();
-  }
-
-  async replaceImage(index) {
-    const input = document.createElement('input');
-    input.type = 'file';
-    input.accept = 'image/*';
-    input.onchange = async (e) => {
-      const file = e.target.files[0];
-      if (file) {
-        const base64 = await this.fileToBase64(file);
-        this.presentation.slides[this.currentSlideIndex].content[index].content.src = base64;
-        this.render();
-      }
-    };
-    input.click();
-  }
-
-  async fileToBase64(file) {
-    return new Promise((resolve, reject) => {
-      const reader = new FileReader();
-      reader.onload = () => resolve(reader.result);
-      reader.onerror = reject;
-      reader.readAsDataURL(file);
-    });
-  }
-
-  editElementStyle(index) {
-    // Implementation for editing element styles
-    console.log('Edit element style:', index);
-  }
-
-  editChart(index) {
-    // Implementation for editing chart configuration
-    console.log('Edit chart:', index);
-  }
-
-  editTable(index) {
-    // Implementation for editing table data
-    console.log('Edit table:', index);
-  }
-
-  editShape(index) {
-    // Implementation for editing shape styles
-    console.log('Edit shape:', index);
-  }
-
-  async exportPresentation() {
     try {
-      // Prepare slide data for backend
-      const slideData = this.presentation.slides.map(slide => ({
-        title: slide.title,
-        content: slide.content.map(el => {
-          if (el.type === 'text') {
-            return {
-              type: 'text',
-              x: el.x,
-              y: el.y,
-              width: el.width,
-              height: el.height,
-              content: el.content,
-              style: el.style,
-            };
-          } else if (el.type === 'chart') {
-            return {
-              type: 'chart',
-              x: el.x,
-              y: el.y,
-              width: el.width,
-              height: el.height,
-              content: {
-                type: el.content.type,
-                data: el.content.data,
-                config: el.content.config,
-              },
-            };
-          } else if (el.type === 'table') {
-            return {
-              type: 'table',
-              x: el.x,
-              y: el.y,
-              width: el.width,
-              height: el.height,
-              content: {
-                type: el.content.type,
-                headers: el.content.headers,
-                rows: el.content.rows,
-                config: el.content.config,
-              },
-            };
-          } else if (el.type === 'image') {
-            return {
-              type: 'image',
-              x: el.x,
-              y: el.y,
-              width: el.width,
-              height: el.height,
-              content: {
-                src: el.content.src,
-                alt: el.content.alt,
-              },
-            };
-          } else if (el.type === 'shape') {
-            return {
-              type: 'shape',
-              x: el.x,
-              y: el.y,
-              width: el.width,
-              height: el.height,
-              style: el.style,
-            };
-          }
-          return { type: el.type, ...el };
-        }),
-        layout: slide.layout,
-        notes: slide.notes,
-        background: slide.background,
-      }));
-
-      // Call backend API
-      const response = await fetch('/api/generate-presentation', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          title: this.presentation.title,
-          slides: slideData,
-          theme: this.presentation.theme,
-          format: 'pptx',
-        }),
-      });
-
+      const response = await fetch(url, config);
       if (!response.ok) {
-        const error = await response.json();
-        throw new Error(error.details || 'Generation failed');
+        const err = await response.json().catch(() => ({
+          detail: `Request failed with status ${response.status}`,
+        }));
+        throw new Error(err.detail || err.message || `HTTP ${response.status}`);
       }
-
-      // Download file
-      const blob = await response.blob();
-      const url = window.URL.createObjectURL(blob);
-      const link = document.createElement('a');
-      link.href = url;
-      link.download = `${this.presentation.title}.pptx`;
-      document.body.appendChild(link);
-      link.click();
-      document.body.removeChild(link);
-      window.URL.revokeObjectURL(url);
-
-      alert('Presentation generated successfully!');
+      return response.json();
     } catch (error) {
-      console.error('Export error:', error);
-      alert(`Export failed: ${error.message}`);
+      if (error instanceof TypeError && error.message.includes('fetch')) {
+        throw new Error(
+          `Cannot connect to API server at ${this.baseUrl}. ` +
+          `Please check your internet connection or try again later.`,
+        );
+      }
+      throw error;
     }
+  }
+
+  // ═══════════════════════════════════════════════════════════════
+  // AUTH  /auth/*
+  // ═══════════════════════════════════════════════════════════════
+
+  /**
+   * Register a new user.
+   * Note: claude_api_key / tavily_api_key must be set separately via PUT /auth/me
+   * after registration, or via PUT /auth/api-keys.
+   *
+   * Response: { access_token, token_type, user_id, email, expires_in }
+   */
+  async register(email, password, name) {
+    const response = await this.request('/auth/register', 'POST', { email, password, name });
+    if (response.access_token) this.setToken(response.access_token);
+    return response;
+  }
+
+  /**
+   * Login.
+   * Response: { access_token, token_type, user_id, email, expires_in }
+   */
+  async login(email, password) {
+    const response = await this.request('/auth/login', 'POST', { email, password });
+    if (response.access_token) this.setToken(response.access_token);
+    return response;
+  }
+
+  /** GET /auth/me — returns UserResponse */
+  async getCurrentUser() {
+    return this.request('/auth/me');
+  }
+
+  /**
+   * PUT /auth/me — update name, nickname, or API keys.
+   * All fields are optional.
+   * @param {{ name?, nickname?, claude_api_key?, tavily_api_key? }} data
+   */
+  async updateProfile(data) {
+    return this.request('/auth/me', 'PUT', data);
+  }
+
+  /**
+   * PUT /auth/api-keys — dedicated endpoint for updating API keys only.
+   * @param {{ claude_api_key?, tavily_api_key? }} data
+   */
+  async updateApiKeys(data) {
+    return this.request('/auth/api-keys', 'PUT', data);
+  }
+
+  /** GET /auth/api-keys — returns { has_claude_key, has_tavily_key } */
+  async getApiKeysStatus() {
+    return this.request('/auth/api-keys');
+  }
+
+  /** POST /auth/logout */
+  async logout() {
+    try { await this.request('/auth/logout', 'POST'); } catch { /* ignore */ }
+    this.clearToken();
+  }
+
+  /** POST /auth/forgot-password */
+  async forgotPassword(email) {
+    return this.request('/auth/forgot-password', 'POST', { email });
+  }
+
+  // ═══════════════════════════════════════════════════════════════
+  // AFL  /afl/*
+  // ═══════════════════════════════════════════════════════════════
+
+  /**
+   * POST /afl/generate
+   * Response: { code, afl_code, explanation, stats }
+   *
+   * For conversation-based multi-step flow, pass conversation_id and/or answers.
+   * Backtest settings shape:
+   *   { initial_equity, position_size, position_size_type, max_positions,
+   *     commission, trade_delays, margin_requirement }
+   */
+  async generateAFL({
+    prompt,
+    strategy_type = 'standalone',   // 'standalone' | 'composite'
+    backtest_settings,
+    settings,                        // legacy dict fallback
+    conversation_id,
+    answers,                         // { strategy_type: '...', trade_timing: '...' }
+    stream = false,
+    uploaded_file_ids,
+    kb_context,
+    thinking_mode,
+    thinking_budget,
+  }) {
+    return this.request('/afl/generate', 'POST', {
+      prompt,
+      strategy_type,
+      backtest_settings,
+      settings,
+      conversation_id,
+      answers,
+      stream,
+      uploaded_file_ids,
+      kb_context,
+      thinking_mode,
+      thinking_budget,
+    });
+  }
+
+  /** POST /afl/optimize — response: { optimized_code } */
+  async optimizeAFL(code) {
+    return this.request('/afl/optimize', 'POST', { code });
+  }
+
+  /** POST /afl/debug — response: { debugged_code } */
+  async debugAFL(code, errorMessage = '') {
+    return this.request('/afl/debug', 'POST', { code, error_message: errorMessage });
+  }
+
+  /** POST /afl/explain — response: { explanation } */
+  async explainAFL(code) {
+    return this.request('/afl/explain', 'POST', { code });
+  }
+
+  /** POST /afl/validate — response: { valid, errors? } */
+  async validateAFL(code) {
+    return this.request('/afl/validate', 'POST', { code });
+  }
+
+  /** GET /afl/codes?limit=50 — list saved codes */
+  async getAFLCodes(limit = 50) {
+    return this.request(`/afl/codes?limit=${limit}`);
+  }
+
+  /** GET /afl/codes/:id */
+  async getAFLCode(codeId) {
+    return this.request(`/afl/codes/${codeId}`);
+  }
+
+  /** DELETE /afl/codes/:id */
+  async deleteAFLCode(codeId) {
+    return this.request(`/afl/codes/${codeId}`, 'DELETE');
+  }
+
+  // ── AFL File Uploads ─────────────────────────────────────────
+
+  /**
+   * POST /afl/upload  (multipart/form-data)
+   * Supported types: CSV, TXT, PDF, AFL  (max 10 MB)
+   * Response: { file_id, filename, content_type, size_bytes, preview }
+   */
+  async uploadAflFile(file) {
+    const formData = new FormData();
+    formData.append('file', file);
+    return this.request('/afl/upload', 'POST', formData, true);
+  }
+
+  /** GET /afl/files?limit=50 */
+  async getAflFiles(limit = 50) {
+    return this.request(`/afl/files?limit=${limit}`);
+  }
+
+  /** GET /afl/files/:id — includes full file_data */
+  async getAflFile(fileId) {
+    return this.request(`/afl/files/${fileId}`);
+  }
+
+  /** DELETE /afl/files/:id */
+  async deleteAflFile(fileId) {
+    return this.request(`/afl/files/${fileId}`, 'DELETE');
+  }
+
+  // ── AFL Settings Presets ─────────────────────────────────────
+
+  /**
+   * POST /afl/settings/presets
+   * Body: { name, settings: BacktestSettingsInput, is_default? }
+   * BacktestSettingsInput: { initial_equity, position_size, position_size_type,
+   *                          max_positions, commission, trade_delays, margin_requirement }
+   */
+  async saveSettingsPreset(preset) {
+    return this.request('/afl/settings/presets', 'POST', preset);
+  }
+
+  /** GET /afl/settings/presets */
+  async getSettingsPresets() {
+    return this.request('/afl/settings/presets');
+  }
+
+  /** GET /afl/settings/presets/:id */
+  async getSettingsPreset(presetId) {
+    return this.request(`/afl/settings/presets/${presetId}`);
+  }
+
+  /** PUT /afl/settings/presets/:id */
+  async updateSettingsPreset(presetId, updates) {
+    return this.request(`/afl/settings/presets/${presetId}`, 'PUT', updates);
+  }
+
+  /** DELETE /afl/settings/presets/:id */
+  async deleteSettingsPreset(presetId) {
+    return this.request(`/afl/settings/presets/${presetId}`, 'DELETE');
+  }
+
+  /** POST /afl/settings/presets/:id/set-default */
+  async setDefaultPreset(presetId) {
+    return this.request(`/afl/settings/presets/${presetId}/set-default`, 'POST');
+  }
+
+  // ── AFL History ───────────────────────────────────────────────
+
+  /**
+   * POST /afl/history
+   * IMPORTANT: backend field names differ from earlier versions:
+   *   strategy_description  (not "prompt")
+   *   generated_code
+   *   strategy_type
+   *   timestamp             (optional ISO string)
+   */
+  async saveAflHistory({ strategy_description, generated_code, strategy_type, timestamp }) {
+    return this.request('/afl/history', 'POST', {
+      strategy_description,
+      generated_code,
+      strategy_type,
+      timestamp,
+    });
+  }
+
+  /** GET /afl/history?limit=50 */
+  async getAflHistory(limit = 50) {
+    return this.request(`/afl/history?limit=${limit}`);
+  }
+
+  /** DELETE /afl/history/:id */
+  async deleteAflHistory(historyId) {
+    return this.request(`/afl/history/${historyId}`, 'DELETE');
+  }
+
+  // ═══════════════════════════════════════════════════════════════
+  // CHAT  /chat/*
+  // ═══════════════════════════════════════════════════════════════
+
+  /** GET /chat/conversations */
+  async getConversations() {
+    return this.request('/chat/conversations');
+  }
+
+  /**
+   * POST /chat/conversations
+   * @param {string} title
+   * @param {string} conversationType  - 'agent' | 'afl_generation'
+   */
+  async createConversation(title = 'New Conversation', conversationType = 'agent') {
+    return this.request('/chat/conversations', 'POST', {
+      title,
+      conversation_type: conversationType,
+    });
+  }
+
+  /** GET /chat/conversations/:id/messages */
+  async getMessages(conversationId) {
+    return this.request(`/chat/conversations/${conversationId}/messages`);
+  }
+
+  /** PATCH /chat/conversations/:id — rename */
+  async renameConversation(conversationId, title) {
+    return this.request(`/chat/conversations/${conversationId}`, 'PATCH', { title });
+  }
+
+  /** DELETE /chat/conversations/:id */
+  async deleteConversation(conversationId) {
+    return this.request(`/chat/conversations/${conversationId}`, 'DELETE');
+  }
+
+  /**
+   * POST /chat/message  (non-streaming)
+   * Response: { conversation_id, response, parts, tools_used, downloadable_files, all_artifacts }
+   */
+  async sendMessage(content, conversationId) {
+    return this.request('/chat/message', 'POST', {
+      content,
+      conversation_id: conversationId,
+    });
+  }
+
+  /** GET /chat/tools — lists available tools */
+  async getChatTools() {
+    return this.request('/chat/tools');
+  }
+
+  // ── Streaming (Vercel AI SDK Data Stream Protocol) ────────────
+
+  /**
+   * POST /chat/v6  — canonical production streaming endpoint.
+   *
+   * Stream protocol: each line is   TYPE_CODE:JSON_VALUE\n
+   *   '0'  text delta          (string)
+   *   '2'  data part           (array — artifacts / metadata)
+   *   '3'  error               (string | { message })
+   *   '9'  tool call           ({ toolCallId, toolName, args })
+   *   'a'  tool result         ({ toolCallId, result })
+   *   'd'  finish message      ({ finishReason, usage })
+   *   'e'  finish step         (unused)
+   *
+   * Conversation ID is returned in the response header X-Conversation-Id.
+   *
+   * @returns {Promise<{ conversationId: string }>}
+   */
+  async sendMessageStream(content, conversationId, options = {}) {
+    return this._streamRequest('/chat/v6', content, conversationId, options);
+  }
+
+  /**
+   * Alias of sendMessageStream — both hit /chat/v6.
+   * Kept for backward compatibility with code using sendMessageStreamV6.
+   */
+  async sendMessageStreamV6(content, conversationId, options = {}) {
+    return this._streamRequest('/chat/v6', content, conversationId, options);
+  }
+
+  /** Returns the streaming endpoint URL. */
+  getStreamEndpoint() {
+    return `${this.baseUrl}/chat/v6`;
+  }
+
+  // ── internal stream helper ────────────────────────────────────
+
+  async _streamRequest(endpoint, content, conversationId, options = {}) {
+    const token = this.getToken();
+    const headers = { 'Content-Type': 'application/json' };
+    if (token) headers['Authorization'] = `Bearer ${token}`;
+
+    const response = await fetch(`${this.baseUrl}${endpoint}`, {
+      method: 'POST',
+      headers,
+      signal: options.signal,
+      body: JSON.stringify({ content, conversation_id: conversationId }),
+    });
+
+    if (!response.ok) {
+      const err = await response.json().catch(() => ({
+        detail: `Request failed with status ${response.status}`,
+      }));
+      throw new Error(err.detail || err.message || `HTTP ${response.status}`);
+    }
+
+    const newConversationId =
+      response.headers.get('X-Conversation-Id') || conversationId || '';
+
+    if (!response.body) throw new Error('Response body is null');
+
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = '';
+
+    const processLine = (line) => {
+      if (!line.trim()) return;
+      const typeCode = line[0];
+      const raw = line.substring(2); // skip "X:" prefix
+      if (!raw) return;
+
+      try {
+        const parsed = JSON.parse(raw);
+        switch (typeCode) {
+          case '0': // text delta
+            options.onText?.(typeof parsed === 'string' ? parsed : parsed.text || '');
+            break;
+          case '2': // data (artifacts, metadata)
+            options.onData?.(parsed);
+            break;
+          case '3': // error
+            options.onError?.(typeof parsed === 'string' ? parsed : (parsed.message || 'Unknown error'));
+            break;
+          case '9': // tool call
+            if (parsed.toolCallId && parsed.toolName)
+              options.onToolCall?.(parsed.toolCallId, parsed.toolName, parsed.args || {});
+            break;
+          case 'a': // tool result
+            if (parsed.toolCallId)
+              options.onToolResult?.(parsed.toolCallId, parsed.result);
+            break;
+          case 'd': // finish
+            if (parsed.finishReason)
+              options.onFinish?.(parsed.finishReason, parsed.usage || {});
+            break;
+          case 'e': // finish step (no-op)
+            break;
+          default:
+            console.warn('[stream] unknown type code:', typeCode, raw.substring(0, 80));
+        }
+      } catch (e) {
+        console.warn('[stream] parse error on line:', line.substring(0, 100), e);
+      }
+    };
+
+    try {
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split('\n');
+        buffer = lines.pop() || '';
+        lines.forEach(processLine);
+      }
+      if (buffer.trim()) processLine(buffer);
+    } catch (error) {
+      const msg = error instanceof Error ? error.message : String(error);
+      options.onError?.(msg);
+      throw error;
+    }
+
+    return { conversationId: newConversationId };
+  }
+
+  // ── File upload to conversation ───────────────────────────────
+
+  /**
+   * POST /upload/conversations/:conversationId
+   * Accepts a FormData with 'file' field.
+   */
+  async uploadConversationFile(conversationId, formData) {
+    const token = this.getToken();
+    const headers = {};
+    if (token) headers['Authorization'] = `Bearer ${token}`;
+
+    const response = await fetch(
+      `${this.baseUrl}/upload/conversations/${conversationId}`,
+      { method: 'POST', headers, body: formData },
+    );
+    if (!response.ok) {
+      const err = await response.json().catch(() => ({ detail: 'Upload failed' }));
+      throw new Error(err.detail || `HTTP ${response.status}`);
+    }
+    return response.json();
+  }
+
+  // ═══════════════════════════════════════════════════════════════
+  // BRAIN / KNOWLEDGE BASE  /brain/*
+  // ═══════════════════════════════════════════════════════════════
+
+  /**
+   * POST /brain/upload  (multipart)
+   * Response: { status, document_id, storage_path, classification, chunks_created }
+   *           or { status: 'duplicate', document_id }
+   */
+  async uploadDocument(file, title, category = 'general') {
+    const formData = new FormData();
+    formData.append('file', file);
+    if (title) formData.append('title', title);
+    formData.append('category', category);
+    return this.request('/brain/upload', 'POST', formData, true);
+  }
+
+  /**
+   * POST /brain/upload-batch  (multipart, multiple files)
+   * Response: { status, summary: { total, successful, duplicates, failed }, results }
+   */
+  async uploadDocumentsBatch(files, category = 'general') {
+    const formData = new FormData();
+    files.forEach((f) => formData.append('files', f));
+    formData.append('category', category);
+    return this.request('/brain/upload-batch', 'POST', formData, true);
+  }
+
+  /**
+   * POST /brain/upload-text
+   * Response: { status, document_id }
+   */
+  async uploadText(text, title, category = 'general') {
+    return this.request('/brain/upload-text', 'POST', { title, content: text, category });
+  }
+
+  /**
+   * POST /brain/search
+   * Response: { results, count, search_type: 'vector' | 'text' }
+   */
+  async searchKnowledge(query, category, limit = 10) {
+    return this.request('/brain/search', 'POST', { query, category, limit });
+  }
+
+  /**
+   * GET /brain/documents?category=&limit=50
+   */
+  async getDocuments(category, limit = 50) {
+    const params = new URLSearchParams({ limit: String(limit) });
+    if (category) params.append('category', category);
+    return this.request(`/brain/documents?${params}`);
+  }
+
+  /**
+   * GET /brain/documents/:id — includes raw_content
+   */
+  async getDocument(documentId) {
+    return this.request(`/brain/documents/${documentId}`);
+  }
+
+  /**
+   * GET /brain/documents/:id/download — returns binary blob via direct fetch
+   */
+  async downloadDocument(documentId) {
+    const token = this.getToken();
+    const headers = {};
+    if (token) headers['Authorization'] = `Bearer ${token}`;
+    const response = await fetch(`${this.baseUrl}/brain/documents/${documentId}/download`, {
+      headers,
+    });
+    if (!response.ok) throw new Error(`Download failed: ${response.status}`);
+    return response.blob();
+  }
+
+  /**
+   * GET /brain/stats
+   * Response: { total_documents, total_size, total_size_on_disk_mb,
+   *             total_chunks, total_learnings, categories }
+   */
+  async getBrainStats() {
+    return this.request('/brain/stats');
+  }
+
+  /** DELETE /brain/documents/:id */
+  async deleteDocument(documentId) {
+    return this.request(`/brain/documents/${documentId}`, 'DELETE');
+  }
+
+  // ═══════════════════════════════════════════════════════════════
+  // BACKTEST  /backtest/*
+  // ═══════════════════════════════════════════════════════════════
+
+  /** POST /backtest/upload */
+  async uploadBacktest(file, strategyId) {
+    const formData = new FormData();
+    formData.append('file', file);
+    if (strategyId) formData.append('strategy_id', strategyId);
+    return this.request('/backtest/upload', 'POST', formData, true);
+  }
+
+  /** GET /backtest/:id */
+  async getBacktest(backtestId) {
+    return this.request(`/backtest/${backtestId}`);
+  }
+
+  /** GET /backtest/strategy/:strategyId */
+  async getStrategyBacktests(strategyId) {
+    return this.request(`/backtest/strategy/${strategyId}`);
+  }
+
+  // ═══════════════════════════════════════════════════════════════
+  // RESEARCHER  /researcher/*
+  //
+  // NOTE: all responses are wrapped:
+  //   { success: true, data: {...}, message: "..." }
+  //   Unwrap via response.data
+  // ═══════════════════════════════════════════════════════════════
+
+  /** GET /researcher/company/:symbol */
+  async getCompanyResearch(symbol) {
+    return this.request(`/researcher/company/${symbol}`);
+  }
+
+  /**
+   * GET /researcher/news/:symbol?limit=20
+   * Response.data: { symbol, news, sentiment_score, news_count }
+   */
+  async getCompanyNews(symbol, limit = 20) {
+    return this.request(`/researcher/news/${symbol}?limit=${limit}`);
+  }
+
+  /**
+   * POST /researcher/strategy-analysis
+   * Body: { symbol, strategy_type, timeframe, additional_context? }
+   */
+  async analyzeStrategyFit(symbol, strategy_type, timeframe, additional_context) {
+    return this.request('/researcher/strategy-analysis', 'POST', {
+      symbol,
+      strategy_type,
+      timeframe,
+      additional_context,
+    });
+  }
+
+  /**
+   * POST /researcher/comparison
+   * Body: { symbol, peers: string[] }
+   */
+  async getPeerComparison(symbol, peers = [], sector) {
+    return this.request('/researcher/comparison', 'POST', { symbol, peers, sector });
+  }
+
+  /** GET /researcher/macro-context */
+  async getMacroContext() {
+    return this.request('/researcher/macro-context');
+  }
+
+  /** GET /researcher/sec-filings/:symbol */
+  async getSecFilings(symbol) {
+    return this.request(`/researcher/sec-filings/${symbol}`);
+  }
+
+  /**
+   * POST /researcher/generate-report
+   * Body: { symbol, report_type?, sections?, format? }
+   */
+  async generateResearchReport(symbol, {
+    report_type = 'company',
+    sections = ['executive_summary', 'fundamental_analysis'],
+    format = 'json',
+  } = {}) {
+    return this.request('/researcher/generate-report', 'POST', {
+      symbol,
+      report_type,
+      sections,
+      format,
+    });
+  }
+
+  /** GET /researcher/trending?limit=10 */
+  async getTrendingResearch(limit = 10) {
+    return this.request(`/researcher/trending?limit=${limit}`);
+  }
+
+  /** GET /researcher/search?query=&search_type=company&limit=10 */
+  async searchResearch(query, searchType = 'company', limit = 10) {
+    const params = new URLSearchParams({ query, search_type: searchType, limit: String(limit) });
+    return this.request(`/researcher/search?${params}`);
+  }
+
+  // ═══════════════════════════════════════════════════════════════
+  // TRAIN  /train/*
+  //
+  // NOTE: some list endpoints return { count, feedback } or { count, suggestions }
+  //       rather than a plain array.
+  // ═══════════════════════════════════════════════════════════════
+
+  /**
+   * POST /train/feedback
+   * Body: { code_id?, conversation_id?, original_prompt, generated_code,
+   *         feedback_type, feedback_text, correct_code?, rating? }
+   * feedback_type: 'correction' | 'improvement' | 'bug' | 'praise'
+   * Response: { status, feedback_id, message }
+   */
+  async submitFeedback(feedback) {
+    return this.request('/train/feedback', 'POST', feedback);
+  }
+
+  /**
+   * GET /train/feedback/my?limit=50
+   * Response: { count, feedback: [...] }
+   */
+  async getMyFeedback(limit = 50) {
+    return this.request(`/train/feedback/my?limit=${limit}`);
+  }
+
+  /** GET /train/feedback/:id */
+  async getFeedback(feedbackId) {
+    return this.request(`/train/feedback/${feedbackId}`);
+  }
+
+  /**
+   * POST /train/test
+   * Body: { prompt, category?, include_training? }
+   * Response: { prompt, without_training, with_training, training_context_used, differences_detected }
+   */
+  async testTraining(data) {
+    return this.request('/train/test', 'POST', data);
+  }
+
+  /**
+   * GET /train/effectiveness
+   * Response: { average_rating, total_feedback, correction_rate, corrections_count,
+   *             training_examples, active_training, training_by_type }
+   */
+  async getTrainingEffectiveness() {
+    return this.request('/train/effectiveness');
+  }
+
+  /**
+   * POST /train/suggest
+   * Body: { title, description, example_input?, example_output?, reason }
+   * Response: { status, suggestion_id, message }
+   */
+  async suggestTraining(suggestion) {
+    return this.request('/train/suggest', 'POST', suggestion);
+  }
+
+  /**
+   * GET /train/suggestions/my?limit=50
+   * Response: { count, suggestions: [...] }
+   */
+  async getMySuggestions(limit = 50) {
+    return this.request(`/train/suggestions/my?limit=${limit}`);
+  }
+
+  /**
+   * GET /train/analytics/learning-curve
+   * Response: { total_codes_generated, average_quality_score, average_user_rating,
+   *             recent_codes, recent_feedback, trend }
+   */
+  async getLearningCurve() {
+    return this.request('/train/analytics/learning-curve');
+  }
+
+  /**
+   * GET /train/analytics/popular-patterns?limit=10
+   * Response: { popular_patterns, count }
+   */
+  async getPopularPatterns(limit = 10) {
+    return this.request(`/train/analytics/popular-patterns?limit=${limit}`);
+  }
+
+  /**
+   * GET /train/knowledge/search?query=&category=&limit=10
+   * Response: { query, matches, total_matches }
+   */
+  async searchTrainingKnowledge(query, category, limit = 10) {
+    const params = new URLSearchParams({ query, limit: String(limit) });
+    if (category) params.append('category', category);
+    return this.request(`/train/knowledge/search?${params}`);
+  }
+
+  /**
+   * GET /train/knowledge/categories
+   * Response: { categories: { [category]: count }, total }
+   */
+  async getKnowledgeCategories() {
+    return this.request('/train/knowledge/categories');
+  }
+
+  /**
+   * GET /train/knowledge/types
+   * Response: { training_types: [{ type, count, description }], total }
+   */
+  async getTrainingTypes() {
+    return this.request('/train/knowledge/types');
+  }
+
+  /**
+   * POST /train/quick-learn
+   * Body: { code, explanation }  — Note: backend reads from query params in some versions;
+   *        body form is preferred.
+   * Response: { status, suggestion_id, message }
+   */
+  async quickLearn(code, explanation) {
+    return this.request('/train/quick-learn', 'POST', { code, explanation });
+  }
+
+  /**
+   * GET /train/stats
+   * Response: training_manager.get_training_stats() shape
+   */
+  async getTrainStats() {
+    return this.request('/train/stats');
+  }
+
+  // ═══════════════════════════════════════════════════════════════
+  // PRESENTATIONS  /generate_presentation/*
+  // ═══════════════════════════════════════════════════════════════
+
+  /**
+   * Generate a PPTX presentation (returns a raw fetch Response for streaming).
+   * Caller is responsible for consuming the blob.
+   *
+   * Body: { title, slides, theme, format: 'pptx' }
+   * slide element types: 'text' | 'image' | 'chart' | 'table' | 'shape'
+   */
+  async generatePresentation(payload) {
+    const token = this.getToken();
+    const headers = { 'Content-Type': 'application/json' };
+    if (token) headers['Authorization'] = `Bearer ${token}`;
+
+    const response = await fetch(`${this.baseUrl}/generate_presentation/generate`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify(payload),
+    });
+    if (!response.ok) {
+      const err = await response.json().catch(() => ({ detail: `HTTP ${response.status}` }));
+      throw new Error(err.detail || `HTTP ${response.status}`);
+    }
+    return response; // caller calls .blob() to download the PPTX
+  }
+
+  // ═══════════════════════════════════════════════════════════════
+  // SKILLS  /skills/*
+  // ═══════════════════════════════════════════════════════════════
+
+  /** GET /skills */
+  async getSkills() {
+    return this.request('/skills');
+  }
+
+  /** GET /skills/jobs */
+  async getSkillJobs() {
+    return this.request('/skills/jobs');
+  }
+
+  // ═══════════════════════════════════════════════════════════════
+  // YFINANCE  /yfinance/*
+  // ═══════════════════════════════════════════════════════════════
+
+  /** GET /yfinance/quote/:symbol */
+  async getYFinanceQuote(symbol) {
+    return this.request(`/yfinance/quote/${symbol}`);
+  }
+
+  /** GET /yfinance/history/:symbol?period=1y&interval=1d */
+  async getYFinanceHistory(symbol, period = '1y', interval = '1d') {
+    return this.request(`/yfinance/history/${symbol}?period=${period}&interval=${interval}`);
+  }
+
+  // ═══════════════════════════════════════════════════════════════
+  // EDGAR  /edgar/*
+  // ═══════════════════════════════════════════════════════════════
+
+  /** GET /edgar/filings/:symbol */
+  async getEdgarFilings(symbol) {
+    return this.request(`/edgar/filings/${symbol}`);
+  }
+
+  // ═══════════════════════════════════════════════════════════════
+  // TASKS  /tasks/*
+  // ═══════════════════════════════════════════════════════════════
+
+  /** GET /tasks */
+  async getTasks() {
+    return this.request('/tasks');
+  }
+
+  /** GET /tasks/:id */
+  async getTask(taskId) {
+    return this.request(`/tasks/${taskId}`);
+  }
+
+  // ═══════════════════════════════════════════════════════════════
+  // HEALTH  /health/*
+  // ═══════════════════════════════════════════════════════════════
+
+  /** GET /health */
+  async checkHealth() {
+    return this.request('/health');
   }
 }
 
-// Initialize the editor
-const editor = new PresentationEditor('editor-container');
+// ─── Singleton export ─────────────────────────────────────────────────────────
 
-/**
- * Chart Configuration Examples
- */
-const chartExamples = {
-  process_flow: {
-    type: 'process_flow',
-    data: {},
-    config: {
-      skillFunction: 'createInvestmentProcessFlow'
-    }
+export const apiClient = new APIClient();
+export default apiClient;
+
+// ─── Convenience namespace API ────────────────────────────────────────────────
+// One-liner wrappers so callers can do:  api.auth.login(email, pass)
+
+export const api = {
+
+  auth: {
+    register:        (email, password, name) => apiClient.register(email, password, name),
+    login:           (email, password)       => apiClient.login(email, password),
+    getMe:           ()                      => apiClient.getCurrentUser(),
+    updateProfile:   (data)                  => apiClient.updateProfile(data),
+    updateApiKeys:   (data)                  => apiClient.updateApiKeys(data),
+    getApiKeysStatus:()                      => apiClient.getApiKeysStatus(),
+    logout:          ()                      => apiClient.logout(),
+    forgotPassword:  (email)                 => apiClient.forgotPassword(email),
   },
-  
-  performance: {
-    type: 'performance',
-    data: {
-      bullMarket: { return: '+18.5%', period: '2021-2022' },
-      bearMarket: { return: '+3.2%', period: '2022-2023' },
-      benchmark: { bull: '+12.8%', bear: '-15.6%' }
-    },
-    config: {
-      skillFunction: 'createStrategyPerformanceViz'
-    }
+
+  afl: {
+    generate:         (opts)                             => apiClient.generateAFL(opts),
+    optimize:         (code)                             => apiClient.optimizeAFL(code),
+    debug:            (code, errorMessage)               => apiClient.debugAFL(code, errorMessage),
+    explain:          (code)                             => apiClient.explainAFL(code),
+    validate:         (code)                             => apiClient.validateAFL(code),
+    getCodes:         (limit)                            => apiClient.getAFLCodes(limit),
+    getCode:          (codeId)                           => apiClient.getAFLCode(codeId),
+    deleteCode:       (codeId)                           => apiClient.deleteAFLCode(codeId),
+    // File uploads
+    uploadFile:       (file)                             => apiClient.uploadAflFile(file),
+    getFiles:         (limit)                            => apiClient.getAflFiles(limit),
+    getFile:          (fileId)                           => apiClient.getAflFile(fileId),
+    deleteFile:       (fileId)                           => apiClient.deleteAflFile(fileId),
+    // Settings presets
+    savePreset:       (preset)                           => apiClient.saveSettingsPreset(preset),
+    getPresets:       ()                                 => apiClient.getSettingsPresets(),
+    getPreset:        (presetId)                         => apiClient.getSettingsPreset(presetId),
+    updatePreset:     (presetId, updates)                => apiClient.updateSettingsPreset(presetId, updates),
+    deletePreset:     (presetId)                         => apiClient.deleteSettingsPreset(presetId),
+    setDefaultPreset: (presetId)                         => apiClient.setDefaultPreset(presetId),
+    // History — NOTE: field is strategy_description, not prompt
+    saveHistory:      (entry)                            => apiClient.saveAflHistory(entry),
+    getHistory:       (limit)                            => apiClient.getAflHistory(limit),
+    deleteHistory:    (historyId)                        => apiClient.deleteAflHistory(historyId),
   },
-  
-  communication: {
-    type: 'communication',
-    data: {},
-    config: {
-      skillFunction: 'createCommunicationFlow'
-    }
+
+  chat: {
+    getConversations:    ()                                    => apiClient.getConversations(),
+    createConversation:  (title, type)                         => apiClient.createConversation(title, type),
+    getMessages:         (conversationId)                      => apiClient.getMessages(conversationId),
+    renameConversation:  (conversationId, title)               => apiClient.renameConversation(conversationId, title),
+    deleteConversation:  (conversationId)                      => apiClient.deleteConversation(conversationId),
+    sendMessage:         (content, conversationId)             => apiClient.sendMessage(content, conversationId),
+    sendMessageStream:   (content, conversationId, options)    => apiClient.sendMessageStream(content, conversationId, options),
+    sendMessageStreamV6: (content, conversationId, options)    => apiClient.sendMessageStreamV6(content, conversationId, options),
+    uploadFile:          (conversationId, formData)            => apiClient.uploadConversationFile(conversationId, formData),
+    getStreamEndpoint:   ()                                    => apiClient.getStreamEndpoint(),
+    getTools:            ()                                    => apiClient.getChatTools(),
   },
-  
-  firm_structure: {
-    type: 'firm_structure',
-    data: {},
-    config: {
-      skillFunction: 'createFirmStructureInfographic'
-    }
+
+  brain: {
+    uploadDocument:      (file, title, category) => apiClient.uploadDocument(file, title, category),
+    uploadBatch:         (files, category)       => apiClient.uploadDocumentsBatch(files, category),
+    uploadText:          (text, title, category) => apiClient.uploadText(text, title, category),
+    search:              (query, category, limit)=> apiClient.searchKnowledge(query, category, limit),
+    getDocuments:        (category, limit)       => apiClient.getDocuments(category, limit),
+    getDocument:         (documentId)            => apiClient.getDocument(documentId),
+    downloadDocument:    (documentId)            => apiClient.downloadDocument(documentId),
+    getStats:            ()                      => apiClient.getBrainStats(),
+    deleteDocument:      (documentId)            => apiClient.deleteDocument(documentId),
   },
-  
-  ocio_triangle: {
-    type: 'ocio_triangle',
-    data: {},
-    config: {
-      skillFunction: 'createOCIOTriangle'
-    }
-  }
+
+  backtest: {
+    upload:              (file, strategyId) => apiClient.uploadBacktest(file, strategyId),
+    getBacktest:         (backtestId)       => apiClient.getBacktest(backtestId),
+    getStrategyBacktests:(strategyId)       => apiClient.getStrategyBacktests(strategyId),
+  },
+
+  researcher: {
+    getCompanyResearch:  (symbol)                                            => apiClient.getCompanyResearch(symbol),
+    getCompanyNews:      (symbol, limit)                                     => apiClient.getCompanyNews(symbol, limit),
+    analyzeStrategyFit:  (symbol, strategy_type, timeframe, ctx)             => apiClient.analyzeStrategyFit(symbol, strategy_type, timeframe, ctx),
+    getPeerComparison:   (symbol, peers, sector)                             => apiClient.getPeerComparison(symbol, peers, sector),
+    getMacroContext:     ()                                                  => apiClient.getMacroContext(),
+    getSecFilings:       (symbol)                                            => apiClient.getSecFilings(symbol),
+    generateReport:      (symbol, opts)                                      => apiClient.generateResearchReport(symbol, opts),
+    getTrending:         (limit)                                             => apiClient.getTrendingResearch(limit),
+    search:              (query, type, limit)                                => apiClient.searchResearch(query, type, limit),
+  },
+
+  train: {
+    submitFeedback:       (feedback)          => apiClient.submitFeedback(feedback),
+    // returns { count, feedback: [...] }
+    getMyFeedback:        (limit)             => apiClient.getMyFeedback(limit),
+    getFeedback:          (feedbackId)        => apiClient.getFeedback(feedbackId),
+    testTraining:         (data)              => apiClient.testTraining(data),
+    getEffectiveness:     ()                  => apiClient.getTrainingEffectiveness(),
+    suggest:              (suggestion)        => apiClient.suggestTraining(suggestion),
+    // returns { count, suggestions: [...] }
+    getMySuggestions:     (limit)             => apiClient.getMySuggestions(limit),
+    getLearningCurve:     ()                  => apiClient.getLearningCurve(),
+    getPopularPatterns:   (limit)             => apiClient.getPopularPatterns(limit),
+    searchKnowledge:      (query, cat, limit) => apiClient.searchTrainingKnowledge(query, cat, limit),
+    getCategories:        ()                  => apiClient.getKnowledgeCategories(),
+    getTypes:             ()                  => apiClient.getTrainingTypes(),
+    quickLearn:           (code, explanation) => apiClient.quickLearn(code, explanation),
+    getStats:             ()                  => apiClient.getTrainStats(),
+  },
+
+  presentations: {
+    generate: (payload) => apiClient.generatePresentation(payload),
+  },
+
+  skills: {
+    getSkills:    () => apiClient.getSkills(),
+    getSkillJobs: () => apiClient.getSkillJobs(),
+  },
+
+  yfinance: {
+    getQuote:   (symbol)                    => apiClient.getYFinanceQuote(symbol),
+    getHistory: (symbol, period, interval)  => apiClient.getYFinanceHistory(symbol, period, interval),
+  },
+
+  edgar: {
+    getFilings: (symbol) => apiClient.getEdgarFilings(symbol),
+  },
+
+  tasks: {
+    getTasks: ()         => apiClient.getTasks(),
+    getTask:  (taskId)   => apiClient.getTask(taskId),
+  },
+
+  health: {
+    check: () => apiClient.checkHealth(),
+  },
 };
 
-/**
- * Table Configuration Examples
- */
-const tableExamples = {
-  passive_active: {
-    type: 'passive_active',
-    headers: ['TIME PERIOD', 'PASSIVE', 'ACTIVE', 'OUTPERFORMANCE'],
-    rows: [
-      ['1 Year', '5.2%', '7.8%', '+2.6%'],
-      ['3 Year', '7.8%', '9.4%', '+1.6%'],
-      ['5 Year', '9.1%', '11.2%', '+2.1%'],
-      ['10 Year', '8.7%', '10.3%', '+1.6%']
-    ],
-    config: {
-      skillFunction: 'createPassiveActiveTable'
-    }
-  },
-  
-  afg: {
-    type: 'afg',
-    headers: ['ASSET RANGE', 'MANAGEMENT FEE', 'PERFORMANCE FEE', 'EFFECTIVE TOTAL'],
-    rows: [
-      ['$0 - $1M', '1.00%', '15%', '1.15%'],
-      ['$1M - $5M', '0.85%', '15%', '1.00%'],
-      ['$5M - $10M', '0.75%', '15%', '0.90%'],
-      ['$10M - $25M', '0.65%', '20%', '0.85%'],
-      ['$25M+', '0.50%', '20%', '0.70%']
-    ],
-    config: {
-      skillFunction: 'createAFGTable'
-    }
-  },
-  
-  annualized_return: {
-    type: 'annualized_return',
-    headers: ['STRATEGY', 'YTD', '1-YEAR', '3-YEAR', '5-YEAR', 'INCEPTION'],
-    rows: [
-      ['Bull Bear Strategy', '8.2%', '12.8%', '11.2%', '9.8%', '10.3%'],
-      ['Guardian Strategy', '6.7%', '9.4%', '8.9%', '7.6%', '8.2%'],
-      ['Income Plus Strategy', '4.9%', '7.2%', '6.8%', '5.9%', '6.4%'],
-      ['Navigrowth Strategy', '12.3%', '15.7%', '13.4%', '11.9%', '12.8%']
-    ],
-    config: {
-      skillFunction: 'createAnnualizedReturnTable'
-    }
-  },
-  
-  attribution: {
-    type: 'attribution',
-    headers: ['ATTRIBUTION FACTOR', 'CONTRIBUTION', 'WEIGHT'],
-    rows: [
-      ['Asset Allocation', '+2.4%', '45%'],
-      ['Security Selection', '+1.8%', '35%'],
-      ['Market Timing', '+0.7%', '15%'],
-      ['Other Factors', '+0.3%', '5%']
-    ],
-    config: {
-      skillFunction: 'createAttributionTable'
-    }
-  },
-  
-  risk_metrics: {
-    type: 'risk_metrics',
-    headers: ['RISK METRIC', 'PORTFOLIO', 'BENCHMARK', 'RELATIVE'],
-    rows: [
-      ['Maximum Drawdown', '8.5%', '18.2%', '-9.7%'],
-      ['Volatility', '11.2%', '16.8%', '-5.6%'],
-      ['Beta', '0.78', '1.00', '-0.22'],
-      ['Correlation', '0.85', '1.00', '-0.15'],
-      ['VaR (95%)', '2.1%', '3.8%', '-1.7%'],
-      ['Calmar Ratio', '1.32', '0.89', '+0.43']
-    ],
-    config: {
-      skillFunction: 'createRiskMetricsTable'
-    }
-  }
-};
+
+// ─── Usage examples ───────────────────────────────────────────────────────────
 
 /**
- * CSS Styles for the Editor
+ * ── Login ────────────────────────────────────────────────────────────────────
+ *
+ *   const { access_token, user_id } = await api.auth.login('user@example.com', 'pass');
+ *
+ * ── Register ─────────────────────────────────────────────────────────────────
+ *
+ *   const { access_token } = await api.auth.register('user@example.com', 'pass', 'Name');
+ *   // Then set API keys:
+ *   await api.auth.updateApiKeys({ claude_api_key: 'sk-...', tavily_api_key: 'tvly-...' });
+ *
+ * ── Non-streaming chat ───────────────────────────────────────────────────────
+ *
+ *   const { response, conversation_id } = await api.chat.sendMessage('Hello!');
+ *
+ * ── Streaming chat ───────────────────────────────────────────────────────────
+ *
+ *   const { conversationId } = await api.chat.sendMessageStream(
+ *     'Write an AFL strategy',
+ *     undefined,            // start new conversation
+ *     {
+ *       onText: (text) => process.stdout.write(text),
+ *       onData: (data) => console.log('artifact/metadata:', data),
+ *       onToolCall: (id, name, args) => console.log('tool:', name, args),
+ *       onToolResult: (id, result) => console.log('tool result:', result),
+ *       onFinish: (reason, usage) => console.log('done', reason, usage),
+ *       onError: (err) => console.error('stream error:', err),
+ *     },
+ *   );
+ *
+ * ── AFL generation ───────────────────────────────────────────────────────────
+ *
+ *   const { code, explanation } = await api.afl.generate({
+ *     prompt: 'RSI crossover strategy',
+ *     strategy_type: 'standalone',
+ *     backtest_settings: {
+ *       initial_equity: 100000,
+ *       position_size: '100',
+ *       commission: 0.0005,
+ *       trade_delays: [0,0,0,0],
+ *     },
+ *   });
+ *
+ * ── Save AFL history ─────────────────────────────────────────────────────────
+ *
+ *   // NOTE: use strategy_description (not prompt)
+ *   await api.afl.saveHistory({
+ *     strategy_description: 'RSI crossover',
+ *     generated_code: code,
+ *     strategy_type: 'standalone',
+ *   });
+ *
+ * ── Brain search ─────────────────────────────────────────────────────────────
+ *
+ *   const { results, count, search_type } = await api.brain.search('RSI strategy', 'afl', 5);
+ *
+ * ── Researcher (responses wrapped in { success, data, message }) ──────────────
+ *
+ *   const res = await api.researcher.getCompanyResearch('AAPL');
+ *   const data = res.data;   // unwrap
+ *
+ * ── Training feedback ────────────────────────────────────────────────────────
+ *
+ *   await api.train.submitFeedback({
+ *     original_prompt: 'RSI crossover',
+ *     generated_code: code,
+ *     feedback_type: 'correction',
+ *     feedback_text: 'RSI() should not take Close as first arg',
+ *     correct_code: fixedCode,
+ *     rating: 3,
+ *   });
+ *
+ * ── Get my feedback (unwrap array) ───────────────────────────────────────────
+ *
+ *   const { feedback, count } = await api.train.getMyFeedback();
+ *
+ * ── Presentation export ──────────────────────────────────────────────────────
+ *
+ *   const response = await api.presentations.generate({
+ *     title: 'Q1 Report',
+ *     slides: [...],
+ *     theme: 'potomac',
+ *     format: 'pptx',
+ *   });
+ *   const blob = await response.blob();
+ *   const url = URL.createObjectURL(blob);
+ *   const a = document.createElement('a');
+ *   a.href = url; a.download = 'Q1_Report.pptx'; a.click();
  */
-const editorStyles = `
-.presentation-editor {
-  display: flex;
-  flex-direction: column;
-  height: 100vh;
-  background: #f5f5f5;
-}
-
-.editor-header {
-  padding: 1rem;
-  background: white;
-  border-bottom: 1px solid #ddd;
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-}
-
-.editor-toolbar button {
-  margin-left: 0.5rem;
-  padding: 0.5rem 1rem;
-  background: #007bff;
-  color: white;
-  border: none;
-  border-radius: 4px;
-  cursor: pointer;
-}
-
-.editor-toolbar button:hover {
-  background: #0056b3;
-}
-
-.editor-content {
-  display: flex;
-  flex: 1;
-  overflow: hidden;
-}
-
-.slide-list {
-  width: 200px;
-  background: white;
-  border-right: 1px solid #ddd;
-  padding: 1rem;
-  overflow-y: auto;
-}
-
-.slide-thumbnail {
-  padding: 1rem;
-  margin-bottom: 0.5rem;
-  border: 1px solid #ddd;
-  border-radius: 4px;
-  cursor: pointer;
-  background: #fff;
-}
-
-.slide-thumbnail.active {
-  border-color: #007bff;
-  background: #e3f2fd;
-}
-
-.slide-editor {
-  flex: 1;
-  padding: 2rem;
-  overflow-y: auto;
-  display: flex;
-  justify-content: center;
-}
-
-.slide-preview {
-  width: 900px;
-  height: 506px;
-  background: white;
-  border: 1px solid #ddd;
-  position: relative;
-  box-shadow: 0 4px 6px rgba(0,0,0,0.1);
-}
-
-.slide-title-bar {
-  padding: 1rem;
-  border-bottom: 1px solid #eee;
-}
-
-.slide-title-bar input {
-  width: 100%;
-  font-size: 24px;
-  font-weight: bold;
-  border: none;
-  outline: none;
-}
-
-.slide-content-area {
-  padding: 2rem;
-  position: relative;
-  height: 350px;
-}
-
-.element {
-  position: absolute;
-  border: 1px dashed #ccc;
-  padding: 0.5rem;
-  background: rgba(255, 255, 255, 0.8);
-}
-
-.element:hover {
-  border-color: #007bff;
-  background: rgba(0, 123, 255, 0.1);
-}
-
-.element-controls {
-  position: absolute;
-  top: -25px;
-  right: 0;
-}
-
-.element-controls button {
-  margin-left: 0.25rem;
-  padding: 0.25rem 0.5rem;
-  font-size: 10px;
-  border: 1px solid #ccc;
-  background: white;
-  cursor: pointer;
-}
-
-.slide-notes {
-  padding: 1rem;
-  border-top: 1px solid #eee;
-}
-
-.slide-notes textarea {
-  width: 100%;
-  height: 100px;
-  border: 1px solid #ddd;
-  padding: 0.5rem;
-  resize: vertical;
-}
-
-.chart-preview, .table-preview {
-  width: 100%;
-  height: 100%;
-  display: flex;
-  flex-direction: column;
-  justify-content: center;
-  align-items: center;
-  text-align: center;
-  background: #f8f9fa;
-  border: 1px solid #dee2e6;
-}
-
-.text-element textarea {
-  width: 100%;
-  height: 100%;
-  border: none;
-  outline: none;
-  resize: none;
-  background: transparent;
-}
-
-.image-element img {
-  width: 100%;
-  height: 100%;
-  object-fit: cover;
-}
-
-.shape-element {
-  border: 1px solid #ccc;
-}
-`;
-
-// Add styles to document
-const styleSheet = document.createElement("style");
-styleSheet.type = "text/css";
-styleSheet.innerText = editorStyles;
-document.head.appendChild(styleSheet);

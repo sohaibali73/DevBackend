@@ -430,7 +430,7 @@ async def stream_claude_response(
                                 "name": current_tool["name"],
                                 "input": args,
                             })
-                            current_tool = None
+                        current_tool = None
 
                 final_message = await stream.get_final_message()
                 usage = {
@@ -458,7 +458,8 @@ async def stream_claude_response(
             tool_results = []
             for call in current_tool_calls:
                 try:
-                    result_str = handle_tool_call(
+                    result_str = await asyncio.to_thread(
+                        handle_tool_call,
                         tool_name=call["name"],
                         tool_input=call["input"],
                         supabase_client=supabase_client,
@@ -479,28 +480,16 @@ async def stream_claude_response(
                 "content": tool_results,
             })
 
-            # Emit step finish so frontend knows the tool step completed
-            yield encoder.encode_finish_step("tool-calls", usage, is_continued=True)
-
-            # BUG FIX: emit a: (tool result) frames for every tool that executed.
-            #
-            # Previously this block was completely absent. Without a: frames the
-            # Vercel AI SDK useChat hook never transitions tool parts from
-            # state="input-available" to state="output-available", so part.output
-            # is always undefined on the frontend. As a result:
-            #   - Tool cards (weather, AFL, etc.) can't render their data
-            #   - Claude has no proper channel to surface the result, so it echoes
-            #     the raw JSON string in its continuation text (the 0: text stream),
-            #     which is what causes the raw JSON blob visible in the chat UI
-            #
-            # Emitting the a: frame here fixes both symptoms:
-            #   1. part.output is populated → cards render from structured data
-            #   2. Claude no longer needs to echo the JSON → clean text response
+            # Emit a: tool result frames BEFORE e: finish step so the AI SDK
+            # receives all results before being told the step is complete
             for result in tool_results:
                 yield encoder.encode_tool_result(
                     result["tool_use_id"],
                     result["content"],
                 )
+
+            # Signal step complete after results have been sent
+            yield encoder.encode_finish_step("tool-calls", usage, is_continued=True)
 
             # Loop back to call Claude again with the tool results in context
 
@@ -560,7 +549,7 @@ async def stream_with_artifacts(
                         yield encoder.encode_text(text)
 
             # Get final message
-            final_message = stream.get_final_message()
+            final_message = await stream.get_final_message()
             usage = {
                 "promptTokens": final_message.usage.input_tokens,
                 "completionTokens": final_message.usage.output_tokens,

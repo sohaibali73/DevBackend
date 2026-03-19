@@ -28,9 +28,10 @@ COPY requirements.txt .
 RUN pip install --no-cache-dir --upgrade pip && \
     pip install --no-cache-dir -r requirements.txt
 
-# Copy package.json and install Node.js dependencies
-COPY package.json .
-RUN npm install
+# Install Node.js dependencies
+RUN curl -fsSL https://deb.nodesource.com/setup_18.x | bash - && \
+    apt-get install -y nodejs && \
+    npm install -g pptxgenjs
 
 # Copy application code (order matters: least changed to most changed)
 COPY config.py .
@@ -38,7 +39,7 @@ COPY api/ ./api/
 COPY core/ ./core/
 COPY db/ ./db/
 COPY main.py .
-COPY Claude\ Skills/ ./Claude\ Skills/
+COPY ClaudeSkills/ ./ClaudeSkills/
 
 # Expose the port (Note: Railway ignores this, but it's good practice)
 EXPOSE 8000

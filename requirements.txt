@@ -1,3 +1,8 @@
+# =============================================================================
+# requirements.txt — BULLETPROOF EDITION
+# For FastAPI Python backend hosted on Railway
+# =============================================================================
+
 # Web Framework
 fastapi
 uvicorn[standard]
@@ -5,27 +10,45 @@ gunicorn
 
 # AI
 anthropic>=0.84.0
-httpx  # For Vercel AI Gateway async HTTP client
+httpx
 
 # Database
 supabase
+
 # Research
 tavily-python
 yfinance
 requests
+
 # Auth & Encryption
 python-jose[cryptography]
 passlib[bcrypt]
 cryptography>=41.0
 
-# Document Processing (parsing uploaded files, NOT generation)
-PyPDF2
+# =============================================================================
+# DOCUMENT PROCESSING
+# =============================================================================
+
+# Core parsers
+pypdf
 python-docx
 PyMuPDF
 python-pptx>=0.6.21
 Pillow>=10.0.0
 
-# Utils
+# Bulletproof universal parser (magic bytes + 64+ formats + OCR + archives)
+filetype
+unstructured[all-docs]
+
+# Fallbacks
+pdfplumber
+openpyxl
+pytesseract
+
+# =============================================================================
+# UTILS
+# =============================================================================
+
 python-dotenv
 pydantic
 pydantic-settings
@@ -33,26 +56,23 @@ python-multipart
 aiofiles
 email-validator
 
-# Data Analysis (for code execution tool)
+# =============================================================================
+# DATA ANALYSIS
+# =============================================================================
+
 numpy
 pandas
 
-# Text-to-Speech (Voice Mode)
+# =============================================================================
+# AUDIO / VOICE
+# =============================================================================
+
 edge-tts
-
-# Speech Recognition
 SpeechRecognition
-
-# Audio Processing
 pydub
 
-# Optional: Embeddings (for vector search)
-sentence-transformers==2.2.2
+# =============================================================================
+# EMBEDDINGS (vector search)
+# =============================================================================
 
-# Presentation Generation Dependencies
-aiofiles
-base64
-json
-asyncio
-subprocess
-pathlib
+sentence-transformers==2.2.2
