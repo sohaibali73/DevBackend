@@ -66,7 +66,7 @@ COPY config.py .
 COPY db/ ./db/
 COPY core/ ./core/
 COPY api/ ./api/
-COPY ClaudeSkills/ ./ClaudeSkills/
+
 COPY main.py .
 
 # =============================================================================
