@@ -3814,9 +3814,11 @@ def _invoke_skill(tool_input: Dict, api_key: str) -> Dict:
 
         # If the skill produced file artifacts, download and store them
         skill_files = result.get("files", [])
+        logger.info("invoke_skill '%s' files returned: %s", skill_slug, skill_files)
         if skill_files:
             try:
                 downloaded = gw.download_files(skill_files)
+                logger.info("invoke_skill '%s' downloaded: %s files", skill_slug, len(downloaded))
                 for dl in downloaded:
                     fname = dl.get("filename", "")
                     # FIX: download_files() returns "content" key, not "data"
@@ -3848,7 +3850,7 @@ def _invoke_skill(tool_input: Dict, api_key: str) -> Dict:
                         logger.info("Skill %s produced file: %s (%.1f KB)", skill_slug, fname, entry.size_kb)
                         break  # Use first matching file
             except Exception as dl_err:
-                logger.warning("Failed to download skill files: %s", dl_err)
+                logger.error("Failed to download skill files for '%s': %s", skill_slug, dl_err, exc_info=True)
 
         return base_response
     except Exception as e:
