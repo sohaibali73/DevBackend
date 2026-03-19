@@ -28,7 +28,7 @@ from pydantic import BaseModel
 
 from api.dependencies import get_current_user_id
 from db.supabase_client import get_supabase
-from document_parser import DocumentParser
+from core.document_parser import DocumentParser
 
 router = APIRouter(prefix="/upload", tags=["Upload"])
 logger = logging.getLogger(__name__)
