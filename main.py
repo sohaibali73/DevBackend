@@ -26,25 +26,11 @@ app = FastAPI(
     version="2.0",
 )
 
-# CORS middleware — locked down to allowed origins only
-_ALLOWED_ORIGINS = [
-    "https://analystbypotomac.vercel.app",
-    "https://www.analystbypotomac.vercel.app",
-    "https://potomacdeveloper.vercel.app",
-    "https://potomacanalyst12.vercel.app",
-    "http://localhost:3000",
-    "http://localhost:3001",
-    "http://127.0.0.1:3000",
-]
-# Allow additional origins from FRONTEND_URL env var
-_frontend_url = os.getenv("FRONTEND_URL", "")
-if _frontend_url and _frontend_url not in _ALLOWED_ORIGINS:
-    _ALLOWED_ORIGINS.append(_frontend_url)
-
+# CORS middleware — open to all origins
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=_ALLOWED_ORIGINS,
-    allow_credentials=True,
+    allow_origins=["*"],
+    allow_credentials=False,  # must be False when allow_origins=["*"]
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -99,10 +85,7 @@ async def rate_limit_middleware(request: Request, call_next):
 async def global_exception_handler(request: Request, exc: Exception):
     """Catch unhandled exceptions and return safe JSON with CORS headers."""
     logger.error(f"Unhandled exception on {request.method} {request.url.path}: {exc}", exc_info=True)
-    # Don't leak internal error details to clients in production
     is_production = os.getenv("ENVIRONMENT") == "production" or os.getenv("RAILWAY_ENVIRONMENT")
-    origin = request.headers.get("origin", "")
-    cors_origin = origin if origin in _ALLOWED_ORIGINS else _ALLOWED_ORIGINS[0]
     return JSONResponse(
         status_code=500,
         content={
@@ -110,8 +93,7 @@ async def global_exception_handler(request: Request, exc: Exception):
             "type": "ServerError" if is_production else type(exc).__name__,
         },
         headers={
-            "Access-Control-Allow-Origin": cors_origin,
-            "Access-Control-Allow-Credentials": "true",
+            "Access-Control-Allow-Origin": "*",
         },
     )
 
@@ -250,7 +232,6 @@ except Exception as e:
 
 try:
     from api.routes import skills
-
     app.include_router(skills.router)
     routers_loaded.append("skills")
     logger.info("✓ Loaded skills router (Claude custom beta skills gateway)")
@@ -336,9 +317,6 @@ async def health():
         "routers_failed": len(routers_failed),
     }
 
-# Debug/diagnostic endpoints removed from production for security.
-# Use /admin/health/system for diagnostics (requires admin auth).
-
 if __name__ == "__main__":
     import uvicorn
 
@@ -353,5 +331,5 @@ if __name__ == "__main__":
         host="0.0.0.0",
         port=port,
         log_level=LOG_LEVEL.lower(),
-        timeout_keep_alive=120,  # 120s keep-alive for long Skills API calls
+        timeout_keep_alive=120,
     )
