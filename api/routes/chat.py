@@ -225,6 +225,8 @@ class MessageCreate(BaseModel):
     conversation_id: Optional[str] = None
     thinking_mode: Optional[str] = None
     thinking_budget: Optional[int] = None
+    model: Optional[str] = None        # AI model to use e.g. "claude-sonnet-4-6"
+    skill_slug: Optional[str] = None   # Force-invoke a specific skill e.g. "amibroker-afl-developer"
 
 
 class ConversationCreate(BaseModel):
@@ -834,11 +836,26 @@ async def chat_v6_stream(
                 engine.thinking_config = thinking_config
             client = anthropic.AsyncAnthropic(api_key=api_keys["claude"])
 
+            # Resolve the requested model — fall back to engine default if not provided
+            from core.claude_engine import ClaudeModel as _CM
+            _resolved_model = _CM.from_string(data.model).value if data.model else engine.model
+
             system_prompt = (
                 f"{get_base_prompt()}\n\n{get_chat_prompt()}"
                 f"{file_context}{kb_context}{kb_doc_context}"
                 f"{_AFL_RULES}{_STREAM_TOOLS_LIST}"
             )
+
+            # Force-invoke a specific skill if the user pinned one from the UI
+            if data.skill_slug:
+                system_prompt += (
+                    f"\n\n## FORCED SKILL INVOCATION\n"
+                    f"The user has explicitly selected the '{data.skill_slug}' skill for this message. "
+                    f"You MUST immediately call the `invoke_skill` tool with "
+                    f"skill_slug='{data.skill_slug}' as your very first action. "
+                    f"Do not write any introductory text before invoking the skill. "
+                    f"Pass the user's full message as the `prompt` argument to the skill."
+                )
 
             messages = sanitize_message_history(
                 history + [{"role": "user", "content": data.content}]
@@ -855,7 +872,7 @@ async def chat_v6_stream(
                 pending_tool_calls = []
 
                 async with client.messages.stream(
-                    model=engine.model,
+                    model=_resolved_model,
                     max_tokens=3000,
                     system=system_prompt,
                     messages=messages,
