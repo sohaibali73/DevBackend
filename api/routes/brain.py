@@ -555,6 +555,56 @@ def _generate_embedding(text: str) -> Optional[list]:
         return None
 
 # ============================================================================
+# GET DOCUMENT CONTENT (raw bytes for client-side parsing)
+# ============================================================================
+
+@router.get("/documents/{document_id}/content")
+async def get_document_content(
+    document_id: str,
+    user_id: str = Depends(get_current_user_id),
+):
+    """Return the original uploaded file bytes for client-side parsing.
+    
+    The frontend uses mammoth, pdfjs-dist, papaparse, and xlsx to parse
+    the raw bytes client-side.
+    """
+    from fastapi.responses import Response as FastAPIResponse
+    import mimetypes
+
+    db = get_supabase()
+    result = db.table("brain_documents").select(
+        "storage_path, filename, file_type, uploaded_by"
+    ).eq("id", document_id).limit(1).execute()
+
+    if not result.data:
+        raise HTTPException(status_code=404, detail="Document not found")
+
+    row = result.data[0]
+
+    # Security: only owner can access
+    if row.get("uploaded_by") and row["uploaded_by"] != user_id:
+        raise HTTPException(status_code=403, detail="Access denied")
+
+    storage_path = row.get("storage_path")
+    if not storage_path or not os.path.exists(storage_path):
+        raise HTTPException(status_code=404, detail="File not found on storage volume")
+
+    content_type = row.get("file_type") or mimetypes.guess_type(row.get("filename", ""))[0] or "application/octet-stream"
+
+    with open(storage_path, "rb") as f:
+        data = f.read()
+
+    return FastAPIResponse(
+        content=data,
+        media_type=content_type,
+        headers={
+            "Content-Disposition": f'attachment; filename="{row.get("filename", "document")}"',
+            "Content-Length": str(len(data)),
+        },
+    )
+
+
+# ============================================================================
 # DOWNLOAD ORIGINAL FILE FROM RAILWAY VOLUME
 # ============================================================================
 
