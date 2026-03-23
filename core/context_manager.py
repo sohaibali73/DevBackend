@@ -17,11 +17,11 @@ MAX_CONTEXT_TOKENS = 4000  # Reduced from 8000 for faster processing
 
 # Condensed context limits for performance optimization
 CONDENSED_CONTEXT_LIMITS = {
-    "system_prompt_max_tokens": 500,  # Reduced from ~2000
+    "system_prompt_max_tokens": 5000,  # Reduced from ~2000
     "training_context_max_tokens": 800,  # Reduced from 2000
     "kb_context_max_tokens": 600,  # Reduced from 1500
     "research_context_max_tokens": 1000,  # Reduced from 2000
-    "total_context_budget": 5000,  # Reduced from 8000
+    "total_context_budget": 50000,  # Reduced from 8000
 }
 
 
