@@ -20,7 +20,7 @@ from datetime import datetime, timezone
 from typing import Optional, List
 
 from fastapi import APIRouter, HTTPException, UploadFile, File, Form, Header, Query
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from db.supabase_client import get_supabase
 from api.routes.upload import (
@@ -379,6 +379,165 @@ async def delete_kb_document(
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+
+# ─────────────────────────────────────────────────────────────────────────────
+# PRE-PARSED UPLOAD  (client extracted text locally — server just inserts)
+# ─────────────────────────────────────────────────────────────────────────────
+
+class PreParsedDoc(BaseModel):
+    filename: str
+    file_type: str = "application/octet-stream"
+    file_size: int = 0
+    extracted_text: str
+    content_hash: str                        # SHA-256 of original file bytes
+    category: str = "general"
+    tags: List[str] = Field(default_factory=list)
+    uploader_id: Optional[str] = None
+
+
+class PreParsedBatch(BaseModel):
+    documents: List[PreParsedDoc]
+
+
+@router.post("/upload-preparsed")
+async def upload_preparsed(
+    batch: PreParsedBatch,
+    x_admin_key: Optional[str] = Header(default=None),
+):
+    """
+    Ultra-fast KB ingest: client parsed the text locally, server just deduplicates
+    and inserts into brain_documents + brain_chunks.
+
+    No file bytes are transferred.  No server-side parsing happens.
+    Typical latency: ~200 ms per document vs 5-30 s for server-side parsing.
+
+    Request body:
+    ```json
+    {
+      "documents": [
+        {
+          "filename": "report.pdf",
+          "file_type": "application/pdf",
+          "file_size": 245678,
+          "extracted_text": "The full text extracted by the local parser...",
+          "content_hash": "sha256-of-original-file-bytes",
+          "category": "research",
+          "tags": ["2024", "earnings"]
+        }
+      ]
+    }
+    ```
+    """
+    _check_admin_key(x_admin_key)
+
+    if len(batch.documents) > MAX_BATCH_FILES:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Too many documents. Maximum is {MAX_BATCH_FILES} per request.",
+        )
+
+    db = get_supabase()
+    results = []
+    successful = duplicates = failed = 0
+
+    for doc in batch.documents:
+        try:
+            content = doc.extracted_text.replace("\x00", "").strip()
+            if not content:
+                failed += 1
+                results.append({
+                    "filename": doc.filename,
+                    "status": "error",
+                    "error": "Extracted text is empty.",
+                })
+                continue
+
+            # ── Dedup ──────────────────────────────────────────────────────────
+            existing = db.table("brain_documents").select("id").eq(
+                "content_hash", doc.content_hash
+            ).limit(1).execute()
+            if existing.data:
+                duplicates += 1
+                results.append({
+                    "filename": doc.filename,
+                    "status": "duplicate",
+                    "document_id": existing.data[0]["id"],
+                })
+                continue
+
+            owner_id = (doc.uploader_id or "").strip() or SYSTEM_UPLOADER_ID
+            file_id = str(uuid.uuid4())
+            now = datetime.now(timezone.utc).isoformat()
+
+            # ── Insert brain_documents ─────────────────────────────────────────
+            doc_result = db.table("brain_documents").insert({
+                "id": file_id,
+                "uploaded_by": owner_id,
+                "title": doc.filename,
+                "filename": doc.filename,
+                "file_type": doc.file_type,
+                "file_size": doc.file_size,
+                "storage_path": "",          # no binary stored — text only
+                "category": doc.category,
+                "subcategories": [],
+                "tags": doc.tags,
+                "raw_content": content,
+                "summary": "",
+                "content_hash": doc.content_hash,
+                "source_type": "local_preparsed",
+                "created_at": now,
+            }).execute()
+
+            document_id = doc_result.data[0]["id"]
+
+            # ── Chunk for RAG ──────────────────────────────────────────────────
+            chunks = [
+                content[i : i + CHUNK_SIZE]
+                for i in range(0, len(content), CHUNK_SIZE)
+            ][:MAX_CHUNKS_PER_DOC]
+
+            for idx, chunk in enumerate(chunks):
+                db.table("brain_chunks").insert({
+                    "document_id": document_id,
+                    "chunk_index": idx,
+                    "content": chunk,
+                }).execute()
+
+            db.table("brain_documents").update({
+                "is_processed": True,
+                "chunk_count": len(chunks),
+                "processed_at": now,
+            }).eq("id", document_id).execute()
+
+            successful += 1
+            results.append({
+                "filename": doc.filename,
+                "status": "success",
+                "document_id": document_id,
+                "chunks_created": len(chunks),
+                "text_length": len(content),
+            })
+
+        except Exception as exc:
+            failed += 1
+            logger.error(f"Pre-parsed insert failed for {doc.filename}: {exc}", exc_info=True)
+            results.append({
+                "filename": doc.filename,
+                "status": "error",
+                "error": str(exc),
+            })
+
+    return {
+        "status": "completed",
+        "summary": {
+            "total": len(batch.documents),
+            "successful": successful,
+            "duplicates": duplicates,
+            "failed": failed,
+        },
+        "results": results,
+    }
+
 
 @router.get("/stats")
 async def kb_stats(x_admin_key: Optional[str] = Header(default=None)):
