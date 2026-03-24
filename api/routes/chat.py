@@ -691,9 +691,10 @@ async def chat_agent(
             engine = _get_engine(api_keys["claude"])
             client = anthropic.AsyncAnthropic(api_key=api_keys["claude"])
 
-            # Resolve model and get configuration
-            from core.claude_engine import ClaudeModel as _CM
-            requested_model = _CM.from_string(data.model).value if data.model else engine.model
+            # Resolve model: use the exact string from the frontend if provided,
+            # only fall back to the engine default (SONNET_4) when omitted.
+            requested_model = data.model.strip() if data.model and data.model.strip() else engine.model
+            print(f"[chat/agent] data.model={data.model!r} → requested_model={requested_model!r}")
 
             # Use pinned version if requested for production stability
             model_to_use = (
