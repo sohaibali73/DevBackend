@@ -383,18 +383,32 @@ class ChatAgentRequest(BaseModel):
 # ---------------------------------------------------------------------------
 
 async def _fetch_file_context(db, conversation_id: str) -> str:
-    """Fetch file metadata attached to this conversation."""
-    files = db.table("files").select("filename, content_snippet").eq(
-        "conversation_id", conversation_id
-    ).execute()
-    if not files.data:
-        return ""
+    """Fetch file metadata attached to this conversation via the junction table."""
+    try:
+        # conversation_files links conversations to file_uploads
+        conv_files = db.table("conversation_files").select(
+            "file_id, file_uploads(original_filename, extracted_text, content_type)"
+        ).eq("conversation_id", conversation_id).execute()
 
-    snippets = [
-        f"📎 {f['filename']}: {f.get('content_snippet', 'no snippet')[:80]}..."
-        for f in files.data
-    ]
-    return f"\n\n<file_context>\n{chr(10).join(snippets)}\n</file_context>"
+        if not conv_files.data:
+            return ""
+
+        snippets = []
+        for cf in conv_files.data:
+            fu = cf.get("file_uploads")
+            if not fu:
+                continue
+            fname = fu.get("original_filename", "unknown")
+            snippet = (fu.get("extracted_text") or "no content extracted")[:80]
+            snippets.append(f"📎 {fname}: {snippet}...")
+
+        if not snippets:
+            return ""
+
+        return f"\n\n<file_context>\n{chr(10).join(snippets)}\n</file_context>"
+    except Exception:
+        # Don't let file context failures break the chat endpoint
+        return ""
 
 
 async def _fetch_kb_context(db, user_content: str) -> str:
@@ -404,23 +418,29 @@ async def _fetch_kb_context(db, user_content: str) -> str:
 
 
 async def _fetch_kb_doc_refs(db, user_content: str) -> str:
-    """Extract [kb-doc: filename] refs and inject full content."""
-    matches = re.findall(r'\[kb-doc:\s*([^\]]+)\]', user_content)
-    if not matches:
+    """Extract [kb-doc: filename] refs and inject full content from brain_documents."""
+    try:
+        matches = re.findall(r'\[kb-doc:\s*([^\]]+)\]', user_content)
+        if not matches:
+            return ""
+
+        docs = []
+        for filename in matches:
+            result = db.table("brain_documents").select("raw_content, title").eq(
+                "filename", filename.strip()
+            ).execute()
+            if result.data:
+                content = result.data[0].get("raw_content") or ""
+                title = result.data[0].get("title") or filename
+                docs.append(f"### {title}\n{content[:2000]}")
+
+        if not docs:
+            return ""
+
+        return f"\n\n<kb_doc_context>\n{chr(10).join(docs)}\n</kb_doc_context>"
+    except Exception:
+        # Don't let KB lookup failures break the chat endpoint
         return ""
-
-    docs = []
-    for filename in matches:
-        result = db.table("knowledge_base").select("content").eq(
-            "filename", filename.strip()
-        ).execute()
-        if result.data:
-            docs.append(f"### {filename}\n{result.data[0]['content'][:2000]}")
-
-    if not docs:
-        return ""
-
-    return f"\n\n<kb_doc_context>\n{chr(10).join(docs)}\n</kb_doc_context>"
 
 
 # ---------------------------------------------------------------------------
