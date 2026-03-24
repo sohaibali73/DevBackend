@@ -31,6 +31,31 @@ router = APIRouter(prefix="/brain", tags=["Knowledge Base"])
 logger = logging.getLogger(__name__)
 
 
+def _extract_text_from_bytes(content_bytes: bytes, content_type: str, filename: str) -> str:
+    """Extract text from raw bytes by writing to a temp file, then calling the disk-based parser.
+    
+    The upload.py _extract_text() expects a file path. Brain routes receive raw bytes
+    before saving to disk, so we bridge the gap with a temp file.
+    """
+    import tempfile
+    suffix = os.path.splitext(filename)[1] if filename else ""
+    tmp_path = None
+    try:
+        with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
+            tmp.write(content_bytes)
+            tmp_path = tmp.name
+        return _extract_text(tmp_path)
+    except Exception as e:
+        logger.warning(f"Temp-file extraction failed for {filename}: {e}")
+        return ""
+    finally:
+        if tmp_path and os.path.exists(tmp_path):
+            try:
+                os.unlink(tmp_path)
+            except OSError:
+                pass
+
+
 # ============================================================================
 # MODELS
 # ============================================================================
@@ -77,7 +102,7 @@ async def upload_document(
         db = get_supabase()
 
         # ── Extract text ──────────────────────────────────────────────────────
-        content = _extract_text(content_bytes, file.content_type or "", file.filename or "")
+        content = _extract_text_from_bytes(content_bytes, file.content_type or "", file.filename or "")
         content = content.replace("\x00", "")  # strip null bytes — Postgres rejects them
         if not content.strip():
             raise HTTPException(status_code=400, detail="Could not extract text from this file.")
@@ -211,7 +236,7 @@ async def upload_documents_batch(
     for file in files:
         try:
             content_bytes = await file.read()
-            content = _extract_text(content_bytes, file.content_type or "", file.filename or "")
+            content = _extract_text_from_bytes(content_bytes, file.content_type or "", file.filename or "")
             content = content.replace("\x00", "")  # strip null bytes — Postgres rejects them
             content_hash = hashlib.sha256(content_bytes).hexdigest()
 

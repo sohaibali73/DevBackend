@@ -313,8 +313,9 @@ async def _generate_with_conversation(
         if phase == GenerationPhase.INITIAL:
             questions_prompt = f"""The user wants to create an AFL strategy: "{request.prompt}"
 
-⚠️ CRITICAL: Before writing ANY code, you MUST ask these two questions:
+⚠️ CRITICAL: Before writing ANY code, you MUST ask these two questions IF THE USER HAS NOT SPECIEIFIED IT ALREADY IF THEY DID JUST ACKNOLWEDGE IT:
 
+IF THEY DIDNT SPECIFIFY THEN
 1. "Do you want this to be a **standalone strategy** in one AFL file, or part of a **composite** system?"
    - Standalone = Complete strategy with all sections (buy/sell, plotting, exploration, backtest settings)
    - Composite = Module to be included in a master template (only strategy logic, no plotting/settings)
