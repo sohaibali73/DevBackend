@@ -64,10 +64,10 @@ MODEL_CAPABILITIES = {
 
 # Pinned model snapshots for production stability
 RECOMMENDED_MODEL_SNAPSHOTS = {
-    "claude-opus-4-6": "claude-opus-4-6-20250202",
-    "claude-sonnet-4-6": "claude-sonnet-4-6-20250202",
-    "claude-opus-4-5": "claude-opus-4-5-20241022",
-    "claude-sonnet-4-5": "claude-sonnet-4-5-20241022",
+    "claude-opus-4-6": "claude-opus-4-6",
+    "claude-sonnet-4-6": "claude-sonnet-4-6",
+    "claude-opus-4-5": "claude-opus-4-5-20251101",
+    "claude-sonnet-4-5": "claude-sonnet-4-5-20250929",
 }
 
 def get_model_config(model: str) -> Dict:
