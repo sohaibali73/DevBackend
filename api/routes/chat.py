@@ -356,6 +356,15 @@ class TTSRequest(BaseModel):
     voice: str = "en-US-AriaNeural"
 
 
+class CreateConversationRequest(BaseModel):
+    title: Optional[str] = "New Conversation"
+    conversation_type: Optional[str] = "agent"
+
+
+class RenameConversationRequest(BaseModel):
+    title: str
+
+
 class ChatAgentRequest(BaseModel):
     content: str
     conversation_id: Optional[str] = None
@@ -432,6 +441,161 @@ _STREAM_TOOLS_LIST = """
 ## Available Tools
 You have access to: invoke_skill, analyze_backtest, generate_afl_code, and other domain-specific tools.
 """
+
+
+# ---------------------------------------------------------------------------
+# Conversation CRUD Endpoints
+# ---------------------------------------------------------------------------
+
+@router.get("/conversations")
+async def list_conversations(
+    user_id: str = Depends(get_current_user_id),
+):
+    """List all conversations for the authenticated user, newest first."""
+    db = get_supabase()
+    result = (
+        db.table("conversations")
+        .select("id, user_id, title, conversation_type, created_at, updated_at, is_archived, is_pinned, model, metadata")
+        .eq("user_id", user_id)
+        .eq("is_archived", False)
+        .order("updated_at", desc=True)
+        .limit(100)
+        .execute()
+    )
+    return result.data or []
+
+
+@router.post("/conversations")
+async def create_conversation(
+    data: CreateConversationRequest,
+    user_id: str = Depends(get_current_user_id),
+):
+    """Create a new conversation."""
+    db = get_supabase()
+    insert_data = {
+        "user_id": user_id,
+        "title": sanitize_title(data.title or "New Conversation"),
+    }
+    # Only include conversation_type if the column exists — store in metadata as fallback
+    if data.conversation_type:
+        insert_data["conversation_type"] = data.conversation_type
+
+    result = db.table("conversations").insert(insert_data).execute()
+
+    if not result.data:
+        raise HTTPException(status_code=500, detail="Failed to create conversation")
+
+    return result.data[0]
+
+
+@router.get("/conversations/{conversation_id}/messages")
+async def get_conversation_messages(
+    conversation_id: str,
+    user_id: str = Depends(get_current_user_id),
+):
+    """Get all messages for a conversation. Verifies ownership."""
+    db = get_supabase()
+
+    # Verify the conversation belongs to this user
+    conv = (
+        db.table("conversations")
+        .select("id, user_id")
+        .eq("id", conversation_id)
+        .execute()
+    )
+    if not conv.data:
+        raise HTTPException(status_code=404, detail="Conversation not found")
+    if conv.data[0]["user_id"] != user_id:
+        raise HTTPException(status_code=403, detail="Access denied")
+
+    result = (
+        db.table("messages")
+        .select("id, conversation_id, role, content, created_at, metadata, tool_calls, tool_results")
+        .eq("conversation_id", conversation_id)
+        .order("created_at")
+        .execute()
+    )
+
+    # Transform messages to match frontend Message type
+    messages = []
+    for m in (result.data or []):
+        msg = {
+            "id": m["id"],
+            "conversation_id": m["conversation_id"],
+            "role": m["role"],
+            "content": m["content"],
+            "created_at": m["created_at"],
+        }
+        if m.get("metadata"):
+            msg["metadata"] = m["metadata"]
+            # Extract artifacts from metadata for convenience
+            if m["metadata"].get("artifacts"):
+                msg["artifacts"] = m["metadata"]["artifacts"]
+            if m["metadata"].get("tools_used"):
+                msg["tools_used"] = m["metadata"]["tools_used"]
+        messages.append(msg)
+
+    return messages
+
+
+@router.patch("/conversations/{conversation_id}")
+async def rename_conversation(
+    conversation_id: str,
+    data: RenameConversationRequest,
+    user_id: str = Depends(get_current_user_id),
+):
+    """Rename a conversation. Verifies ownership."""
+    db = get_supabase()
+
+    # Verify ownership
+    conv = (
+        db.table("conversations")
+        .select("id, user_id")
+        .eq("id", conversation_id)
+        .execute()
+    )
+    if not conv.data:
+        raise HTTPException(status_code=404, detail="Conversation not found")
+    if conv.data[0]["user_id"] != user_id:
+        raise HTTPException(status_code=403, detail="Access denied")
+
+    result = (
+        db.table("conversations")
+        .update({"title": sanitize_title(data.title), "updated_at": "now()"})
+        .eq("id", conversation_id)
+        .execute()
+    )
+
+    if not result.data:
+        raise HTTPException(status_code=500, detail="Failed to rename conversation")
+
+    return result.data[0]
+
+
+@router.delete("/conversations/{conversation_id}")
+async def delete_conversation(
+    conversation_id: str,
+    user_id: str = Depends(get_current_user_id),
+):
+    """Delete a conversation and all its messages (cascade). Verifies ownership."""
+    db = get_supabase()
+
+    # Verify ownership
+    conv = (
+        db.table("conversations")
+        .select("id, user_id")
+        .eq("id", conversation_id)
+        .execute()
+    )
+    if not conv.data:
+        raise HTTPException(status_code=404, detail="Conversation not found")
+    if conv.data[0]["user_id"] != user_id:
+        raise HTTPException(status_code=403, detail="Access denied")
+
+    # Delete conversation — messages are cascade-deleted by FK constraint
+    db.table("conversations").delete().eq("id", conversation_id).execute()
+
+    return {"success": True}
 
 
 # ---------------------------------------------------------------------------
