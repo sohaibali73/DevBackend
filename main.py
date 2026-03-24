@@ -280,6 +280,16 @@ except Exception as e:
     logger.error(f"✗ Failed to load generate_presentation router: {e}")
     logger.debug(traceback.format_exc())
 
+try:
+    from api.routes import kb_admin
+    app.include_router(kb_admin.router)
+    routers_loaded.append("kb_admin")
+    logger.info("✓ Loaded kb_admin router (Bulk KB upload via API key — no JWT required)")
+except Exception as e:
+    routers_failed.append(("kb_admin", str(e)))
+    logger.error(f"✗ Failed to load kb_admin router: {e}")
+    logger.debug(traceback.format_exc())
+
 # Start background task cleanup loop on app startup
 @app.on_event("startup")
 async def startup_task_manager():
