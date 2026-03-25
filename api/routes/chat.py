@@ -1291,11 +1291,28 @@ async def list_available_models(
 ):
     """
     List all available models grouped by provider.
+
+    - Anthropic / OpenAI / Vercel Gateway: static comprehensive lists.
+    - OpenRouter: fetches the live full model list (~300+ models) from
+      OpenRouter's /v1/models API on first call, then serves from cache.
+
     Shows which providers the user has API keys for.
     """
     from core.llm import get_registry
 
     registry = get_registry(api_keys)
+
+    # ── Trigger live model refresh for OpenRouter ─────────────────────────
+    # This is a fast, non-blocking call: if the cache is already populated
+    # it returns immediately; only the first call hits the network.
+    if api_keys.get("openrouter"):
+        openrouter_provider = registry.get_provider("openrouter")
+        if openrouter_provider and hasattr(openrouter_provider, "refresh_models"):
+            try:
+                await openrouter_provider.refresh_models()
+            except Exception:
+                pass  # fallback list already in place
+
     models = registry.list_models()
 
     return {
