@@ -632,15 +632,29 @@ async def chat_agent(
     """
     Chat endpoint with full agent capabilities: tool use, streaming, artifacts.
 
-    UPDATED: Now includes all Claude API best practices from 2025:
-    - Adaptive thinking for Claude 4.6
-    - Prompt caching for cost reduction
-    - Context window management for 1M token models
-    - Rate limit handling with exponential backoff
-    - Per-iteration usage tracking
-    - Proper tool result ordering
-    - Model version pinning support
+    Supports multi-provider routing:
+    - Claude models → existing Anthropic path (unchanged)
+    - GPT/OpenAI models → new generic path via OpenAI provider
+    - OpenRouter models → new generic path via OpenRouter provider
     """
+    # ── Provider routing: check if this is a non-Claude model ─────────────
+    requested_model = (data.model or "").strip()
+    is_claude_model = (
+        not requested_model  # no model specified → default to Claude
+        or requested_model.startswith("claude-")
+        or requested_model.startswith("anthropic/")
+    )
+
+    if not is_claude_model:
+        # Non-Claude model → use the generic multi-provider path
+        return await _chat_generic_endpoint(
+            data=data,
+            user_id=user_id,
+            api_keys=api_keys,
+            db=get_supabase(),
+        )
+
+    # ── Existing Claude path — completely unchanged ───────────────────────
     if not api_keys or not api_keys.get("claude"):
         raise HTTPException(status_code=401, detail="Claude API key required")
 
@@ -1035,6 +1049,265 @@ async def chat_agent(
             "Access-Control-Allow-Origin": "*",
         },
     )
+
+
+# ---------------------------------------------------------------------------
+# Generic Multi-Provider Chat Endpoint
+# ---------------------------------------------------------------------------
+
+async def _chat_generic_endpoint(
+    data: ChatAgentRequest,
+    user_id: str,
+    api_keys: dict,
+    db,
+):
+    """
+    Handle chat requests for non-Claude models (GPT, OpenRouter, etc.).
+    Uses the provider abstraction layer and unified tool registry.
+    """
+    from core.llm import get_provider_for_model
+    from core.tools_v2 import get_tool_registry
+
+    model = data.model.strip()
+
+    # Get the right provider
+    try:
+        provider = get_provider_for_model(model, api_keys)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+    provider_name = provider.provider_name
+    provider_key = api_keys.get(provider_name, "")
+
+    if not provider_key:
+        raise HTTPException(
+            status_code=401,
+            detail=f"No API key configured for provider '{provider_name}'. "
+                   f"Add your key in Profile Settings."
+        )
+
+    conversation_id = await _get_or_create_conversation(
+        db=db,
+        user_id=user_id,
+        content=data.content,
+        conversation_id=data.conversation_id,
+    )
+
+    # Persist user message
+    db.table("messages").insert({
+        "conversation_id": conversation_id,
+        "role": "user",
+        "content": data.content,
+        "metadata": {"parts": [{"type": "text", "text": data.content}]},
+    }).execute()
+
+    # Get history
+    history_result = db.table("messages").select("role, content").eq(
+        "conversation_id", conversation_id
+    ).order("created_at").limit(40).execute()
+
+    history = [
+        {"role": m["role"], "content": m["content"]}
+        for m in history_result.data[:-1]
+    ]
+
+    file_context = await _fetch_file_context(db, conversation_id)
+    kb_context = await _fetch_kb_context(db, data.content)
+
+    # Build system prompt
+    system_prompt = (
+        f"You are an expert AI assistant for financial analysis and trading. "
+        f"Provide accurate, helpful responses. Use tools when appropriate."
+        f"{file_context}{kb_context}"
+    )
+
+    # Get tools for this provider
+    tool_registry = get_tool_registry()
+    tools = tool_registry.get_tools_for_provider(provider_name)
+
+    messages = list(history)
+    messages.append({"role": "user", "content": data.content})
+
+    async def generate_stream():
+        encoder = VercelAIStreamEncoder()
+        accumulated_content = ""
+        tools_used = []
+        total_usage = {"input_tokens": 0, "output_tokens": 0}
+        max_iterations = data.max_iterations
+        iteration = 0
+
+        try:
+            while iteration < max_iterations:
+                iteration += 1
+
+                # Stream from provider
+                tool_call_accumulators = {}
+                current_tool_calls = []
+
+                async for chunk in provider.stream_chat(
+                    messages=messages,
+                    model=model,
+                    system=system_prompt,
+                    tools=tools if tools else None,
+                    max_tokens=4096,
+                ):
+                    if chunk.type == "text":
+                        accumulated_content += chunk.content
+                        yield encoder.encode_text(chunk.content)
+
+                    elif chunk.type == "tool_call_start":
+                        tool_call_accumulators[chunk.tool_id] = {
+                            "id": chunk.tool_id,
+                            "name": chunk.tool_name,
+                            "args": "",
+                        }
+
+                    elif chunk.type == "tool_call_delta":
+                        if chunk.tool_id in tool_call_accumulators:
+                            tool_call_accumulators[chunk.tool_id]["args"] += (
+                                chunk.tool_args or ""
+                            )
+
+                    elif chunk.type == "tool_call":
+                        current_tool_calls.append({
+                            "id": chunk.tool_id,
+                            "name": chunk.tool_name,
+                            "args": chunk.tool_args or {},
+                        })
+
+                    elif chunk.type == "finish":
+                        total_usage["input_tokens"] += chunk.usage.get("input_tokens", 0)
+                        total_usage["output_tokens"] += chunk.usage.get("output_tokens", 0)
+
+                    elif chunk.type == "error":
+                        yield encoder.encode_error(chunk.content)
+
+                # If no tool calls, we're done
+                if not current_tool_calls:
+                    break
+
+                # Execute tool calls
+                messages.append({
+                    "role": "assistant",
+                    "content": accumulated_content or "",
+                })
+
+                for tc in current_tool_calls:
+                    tool_name = tc["name"]
+                    tool_args = tc["args"]
+
+                    yield encoder.encode_tool_call(tc["id"], tool_name, tool_args)
+
+                    try:
+                        result = await tool_registry.handle_tool_call(
+                            name=tool_name,
+                            args=tool_args,
+                            supabase_client=db,
+                            api_key=api_keys.get("claude", ""),
+                        )
+                    except Exception as tool_error:
+                        result = json.dumps({"error": str(tool_error)})
+
+                    tools_used.append({
+                        "tool": tool_name,
+                        "toolCallId": tc["id"],
+                        "input": tool_args,
+                        "result": json.loads(result) if isinstance(result, str) else result,
+                    })
+
+                    yield encoder.encode_tool_result(tc["id"], result)
+
+                    # Feed result back
+                    messages.append({
+                        "role": "user",
+                        "content": json.dumps({
+                            "tool_result": tool_name,
+                            "tool_call_id": tc["id"],
+                            "result": result,
+                        }),
+                    })
+
+            # Persist assistant message
+            if accumulated_content or tools_used:
+                db.table("messages").insert({
+                    "conversation_id": conversation_id,
+                    "role": "assistant",
+                    "content": accumulated_content or "(Tool results returned)",
+                    "metadata": {
+                        "tools_used": tools_used,
+                        "usage": total_usage,
+                        "model": model,
+                        "provider": provider_name,
+                        "iterations": iteration,
+                    },
+                }).execute()
+
+            db.table("conversations").update({"updated_at": "now()"}).eq(
+                "id", conversation_id
+            ).execute()
+
+            usage = {
+                "promptTokens": total_usage["input_tokens"],
+                "completionTokens": total_usage["output_tokens"],
+            }
+
+            yield encoder.encode_data({
+                "conversation_id": conversation_id,
+                "tools_used": tools_used,
+                "model_used": model,
+                "provider": provider_name,
+            })
+
+            yield encoder.encode_finish_message("stop", usage)
+
+        except Exception as e:
+            error_msg = f"{str(e)}\n{traceback.format_exc()[:500]}"
+            yield encoder.encode_text(f"\n\nError: {str(e)}")
+            yield encoder.encode_error(error_msg)
+            yield encoder.encode_finish_message("error")
+
+    return StreamingResponse(
+        generate_stream(),
+        media_type="text/plain; charset=utf-8",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "Content-Type": "text/plain; charset=utf-8",
+            "X-Conversation-Id": conversation_id,
+            "Access-Control-Expose-Headers": "X-Conversation-Id",
+            "Access-Control-Allow-Origin": "*",
+        },
+    )
+
+
+# ---------------------------------------------------------------------------
+# Models Endpoint
+# ---------------------------------------------------------------------------
+
+@router.get("/models")
+async def list_available_models(
+    user_id: str = Depends(get_current_user_id),
+    api_keys: dict = Depends(get_user_api_keys),
+):
+    """
+    List all available models grouped by provider.
+    Shows which providers the user has API keys for.
+    """
+    from core.llm import get_registry
+
+    registry = get_registry(api_keys)
+    models = registry.list_models()
+
+    return {
+        "models": models,
+        "default": "claude-sonnet-4-20250514",
+        "user_has_keys": {
+            "anthropic": bool(api_keys.get("claude")),
+            "openai": bool(api_keys.get("openai")),
+            "openrouter": bool(api_keys.get("openrouter")),
+        },
+        "providers": registry.list_providers(),
+    }
 
 
 # ---------------------------------------------------------------------------

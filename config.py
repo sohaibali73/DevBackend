@@ -28,7 +28,12 @@ class Settings(BaseSettings):
     # Optional server-side API keys - set via environment variables
     anthropic_api_key: str = ""
     tavily_api_key: str = ""
-    
+
+    # Multi-provider LLM API keys (server-side fallbacks)
+    openai_api_key: str = ""
+    openrouter_api_key: str = ""
+    vercel_gateway_url: str = ""
+
     # Default AI model
     default_ai_model: str = "claude-sonnet-4-20250514"
     

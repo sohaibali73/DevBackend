@@ -930,14 +930,37 @@ class App(tk.Tk):
         if not url or not key:
             messagebox.showwarning("Missing fields", "Enter URL and Admin Key first.")
             return
-        self._log_msg(f"Testing {url} …", "info")
+        self._log_msg(f"Testing {url} …  (Railway may take 30-60 s to wake)", "info")
         self._nb.select(1)
 
         def _run():
+            import requests
+
+            base = url.rstrip("/")
+
+            # ── Step 1: wake the server with a lightweight health ping ─────────
+            for attempt in range(1, 4):
+                try:
+                    ping = requests.get(f"{base}/health", timeout=45)
+                    if ping.status_code < 500:
+                        break   # server is up
+                except requests.exceptions.Timeout:
+                    self._q.put(("log",
+                        f"  Server still waking… attempt {attempt}/3 (may take up to 60 s)",
+                        "warning"))
+                except Exception:
+                    break  # non-timeout error — move on
+            else:
+                self._q.put(("log",
+                    "✗ Server did not respond after 3 attempts (135 s). "
+                    "Check Railway dashboard.",
+                    "error"))
+                return
+
+            # ── Step 2: hit the real stats endpoint ───────────────────────────
             try:
-                import requests
-                r = requests.get(f"{url.rstrip('/')}/kb-admin/stats",
-                                 headers={"X-Admin-Key": key}, timeout=15)
+                r = requests.get(f"{base}/kb-admin/stats",
+                                 headers={"X-Admin-Key": key}, timeout=45)
                 r.raise_for_status()
                 d = r.json()
                 self._q.put(("log",
@@ -945,6 +968,11 @@ class App(tk.Tk):
                     f"{d.get('total_chunks','?')} chunks  "
                     f"{d.get('total_size_disk_mb','?')} MB on disk",
                     "success"))
+            except requests.exceptions.Timeout:
+                self._q.put(("log",
+                    "✗ Stats endpoint timed out (server is up but slow). "
+                    "Try again in 10 s.",
+                    "error"))
             except Exception as exc:
                 msg = str(exc)
                 try:

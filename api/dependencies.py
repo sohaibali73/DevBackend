@@ -56,7 +56,7 @@ async def get_current_user(
 
         # Get profile from user_profiles — only fetch non-sensitive columns
         profile_result = db.table("user_profiles").select(
-            "id, name, nickname, is_admin, is_active, created_at, last_active_at, claude_api_key_encrypted, tavily_api_key_encrypted"
+            "id, name, nickname, is_admin, is_active, created_at, last_active_at, claude_api_key_encrypted, tavily_api_key_encrypted, openai_api_key_encrypted, openrouter_api_key_encrypted, preferred_provider, preferred_model"
         ).eq("id", user_id).execute()
 
         if not profile_result.data:
@@ -90,6 +90,10 @@ async def get_current_user(
             # Include key presence flags (not the actual keys)
             "has_claude_key": bool(profile.get("claude_api_key_encrypted")),
             "has_tavily_key": bool(profile.get("tavily_api_key_encrypted")),
+            "has_openai_key": bool(profile.get("openai_api_key_encrypted")),
+            "has_openrouter_key": bool(profile.get("openrouter_api_key_encrypted")),
+            "preferred_provider": profile.get("preferred_provider", "anthropic"),
+            "preferred_model": profile.get("preferred_model", "claude-sonnet-4-20250514"),
         }
     except HTTPException:
         raise
@@ -110,20 +114,26 @@ async def _fetch_api_keys_for_user(user_id: str) -> Dict[str, str]:
 
     claude_key = ""
     tavily_key = ""
+    openai_key = ""
+    openrouter_key = ""
 
     try:
         result = db.table("user_profiles").select(
-            "claude_api_key_encrypted, tavily_api_key_encrypted"
+            "claude_api_key_encrypted, tavily_api_key_encrypted, openai_api_key_encrypted, openrouter_api_key_encrypted"
         ).eq("id", user_id).execute()
 
         if result.data:
             row = result.data[0]
             raw_claude = row.get("claude_api_key_encrypted") or ""
             raw_tavily = row.get("tavily_api_key_encrypted") or ""
+            raw_openai = row.get("openai_api_key_encrypted") or ""
+            raw_openrouter = row.get("openrouter_api_key_encrypted") or ""
 
             # Decrypt (handles both encrypted 'enc:...' and legacy plain text)
             claude_key = decrypt_value(raw_claude) if raw_claude else ""
             tavily_key = decrypt_value(raw_tavily) if raw_tavily else ""
+            openai_key = decrypt_value(raw_openai) if raw_openai else ""
+            openrouter_key = decrypt_value(raw_openrouter) if raw_openrouter else ""
 
     except Exception as e:
         logger.error(f"Failed to get user API keys: {e}")
@@ -135,8 +145,19 @@ async def _fetch_api_keys_for_user(user_id: str) -> Dict[str, str]:
     if not tavily_key and settings.tavily_api_key:
         tavily_key = settings.tavily_api_key
         logger.info("Using server-side TAVILY_API_KEY as fallback")
+    if not openai_key and settings.openai_api_key:
+        openai_key = settings.openai_api_key
+        logger.info("Using server-side OPENAI_API_KEY as fallback")
+    if not openrouter_key and settings.openrouter_api_key:
+        openrouter_key = settings.openrouter_api_key
+        logger.info("Using server-side OPENROUTER_API_KEY as fallback")
 
-    return {"claude": claude_key, "tavily": tavily_key}
+    return {
+        "claude": claude_key,
+        "tavily": tavily_key,
+        "openai": openai_key,
+        "openrouter": openrouter_key,
+    }
 
 
 async def get_user_api_keys(
