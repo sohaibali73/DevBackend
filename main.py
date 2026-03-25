@@ -290,6 +290,16 @@ except Exception as e:
     logger.error(f"✗ Failed to load kb_admin router: {e}")
     logger.debug(traceback.format_exc())
 
+try:
+    from api.routes import consensus
+    app.include_router(consensus.router)
+    routers_loaded.append("consensus")
+    logger.info("✓ Loaded consensus router (Multi-model response validation & scoring)")
+except Exception as e:
+    routers_failed.append(("consensus", str(e)))
+    logger.error(f"✗ Failed to load consensus router: {e}")
+    logger.debug(traceback.format_exc())
+
 # Start background task cleanup loop on app startup
 @app.on_event("startup")
 async def startup_task_manager():
