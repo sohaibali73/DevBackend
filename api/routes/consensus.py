@@ -16,7 +16,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
-from api.dependencies import get_current_user
+from api.dependencies import get_current_user, get_user_api_keys
 from core.consensus_engine import run_consensus
 
 logger = logging.getLogger(__name__)
@@ -42,15 +42,13 @@ class ConsensusRequest(BaseModel):
 
 # ─── helpers ──────────────────────────────────────────────────────────────────
 
-def _resolve_api_key(provider: str, user: dict | None) -> str | None:
-    """Pull the right API key from the user profile for a given provider."""
-    if not user:
-        return None
+def _resolve_api_key(provider: str, api_keys: dict) -> str | None:
+    """Pull the right API key from the resolved api_keys dict for a given provider."""
     key_map = {
-        "anthropic":      user.get("claude_api_key")      or user.get("anthropic_api_key"),
-        "openai":         user.get("openai_api_key"),
-        "openrouter":     user.get("openrouter_api_key"),
-        "vercel_gateway": user.get("vercel_gateway_api_key"),
+        "anthropic":      api_keys.get("claude") or api_keys.get("anthropic"),
+        "openai":         api_keys.get("openai"),
+        "openrouter":     api_keys.get("openrouter"),
+        "vercel_gateway": api_keys.get("vercel_gateway"),
     }
     return key_map.get(provider)
 
@@ -70,6 +68,7 @@ def _get_registry():
 async def consensus_validate(
     body: ConsensusRequest,
     current_user: dict = Depends(get_current_user),
+    api_keys: dict = Depends(get_user_api_keys),
 ):
     """
     Run the provided messages through all listed models in parallel.
@@ -83,7 +82,7 @@ async def consensus_validate(
     # Build model configs, injecting user API keys where not explicitly provided
     model_configs: list[dict[str, Any]] = []
     for m in body.models:
-        api_key = m.api_key or _resolve_api_key(m.provider, current_user)
+        api_key = m.api_key or _resolve_api_key(m.provider, api_keys)
         if not api_key:
             logger.warning(f"No API key for provider={m.provider}, model={m.model_id} — skipping")
             continue
@@ -119,26 +118,54 @@ async def consensus_validate(
 @router.get("/models")
 async def consensus_models(
     current_user: dict = Depends(get_current_user),
+    api_keys: dict = Depends(get_user_api_keys),
 ):
     """
-    Return the subset of models the user can actually use for consensus
-    (i.e. they have API keys configured for those providers).
+    Return all available models grouped by provider, exactly like GET /chat/models.
+    The frontend uses user_has_keys to decide which rows are selectable.
     """
     try:
-        from api.routes.chat import _get_available_models
-        models_by_provider, user_has_keys = await _get_available_models(current_user)
-    except Exception:
-        # Fallback: return empty
-        models_by_provider = {}
-        user_has_keys = {}
+        from core.llm import get_registry
 
-    # Only include providers where the user has a key
-    consensus_models: dict[str, list[str]] = {
-        p: lst for p, lst in models_by_provider.items()
-        if user_has_keys.get(p, False)
-    }
+        registry = get_registry(api_keys)
+
+        # Refresh OpenRouter live model list if the user has a key
+        if api_keys.get("openrouter"):
+            try:
+                or_provider = registry.get_provider("openrouter")
+                if or_provider and hasattr(or_provider, "refresh_models"):
+                    await or_provider.refresh_models()
+            except Exception:
+                pass
+
+        models_by_provider = registry.list_models()
+
+        user_has_keys = {
+            "anthropic":      bool(api_keys.get("claude")),
+            "openai":         bool(api_keys.get("openai")),
+            "openrouter":     bool(api_keys.get("openrouter")),
+            "vercel_gateway": bool(api_keys.get("vercel_gateway")),
+        }
+
+    except Exception as exc:
+        logger.error(f"consensus_models: registry failed — {exc}", exc_info=True)
+        # Graceful fallback: return static Claude list so UI is never blank
+        models_by_provider = {
+            "anthropic": [
+                "claude-opus-4-6",
+                "claude-sonnet-4-6",
+                "claude-opus-4-5",
+                "claude-sonnet-4-5",
+            ]
+        }
+        user_has_keys = {
+            "anthropic":      bool(api_keys.get("claude")),
+            "openai":         False,
+            "openrouter":     False,
+            "vercel_gateway": False,
+        }
 
     return JSONResponse(content={
-        "models":        consensus_models,
+        "models":        models_by_provider,
         "user_has_keys": user_has_keys,
     })
