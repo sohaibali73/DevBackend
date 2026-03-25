@@ -20,7 +20,6 @@ Algorithm:
 from __future__ import annotations
 import asyncio
 import re
-import math
 import logging
 from typing import Any
 
@@ -68,39 +67,25 @@ def _sentence_similarity(s1: str, s2: str) -> float:
     return _jaccard(_keywords(s1), _keywords(s2))
 
 def _response_similarity(r1: str, r2: str) -> float:
-    """
-    Asymmetric coverage: for each sentence in r1, find best match in r2.
-    Returns mean best-match similarity (0–1).
-    """
     sents1 = _tokenise(r1) or [r1]
     sents2 = _tokenise(r2) or [r2]
-
     scores: list[float] = []
     for s1 in sents1:
         kw1 = _keywords(s1)
         best = max((_jaccard(kw1, _keywords(s2)) for s2 in sents2), default=0.0)
         scores.append(best)
-
     return sum(scores) / len(scores) if scores else 0.0
 
 def _symmetric_similarity(r1: str, r2: str) -> float:
-    """Mean of both directions."""
     return (_response_similarity(r1, r2) + _response_similarity(r2, r1)) / 2
 
 def _extract_consensus_claims(responses: list[str], threshold: float = 0.5) -> list[str]:
-    """
-    Find sentences from the 'best' response that are echoed in at least
-    `threshold` fraction of the other responses.
-    """
     if len(responses) < 2:
         return _tokenise(responses[0]) if responses else []
-
-    # Use response[0] as primary source (it will be the best-overlap one)
     primary_sents = _tokenise(responses[0])
     others = responses[1:]
     if not others:
         return primary_sents
-
     consensus: list[str] = []
     for sent in primary_sents:
         kw = _keywords(sent)
@@ -110,13 +95,11 @@ def _extract_consensus_claims(responses: list[str], threshold: float = 0.5) -> l
         )
         if agree_count / len(others) >= threshold:
             consensus.append(sent)
-
     return consensus if consensus else primary_sents[:3]
 
 # ─── tier weighting ──────────────────────────────────────────────────────────
 
 def _model_tier_weight(model_id: str) -> float:
-    """Higher-tier models get more weight in the consensus score."""
     lower = model_id.lower()
     if any(k in lower for k in ("o1","o3","r1","reasoning","think","opus","405b")):
         return 1.5
@@ -133,105 +116,107 @@ async def _call_model(
     model_id: str,
     provider: str,
     messages: list[dict],
-    api_key: str | None,
     max_tokens: int = 1024,
 ) -> dict[str, Any]:
-    """Call a single model and return its response text + metadata."""
+    """
+    Call a single model and return its response text + metadata.
+
+    Uses the registry's pre-initialized provider (with server-side API key).
+    StreamChunk is a dataclass — access via .type / .content / .usage attributes.
+    """
     try:
         provider_obj = registry.get_provider(provider)
         if not provider_obj:
-            return {"model_id": model_id, "provider": provider, "text": None,
-                    "error": f"Provider '{provider}' not found", "tokens": 0}
+            # Try resolving by model string (handles prefix matching)
+            try:
+                provider_obj = registry.get_provider_for_model(model_id)
+            except Exception:
+                pass
 
-        if api_key:
-            provider_obj.set_api_key(api_key)
+        if not provider_obj:
+            return {
+                "model_id": model_id, "provider": provider,
+                "text": None, "tokens": 0,
+                "error": f"Provider '{provider}' not found in registry. "
+                         f"Available: {registry.list_providers()}",
+            }
 
         full_text = ""
-        usage = {"input_tokens": 0, "output_tokens": 0}
+        usage: dict = {"input_tokens": 0, "output_tokens": 0}
 
         async for chunk in provider_obj.stream_chat(
             messages=messages,
             model=model_id,
             max_tokens=max_tokens,
-            system="You are a precise, factual AI assistant. Answer the question thoroughly and accurately.",
+            system=(
+                "You are a precise, factual AI assistant. "
+                "Answer the question thoroughly and accurately."
+            ),
         ):
-            if chunk.get("type") == "text":
-                full_text += chunk.get("text", "")
-            elif chunk.get("type") == "usage":
-                usage = chunk.get("usage", usage)
+            # StreamChunk is a dataclass — use attribute access, NOT dict.get()
+            chunk_type = getattr(chunk, "type", None) or chunk.get("type", "") if isinstance(chunk, dict) else chunk.type
+            if chunk_type == "text":
+                content = getattr(chunk, "content", "") if not isinstance(chunk, dict) else chunk.get("content", chunk.get("text", ""))
+                full_text += content
+            elif chunk_type == "finish":
+                raw_usage = getattr(chunk, "usage", {}) if not isinstance(chunk, dict) else chunk.get("usage", {})
+                if raw_usage:
+                    usage = raw_usage
 
+        text_out = full_text.strip() or None
         return {
             "model_id": model_id,
             "provider": provider,
-            "text": full_text.strip(),
-            "error": None,
-            "tokens": usage.get("output_tokens", 0),
+            "text": text_out,
+            "error": None if text_out else "Empty response",
+            "tokens": usage.get("output_tokens", 0) if isinstance(usage, dict) else 0,
         }
+
     except Exception as e:
-        logger.warning(f"Consensus: model {model_id} failed: {e}")
-        return {"model_id": model_id, "provider": provider, "text": None,
-                "error": str(e), "tokens": 0}
+        logger.warning(f"Consensus: model {model_id} ({provider}) failed: {e}", exc_info=True)
+        return {
+            "model_id": model_id, "provider": provider,
+            "text": None, "error": str(e), "tokens": 0,
+        }
 
 
 async def run_consensus(
     registry,
-    model_configs: list[dict],   # [{"model_id": "...", "provider": "...", "api_key": "..."}]
+    model_configs: list[dict],   # [{"model_id": "...", "provider": "..."}]
     messages: list[dict],
     max_tokens: int = 1024,
     majority_threshold: float = 0.5,
 ) -> dict[str, Any]:
     """
     Run the same messages through multiple models in parallel.
-    Return a ConsensusResult dict.
-
-    ConsensusResult schema:
-    {
-      "consensus_score":    float (0-100),
-      "confidence_label":   "high" | "medium" | "low" | "divergent",
-      "best_response":      str,
-      "synthesised_claims": list[str],
-      "model_results": [
-        {
-          "model_id":      str,
-          "provider":      str,
-          "text":          str | None,
-          "error":         str | None,
-          "agreement_score": float (0-100),
-          "tokens":        int,
-        }
-      ],
-      "agreement_matrix":  list[list[float]],  # N×N similarity grid
-      "models_agreed":     int,
-      "models_total":      int,
-      "divergence_warning": bool,
-    }
+    The registry must already be initialized with valid API keys.
     """
     if not model_configs:
         return {"error": "No models specified"}
 
     # 1. Call all models in parallel
     tasks = [
-        _call_model(
-            registry,
-            cfg["model_id"],
-            cfg["provider"],
-            messages,
-            cfg.get("api_key"),
-            max_tokens,
-        )
+        _call_model(registry, cfg["model_id"], cfg["provider"], messages, max_tokens)
         for cfg in model_configs
     ]
     raw_results: list[dict] = await asyncio.gather(*tasks)
 
     # 2. Separate successful vs failed
-    succeeded = [r for r in raw_results if r["text"]]
-    failed    = [r for r in raw_results if not r["text"]]
+    succeeded = [r for r in raw_results if r.get("text")]
+    failed    = [r for r in raw_results if not r.get("text")]
+
+    logger.info(
+        f"Consensus: {len(succeeded)} succeeded, {len(failed)} failed "
+        f"out of {len(raw_results)} models"
+    )
 
     if not succeeded:
+        errors = [f"{r['model_id']}: {r.get('error','unknown')}" for r in raw_results]
         return {
             "consensus_score": 0,
             "confidence_label": "divergent",
-            "best_response": "All models failed to respond.",
+            "best_response": f"All models failed to respond. Errors: {'; '.join(errors)}",
+            "best_model": "",
             "synthesised_claims": [],
             "model_results": raw_results,
             "agreement_matrix": [],
@@ -245,7 +230,23 @@ async def run_consensus(
     model_ids = [r["model_id"] for r in succeeded]
     n = len(texts)
 
-    # 3. Build pairwise similarity matrix
+    # 3. Single model — no comparison possible
+    if n == 1:
+        return {
+            "consensus_score": 100.0,
+            "confidence_label": "high",
+            "best_response": texts[0],
+            "best_model": model_ids[0],
+            "synthesised_claims": _tokenise(texts[0])[:5],
+            "model_results": [{**succeeded[0], "agreement_score": 100.0, "is_best": True}]
+                             + [{**r, "agreement_score": 0.0, "is_best": False} for r in failed],
+            "agreement_matrix": [[1.0]],
+            "models_agreed": 1,
+            "models_total": len(raw_results),
+            "divergence_warning": False,
+        }
+
+    # 4. Build pairwise similarity matrix
     matrix: list[list[float]] = [[0.0] * n for _ in range(n)]
     for i in range(n):
         for j in range(n):
@@ -256,7 +257,7 @@ async def run_consensus(
                 matrix[i][j] = sim
                 matrix[j][i] = sim
 
-    # 4. Per-model agreement score (weighted mean similarity to others)
+    # 5. Per-model agreement score (weighted mean similarity to others)
     model_agreement: list[float] = []
     for i in range(n):
         weight_sum   = 0.0
@@ -270,7 +271,7 @@ async def run_consensus(
         score = (weighted_sim / weight_sum) if weight_sum > 0 else 0.0
         model_agreement.append(score)
 
-    # 5. Overall consensus score (weighted by tier)
+    # 6. Overall consensus score
     total_w   = 0.0
     weighted  = 0.0
     for i, score in enumerate(model_agreement):
@@ -280,15 +281,12 @@ async def run_consensus(
     raw_consensus = (weighted / total_w) if total_w > 0 else 0.0
     consensus_score = round(raw_consensus * 100, 1)
 
-    # 6. Best response = model with highest agreement score
+    # 7. Best response = model with highest agreement score
     best_idx = model_agreement.index(max(model_agreement))
     best_response = texts[best_idx]
     best_model    = model_ids[best_idx]
 
-    # Reorder: put best first for claim extraction
     ordered_texts = [texts[best_idx]] + [t for k, t in enumerate(texts) if k != best_idx]
-
-    # 7. Synthesise consensus claims
     synthesised_claims = _extract_consensus_claims(ordered_texts, majority_threshold)
 
     # 8. Confidence label
@@ -307,7 +305,7 @@ async def run_consensus(
     enriched: list[dict] = []
     agg_idx = 0
     for r in raw_results:
-        if r["text"]:
+        if r.get("text"):
             enriched.append({
                 **r,
                 "agreement_score": round(model_agreement[agg_idx] * 100, 1),
@@ -317,7 +315,6 @@ async def run_consensus(
         else:
             enriched.append({**r, "agreement_score": 0.0, "is_best": False})
 
-    # Models that agree above 50%
     models_agreed = sum(1 for s in model_agreement if s >= 0.5)
 
     return {

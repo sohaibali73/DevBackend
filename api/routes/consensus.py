@@ -63,14 +63,25 @@ def _resolve_key(provider: str, override: str | None = None) -> str:
     return _server_api_keys().get(provider, "")
 
 
-def _get_registry():
-    """Lazy import to avoid circular deps."""
+def _build_registry():
+    """Build a registry initialised with server-side API keys."""
     try:
-        from core.llm.registry import LLMProviderRegistry
-        return LLMProviderRegistry.get_instance()
+        from core.llm import get_registry
+        return get_registry(_server_api_keys_for_registry())
     except Exception as e:
-        logger.error(f"Failed to load LLM registry: {e}")
+        logger.error(f"Failed to build LLM registry: {e}")
         return None
+
+
+def _server_api_keys_for_registry() -> dict:
+    """Map server env keys into the format get_registry() expects."""
+    keys = _server_api_keys()
+    return {
+        "claude":         keys["anthropic"],
+        "openai":         keys["openai"],
+        "openrouter":     keys["openrouter"],
+        "vercel_gateway": keys["vercel_gateway"],
+    }
 
 
 # Static fallback model lists per provider — shown when registry is unavailable
@@ -110,33 +121,37 @@ async def consensus_validate(
     Returns a ConsensusResult with scores, per-model responses, and
     a synthesised answer.
     """
-    registry = _get_registry()
+    registry = _build_registry()
     if not registry:
         raise HTTPException(status_code=503, detail="LLM registry unavailable")
 
-    # Build model configs using server-side keys
+    server_keys = _server_api_keys()
+
+    # Build model configs — only include providers with a server-side key
     model_configs: list[dict[str, Any]] = []
     for m in body.models:
-        api_key = _resolve_key(m.provider, m.api_key)
+        # Accept explicit per-request override key, otherwise use server key
+        api_key = m.api_key or _resolve_key(m.provider, m.api_key)
         if not api_key:
             logger.warning(
                 f"No server-side API key for provider={m.provider}, "
                 f"model={m.model_id} — skipping"
             )
             continue
+        # model_configs no longer carries api_key — the registry already has it
         model_configs.append({
             "model_id": m.model_id,
             "provider": m.provider,
-            "api_key":  api_key,
         })
 
     if len(model_configs) < 2:
+        available = [p for p, k in server_keys.items() if k]
         raise HTTPException(
             status_code=400,
             detail=(
-                "At least 2 models with valid API keys are required. "
-                "Ensure the server has ANTHROPIC_API_KEY (and optionally "
-                "OPENAI_API_KEY / OPENROUTER_API_KEY) set."
+                f"At least 2 models with valid API keys are required. "
+                f"Providers with server keys: {available}. "
+                f"Set ANTHROPIC_API_KEY / OPENAI_API_KEY / OPENROUTER_API_KEY."
             ),
         )
 
