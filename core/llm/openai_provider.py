@@ -73,7 +73,14 @@ class OpenAIProvider(BaseLLMProvider):
         max_tokens: int = 4096,
         **kwargs,
     ) -> AsyncGenerator[StreamChunk, None]:
-        """Stream a chat completion from OpenAI."""
+        """Stream a chat completion from OpenAI (or any OpenAI-compatible endpoint).
+
+        Uses the low-level `.create(stream=True)` API which is universally
+        compatible with OpenAI, OpenRouter, Vercel AI Gateway, and other
+        OpenAI-compatible providers — unlike the higher-level `.stream()`
+        context manager which is OpenAI-SDK-internal and rejects the
+        `stream` kwarg when forwarded.
+        """
         try:
             openai_messages = self.normalize_messages(messages, system)
             openai_tools = self.normalize_tools(tools) if tools else None
@@ -89,82 +96,91 @@ class OpenAIProvider(BaseLLMProvider):
 
             # Accumulate tool call deltas by index
             tool_call_accumulators: Dict[int, Dict] = {}
+            final_usage: Dict[str, int] = {}
 
-            async with self._client.chat.completions.stream(**request_kwargs) as stream:
-                async for chunk in stream:
-                    choice = chunk.choices[0] if chunk.choices else None
-                    if not choice:
-                        continue
+            # Use .create() — works with all OpenAI-compatible providers
+            stream = await self._client.chat.completions.create(**request_kwargs)
 
-                    delta = choice.delta
+            async for chunk in stream:
+                # Some providers send a usage-only trailing chunk with no choices
+                if hasattr(chunk, "usage") and chunk.usage and not chunk.choices:
+                    final_usage = {
+                        "input_tokens": chunk.usage.prompt_tokens,
+                        "output_tokens": chunk.usage.completion_tokens,
+                    }
+                    continue
 
-                    # Text content
-                    if delta.content:
-                        yield StreamChunk(type="text", content=delta.content)
+                choice = chunk.choices[0] if chunk.choices else None
+                if not choice:
+                    continue
 
-                    # Tool calls (streaming deltas)
-                    if delta.tool_calls:
-                        for tc_delta in delta.tool_calls:
-                            idx = tc_delta.index
-                            if idx not in tool_call_accumulators:
-                                tool_call_accumulators[idx] = {
-                                    "id": tc_delta.id or "",
-                                    "name": "",
-                                    "args": "",
-                                }
+                delta = choice.delta
 
-                            acc = tool_call_accumulators[idx]
-                            if tc_delta.id:
-                                acc["id"] = tc_delta.id
-                            if tc_delta.function:
-                                if tc_delta.function.name:
-                                    acc["name"] = tc_delta.function.name
-                                    yield StreamChunk(
-                                        type="tool_call_start",
-                                        tool_id=acc["id"],
-                                        tool_name=acc["name"],
-                                    )
-                                if tc_delta.function.arguments:
-                                    acc["args"] += tc_delta.function.arguments
-                                    yield StreamChunk(
-                                        type="tool_call_delta",
-                                        tool_id=acc["id"],
-                                        tool_name=acc["name"],
-                                        tool_args=tc_delta.function.arguments,
-                                    )
+                # Text content
+                if delta.content:
+                    yield StreamChunk(type="text", content=delta.content)
 
-                    # Finish reason
-                    if choice.finish_reason:
-                        # Emit complete tool calls
-                        if choice.finish_reason == "tool_calls":
-                            for idx, acc in tool_call_accumulators.items():
-                                try:
-                                    args = json.loads(acc["args"]) if acc["args"] else {}
-                                except json.JSONDecodeError:
-                                    args = {}
-                                yield StreamChunk(
-                                    type="tool_call",
-                                    tool_id=acc["id"],
-                                    tool_name=acc["name"],
-                                    tool_args=args,
-                                )
-
-                        # Get usage from the final chunk
-                        usage = {}
-                        final_completion = await stream.get_final_completion()
-                        if final_completion.usage:
-                            usage = {
-                                "input_tokens": final_completion.usage.prompt_tokens,
-                                "output_tokens": final_completion.usage.completion_tokens,
+                # Tool calls (streaming deltas)
+                if delta.tool_calls:
+                    for tc_delta in delta.tool_calls:
+                        idx = tc_delta.index
+                        if idx not in tool_call_accumulators:
+                            tool_call_accumulators[idx] = {
+                                "id": tc_delta.id or "",
+                                "name": "",
+                                "args": "",
                             }
 
-                        yield StreamChunk(
-                            type="finish",
-                            usage=usage,
-                            finish_reason=_FINISH_REASON_MAP.get(
-                                choice.finish_reason, "stop"
-                            ),
-                        )
+                        acc = tool_call_accumulators[idx]
+                        if tc_delta.id:
+                            acc["id"] = tc_delta.id
+                        if tc_delta.function:
+                            if tc_delta.function.name:
+                                acc["name"] = tc_delta.function.name
+                                yield StreamChunk(
+                                    type="tool_call_start",
+                                    tool_id=acc["id"],
+                                    tool_name=acc["name"],
+                                )
+                            if tc_delta.function.arguments:
+                                acc["args"] += tc_delta.function.arguments
+                                yield StreamChunk(
+                                    type="tool_call_delta",
+                                    tool_id=acc["id"],
+                                    tool_name=acc["name"],
+                                    tool_args=tc_delta.function.arguments,
+                                )
+
+                # Capture inline usage when present (some providers include it)
+                if hasattr(chunk, "usage") and chunk.usage:
+                    final_usage = {
+                        "input_tokens": chunk.usage.prompt_tokens,
+                        "output_tokens": chunk.usage.completion_tokens,
+                    }
+
+                # Finish reason signals end of this choice
+                if choice.finish_reason:
+                    # Emit complete tool calls
+                    if choice.finish_reason == "tool_calls":
+                        for acc in tool_call_accumulators.values():
+                            try:
+                                args = json.loads(acc["args"]) if acc["args"] else {}
+                            except json.JSONDecodeError:
+                                args = {}
+                            yield StreamChunk(
+                                type="tool_call",
+                                tool_id=acc["id"],
+                                tool_name=acc["name"],
+                                tool_args=args,
+                            )
+
+                    yield StreamChunk(
+                        type="finish",
+                        usage=final_usage,
+                        finish_reason=_FINISH_REASON_MAP.get(
+                            choice.finish_reason, "stop"
+                        ),
+                    )
 
         except Exception as e:
             logger.error("OpenAI stream error: %s", e, exc_info=True)
