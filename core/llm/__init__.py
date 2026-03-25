@@ -86,6 +86,19 @@ def get_registry(api_keys: dict) -> LLMProviderRegistry:
                 "Failed to register OpenRouter provider: %s", e
             )
 
+    # Register Vercel AI Gateway provider
+    if api_keys.get("vercel_gateway"):
+        try:
+            from core.llm.vercel_gateway_provider import VercelGatewayProvider
+            _registry.register_provider(
+                "vercel_gateway", VercelGatewayProvider(api_keys["vercel_gateway"])
+            )
+        except Exception as e:
+            import logging
+            logging.getLogger(__name__).warning(
+                "Failed to register Vercel Gateway provider: %s", e
+            )
+
     return _registry
 
 

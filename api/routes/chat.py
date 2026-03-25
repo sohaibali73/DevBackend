@@ -1305,6 +1305,7 @@ async def list_available_models(
             "anthropic": bool(api_keys.get("claude")),
             "openai": bool(api_keys.get("openai")),
             "openrouter": bool(api_keys.get("openrouter")),
+            "vercel_gateway": bool(api_keys.get("vercel_gateway")),
         },
         "providers": registry.list_providers(),
     }

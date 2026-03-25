@@ -32,7 +32,7 @@ class Settings(BaseSettings):
     # Multi-provider LLM API keys (server-side fallbacks)
     openai_api_key: str = ""
     openrouter_api_key: str = ""
-    vercel_gateway_url: str = ""
+    vercel_gateway_api_key: str = ""
 
     # Default AI model
     default_ai_model: str = "claude-sonnet-4-20250514"

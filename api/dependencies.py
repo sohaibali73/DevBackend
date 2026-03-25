@@ -116,6 +116,7 @@ async def _fetch_api_keys_for_user(user_id: str) -> Dict[str, str]:
     tavily_key = ""
     openai_key = ""
     openrouter_key = ""
+    vercel_gateway_key = ""
 
     try:
         result = db.table("user_profiles").select(
@@ -151,12 +152,16 @@ async def _fetch_api_keys_for_user(user_id: str) -> Dict[str, str]:
     if not openrouter_key and settings.openrouter_api_key:
         openrouter_key = settings.openrouter_api_key
         logger.info("Using server-side OPENROUTER_API_KEY as fallback")
+    if not vercel_gateway_key and settings.vercel_gateway_api_key:
+        vercel_gateway_key = settings.vercel_gateway_api_key
+        logger.info("Using server-side VERCEL_GATEWAY_API_KEY as fallback")
 
     return {
         "claude": claude_key,
         "tavily": tavily_key,
         "openai": openai_key,
         "openrouter": openrouter_key,
+        "vercel_gateway": vercel_gateway_key,
     }
 
 
