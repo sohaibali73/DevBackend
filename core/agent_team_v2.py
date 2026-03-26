@@ -357,14 +357,28 @@ class AgentTeamV2:
                 f"You are a {agent.role} agent."
             )
 
-        # Build system message
-        system_msg = f"You are {agent.nickname}.\n\n{role_desc}"
+        # Build system message with team context
+        system_msg = f"You are {agent.nickname}, a {agent.role} on this team."
+        
+        # Add team roster so agents know who they're working with
+        team_roster = "\n\nTeam members:\n"
+        for a in self.agents.values():
+            if a.id != agent.id:
+                team_roster += f"- {a.nickname} ({a.role})\n"
+        system_msg += team_roster
+        
+        system_msg += f"\n{role_desc}"
+        
         if agent.instructions:
             system_msg += f"\n\nAdditional instructions: {agent.instructions}"
 
         # Add capabilities
         if agent.capabilities:
             system_msg += f"\n\nYour capabilities: {', '.join(agent.capabilities)}"
+        
+        # Add shared context if available
+        if self.shared_context:
+            system_msg += f"\n\nShared context: {json.dumps(self.shared_context, indent=2)}"
 
         # Build conversation context
         messages = []
@@ -375,13 +389,15 @@ class AgentTeamV2:
             "content": f"[TASK]: {task}"
         })
 
-        # Add results from previous phases
+        # Add results from ALL previous phases (full context)
         if phase_context.get("previous_results"):
             for result in phase_context["previous_results"]:
-                if result.agent_id != agent.id:
+                if result.agent_id != agent.id and not result.error:
+                    # Truncate very long results to avoid token limits
+                    content = result.content[:2000] + "..." if len(result.content) > 2000 else result.content
                     messages.append({
                         "role": "user",
-                        "content": f"[{result.nickname} ({result.role})]: {result.content}"
+                        "content": f"[{result.nickname} ({result.role})]: {content}"
                     })
 
         # Add inter-agent messages for this agent
@@ -403,12 +419,13 @@ class AgentTeamV2:
         task: str,
         phase_context: Dict[str, Any],
         max_tokens: int = 4096,
+        timeout: int = 120,
     ) -> AgentResult:
-        """Call a single agent and get its response."""
+        """Call a single agent and get its response with timeout."""
         start_time = time.time()
         self.agent_status[agent.id] = AgentStatus.WORKING
 
-        try:
+        async def _do_call() -> AgentResult:
             provider_obj = self.registry.get_provider(agent.provider)
             if not provider_obj:
                 try:
@@ -417,7 +434,6 @@ class AgentTeamV2:
                     pass
 
             if not provider_obj:
-                self.agent_status[agent.id] = AgentStatus.FAILED
                 return AgentResult(
                     agent_id=agent.id,
                     nickname=agent.nickname,
@@ -444,10 +460,7 @@ class AgentTeamV2:
                 if chunk_type == "text":
                     full_text += getattr(chunk, "content", "")
 
-            elapsed = time.time() - start_time
-            self.agent_status[agent.id] = AgentStatus.COMPLETE
-
-            result = AgentResult(
+            return AgentResult(
                 agent_id=agent.id,
                 nickname=agent.nickname,
                 role=agent.role,
@@ -455,9 +468,29 @@ class AgentTeamV2:
                 error=None,
                 model_id=agent.model_id,
                 provider=agent.provider,
-                elapsed_seconds=elapsed,
+                elapsed_seconds=time.time() - start_time,
             )
 
+        try:
+            result = await asyncio.wait_for(_do_call(), timeout=timeout)
+            self.agent_status[agent.id] = AgentStatus.COMPLETE
+            self.agent_results[agent.id] = result
+            return result
+
+        except asyncio.TimeoutError:
+            elapsed = time.time() - start_time
+            self.agent_status[agent.id] = AgentStatus.FAILED
+            logger.error(f"Agent {agent.nickname} timed out after {timeout}s")
+            result = AgentResult(
+                agent_id=agent.id,
+                nickname=agent.nickname,
+                role=agent.role,
+                content="",
+                error=f"Timed out after {timeout} seconds",
+                model_id=agent.model_id,
+                provider=agent.provider,
+                elapsed_seconds=elapsed,
+            )
             self.agent_results[agent.id] = result
             return result
 
@@ -465,7 +498,7 @@ class AgentTeamV2:
             elapsed = time.time() - start_time
             self.agent_status[agent.id] = AgentStatus.FAILED
             logger.error(f"Agent {agent.nickname} failed: {e}", exc_info=True)
-            return AgentResult(
+            result = AgentResult(
                 agent_id=agent.id,
                 nickname=agent.nickname,
                 role=agent.role,
@@ -475,6 +508,27 @@ class AgentTeamV2:
                 provider=agent.provider,
                 elapsed_seconds=elapsed,
             )
+            self.agent_results[agent.id] = result
+            return result
+
+    def send_inter_agent_message(
+        self,
+        from_agent_id: str,
+        to_agent_id: Optional[str],
+        content: str,
+        message_type: str = MessageType.QUESTION,
+        requires_response: bool = False,
+    ) -> AgentMessage:
+        """Send a message between agents."""
+        msg = AgentMessage(
+            from_agent_id=from_agent_id,
+            to_agent_id=to_agent_id,
+            content=content,
+            message_type=message_type,
+            requires_response=requires_response,
+        )
+        self.messages.append(msg)
+        return msg
 
     async def _create_execution_plan(self, task: str) -> ExecutionPlan:
         """Create an execution plan based on workflow mode."""

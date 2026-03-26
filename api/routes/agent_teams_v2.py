@@ -636,14 +636,18 @@ async def run_team_task(team_id: str, request: RunTaskRequest):
                 )
 
                 # Stream events as they come
-                while not task_future.done() or not events_queue.empty():
+                while True:
                     try:
                         # Wait for events with timeout
                         event = await asyncio.wait_for(events_queue.get(), timeout=0.1)
                         yield f"data: {json.dumps(event)}\n\n"
                     except asyncio.TimeoutError:
+                        # Check if task is done and queue is empty
+                        if task_future.done() and events_queue.empty():
+                            break
                         continue
 
+                # Get the final result
                 result = await task_future
 
                 # Update team status
