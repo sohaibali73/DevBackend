@@ -49,10 +49,10 @@ class TeamResponse(BaseModel):
 async def create_team(request: CreateTeamRequest):
     """Create a new agent team."""
     try:
-        from db.supabase_client import get_supabase_client
+        from db.supabase_client import get_supabase
         from core.agent_team import create_default_team_config
 
-        supabase = get_supabase_client()
+        supabase = get_supabase()
         if not supabase:
             raise HTTPException(status_code=500, detail="Database not available")
 
@@ -114,9 +114,9 @@ async def create_team(request: CreateTeamRequest):
 async def list_teams():
     """List all teams for the current user."""
     try:
-        from db.supabase_client import get_supabase_client
+        from db.supabase_client import get_supabase
 
-        supabase = get_supabase_client()
+        supabase = get_supabase()
         if not supabase:
             raise HTTPException(status_code=500, detail="Database not available")
 
@@ -144,9 +144,9 @@ async def list_teams():
 async def get_team(team_id: str):
     """Get a specific team with its members and recent messages."""
     try:
-        from db.supabase_client import get_supabase_client
+        from db.supabase_client import get_supabase
 
-        supabase = get_supabase_client()
+        supabase = get_supabase()
         if not supabase:
             raise HTTPException(status_code=500, detail="Database not available")
 
@@ -177,12 +177,12 @@ async def get_team(team_id: str):
 async def run_team_task(team_id: str, request: RunTaskRequest):
     """Run a collaborative task with the agent team."""
     try:
-        from db.supabase_client import get_supabase_client
+        from db.supabase_client import get_supabase
         from core.agent_team import AgentTeam
         from core.llm import get_registry
         from config import get_settings
 
-        supabase = get_supabase_client()
+        supabase = get_supabase()
         if not supabase:
             raise HTTPException(status_code=500, detail="Database not available")
 
@@ -305,8 +305,8 @@ async def run_team_task(team_id: str, request: RunTaskRequest):
         logger.error(f"Error running team task: {e}", exc_info=True)
         # Update team status to failed
         try:
-            from db.supabase_client import get_supabase_client
-            supabase = get_supabase_client()
+            from db.supabase_client import get_supabase
+            supabase = get_supabase()
             if supabase:
                 supabase.table("agent_teams").update({
                     "status": "failed",
@@ -320,9 +320,9 @@ async def run_team_task(team_id: str, request: RunTaskRequest):
 async def delete_team(team_id: str):
     """Delete a team and all its data."""
     try:
-        from db.supabase_client import get_supabase_client
+        from db.supabase_client import get_supabase
 
-        supabase = get_supabase_client()
+        supabase = get_supabase()
         if not supabase:
             raise HTTPException(status_code=500, detail="Database not available")
 
