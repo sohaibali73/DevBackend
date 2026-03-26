@@ -245,14 +245,16 @@ async def run_team_task(team_id: str, request: RunTaskRequest):
         )
 
         if request.stream:
-            # Streaming response
-            async def stream_generator():
-                async def callback(event):
-                    event_data = json.dumps(event)
-                    yield f"data: {event_data}\n\n"
-
-                    # Save messages to database
-                    if event.get("type") == "agent_message":
+            # Streaming response using event queue
+            events_queue = asyncio.Queue()
+            
+            async def callback(event):
+                """Regular async function (not generator) to handle events."""
+                await events_queue.put(event)
+                
+                # Save messages to database
+                if event.get("type") == "agent_message":
+                    try:
                         supabase.table("agent_messages").insert({
                             "team_id": team_id,
                             "from_role": event.get("role", "unknown"),
@@ -260,11 +262,28 @@ async def run_team_task(team_id: str, request: RunTaskRequest):
                             "content": event.get("content", ""),
                             "message_type": "answer",
                         }).execute()
-
-                result = await agent_team.run_collaborative_task(
-                    task=request.task,
-                    callback=callback,
+                    except Exception as e:
+                        logger.error(f"Failed to save agent message: {e}")
+            
+            async def stream_generator():
+                # Start the task in background
+                task_future = asyncio.create_task(
+                    agent_team.run_collaborative_task(
+                        task=request.task,
+                        callback=callback,
+                    )
                 )
+                
+                # Stream events as they come
+                while not task_future.done() or not events_queue.empty():
+                    try:
+                        # Wait for events with timeout
+                        event = await asyncio.wait_for(events_queue.get(), timeout=0.1)
+                        yield f"data: {json.dumps(event)}\n\n"
+                    except asyncio.TimeoutError:
+                        continue
+                
+                result = await task_future
 
                 # Update team status
                 supabase.table("agent_teams").update({
