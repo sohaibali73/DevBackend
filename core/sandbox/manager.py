@@ -85,3 +85,18 @@ class SandboxManager:
     def has_language(self, language: str) -> bool:
         """Check if a language is available."""
         return language in self._sandboxes
+
+    def get_available_packages(self, language: str) -> list:
+        """
+        Get list of pre-approved packages for a language.
+        
+        Args:
+            language: "python" or "javascript"
+            
+        Returns:
+            List of available package names, or empty list if not supported.
+        """
+        sandbox = self._sandboxes.get(language)
+        if sandbox and hasattr(sandbox, "list_available_packages"):
+            return sandbox.list_available_packages()
+        return []
