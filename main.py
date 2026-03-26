@@ -300,6 +300,26 @@ except Exception as e:
     logger.error(f"✗ Failed to load consensus router: {e}")
     logger.debug(traceback.format_exc())
 
+try:
+    from api.routes import sandbox
+    app.include_router(sandbox.router)
+    routers_loaded.append("sandbox")
+    logger.info("✓ Loaded sandbox router (Python/JavaScript code execution)")
+except Exception as e:
+    routers_failed.append(("sandbox", str(e)))
+    logger.error(f"✗ Failed to load sandbox router: {e}")
+    logger.debug(traceback.format_exc())
+
+try:
+    from api.routes import agent_teams
+    app.include_router(agent_teams.router)
+    routers_loaded.append("agent_teams")
+    logger.info("✓ Loaded agent_teams router (Multi-agent collaboration)")
+except Exception as e:
+    routers_failed.append(("agent_teams", str(e)))
+    logger.error(f"✗ Failed to load agent_teams router: {e}")
+    logger.debug(traceback.format_exc())
+
 # Start background task cleanup loop on app startup
 @app.on_event("startup")
 async def startup_task_manager():
