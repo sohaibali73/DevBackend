@@ -42,27 +42,50 @@ _DANGEROUS_RE = [re.compile(p, re.IGNORECASE) for p in _DANGEROUS_PATTERNS]
 
 # Popular pre-approved packages that can be used
 PRE_APPROVED_PACKAGES = [
+    # React ecosystem
     "react",
     "react-dom",
     "lucide-react",
     "@radix-ui/react-icons",
+    "react-icons",
+    "framer-motion",
+    "react-hook-form",
+    "react-router-dom",
+    
+    # UI utilities
     "clsx",
     "tailwind-merge",
     "class-variance-authority",
+    "@headlessui/react",
+    "@heroicons/react",
+    
+    # Date/time
     "date-fns",
-    "lodash",
-    "uuid",
-    "zod",
-    "axios",
     "dayjs",
     "moment",
+    
+    # Data utilities
+    "lodash",
+    "lodash-es",
     "ramda",
     "mathjs",
-    "lodash-es",
+    "uuid",
+    "zod",
+    
+    # HTTP
+    "axios",
+    
+    # State management
     "immer",
     "zustand",
     "jotai",
     "recoil",
+    
+    # Other
+    "classnames",
+    "prop-types",
+    "react-fast-compare",
+    "shallowequal",
 ]
 
 # Base package.json template
@@ -71,11 +94,26 @@ BASE_PACKAGE_JSON = {
     "version": "1.0.0",
     "private": True,
     "type": "module",
-    "dependencies": {},
-    "devDependencies": {
+    "dependencies": {
         "esbuild": "^0.20.0"
     }
 }
+
+# React wrapper template for server-side rendering
+_REACT_WRAPPER_TEMPLATE = '''
+import {{ renderToString }} from 'react-dom/server';
+import {{ createElement }} from 'react';
+
+{imports}
+
+try {{
+  {code_render}
+}} catch (error) {{
+  console.error('React Error:', error.message);
+  console.error(error.stack);
+  process.exit(1);
+}}
+'''
 
 # Cache directory for installed packages
 _CACHE_DIR = Path(tempfile.gettempdir()) / "sandbox_node_cache"
@@ -125,6 +163,79 @@ def _get_cache_key(packages: List[str]) -> str:
     return hashlib.md5(json.dumps(sorted_pkgs).encode()).hexdigest()
 
 
+def _is_react_code(code: str) -> bool:
+    """Detect if code contains React/JSX patterns."""
+    # Check for JSX syntax
+    jsx_patterns = [
+        r"<[A-Z][a-zA-Z]*[\s/>]",  # <Component />
+        r"<[a-z]+[\s/>]",           # <div />
+        r"</[A-Za-z]+>",           # </div>
+        r"<>",                       # Fragment
+        r"<React\.",                 # <React.Fragment>
+        r"<Fragment>",              # <Fragment>
+        r"createElement\s*\(",      # React.createElement()
+        r"jsx",                      # JSX file indicator
+    ]
+    
+    for pattern in jsx_patterns:
+        if re.search(pattern, code):
+            return True
+    
+    # Check for React imports
+    react_imports = [
+        r"""from\s+['"]react['"]""",
+        r"""from\s+['"]react-dom['"]""",
+        r"""from\s+['"]lucide-react['"]""",
+        r"""from\s+['"]react-icons['"]""",
+    ]
+    
+    for pattern in react_imports:
+        if re.search(pattern, code):
+            return True
+    
+    return False
+
+
+def _wrap_react_code(code: str) -> str:
+    """Wrap React code for server-side rendering."""
+    # Check if code already has a default export or renders something
+    has_default_export = bool(re.search(r'export\s+default', code))
+    has_console_log = bool(re.search(r'console\.log', code))
+    
+    # If code has console.log, don't wrap it - just run as-is
+    if has_console_log and not has_default_export:
+        return code
+    
+    # Wrap the code to render the default export or the last component
+    wrapped = code + "\n\n"
+    
+    # Find the default exported component or last component defined
+    component_match = re.search(r'export\s+default\s+(\w+)', code)
+    if component_match:
+        component_name = component_match.group(1)
+        wrapped += f"""
+import {{ renderToString }} from 'react-dom/server';
+import {{ createElement }} from 'react';
+
+const element = createElement({component_name});
+console.log(renderToString(element));
+"""
+    else:
+        # Look for any component (function starting with uppercase)
+        func_matches = re.findall(r'(?:function|const)\s+([A-Z][a-zA-Z]*)', code)
+        if func_matches:
+            last_component = func_matches[-1]
+            wrapped += f"""
+import {{ renderToString }} from 'react-dom/server';
+import {{ createElement }} from 'react';
+
+const element = createElement({last_component});
+console.log(renderToString(element));
+"""
+    
+    return wrapped
+
+
 class NodeSandbox(BaseSandbox):
     """Advanced JavaScript execution sandbox with npm package support."""
 
@@ -163,10 +274,7 @@ class NodeSandbox(BaseSandbox):
             required_packages = _extract_imports(code)
 
             # Check if this is React/JSX code
-            is_react_code = any(
-                pkg in required_packages
-                for pkg in ["react", "react-dom", "lucide-react"]
-            ) or "jsx" in code.lower() or "<" in code and "/>" in code
+            is_react_code = _is_react_code(code)
 
             # Setup project
             await self._setup_project(temp_dir, required_packages, is_react_code)
@@ -175,14 +283,17 @@ class NodeSandbox(BaseSandbox):
             code_file = temp_dir / "index.js"
             if is_react_code:
                 code_file = temp_dir / "index.jsx"
+                # Wrap React code for server-side rendering
+                full_code = _wrap_react_code(code)
+            else:
+                full_code = code
 
             # Add context injection if provided
-            full_code = code
             if context:
                 context_json = json.dumps(
                     {k: str(v) for k, v in context.items()}
                 )
-                full_code = f"const context = {context_json};\n{code}"
+                full_code = f"const context = {context_json};\n{full_code}"
 
             # Write the code file
             code_file.write_text(full_code, encoding="utf-8")
@@ -269,17 +380,17 @@ class NodeSandbox(BaseSandbox):
     ) -> SandboxResult:
         """Execute React code using esbuild for transpilation."""
         try:
-            # First, bundle with esbuild
+            # First, bundle with esbuild - include React in bundle
             bundled_file = temp_dir / "bundle.js"
 
             proc = await asyncio.create_subprocess_exec(
                 "npx", "esbuild", "index.jsx",
                 "--bundle",
-                "--format=esm",
+                "--format=cjs",  # Use CommonJS for Node.js compatibility
                 "--platform=node",
                 "--outfile=bundle.js",
-                "--external:react",
-                "--external:react-dom",
+                "--jsx=automatic",  # Use automatic JSX transform
+                "--loader:.jsx=jsx",
                 cwd=str(temp_dir),
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
@@ -309,7 +420,7 @@ class NodeSandbox(BaseSandbox):
 
             # Execute the bundled code
             exec_proc = await asyncio.create_subprocess_exec(
-                "node", "--experimental-vm-modules", str(bundled_file),
+                "node", str(bundled_file),
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
                 cwd=str(temp_dir),
@@ -330,19 +441,28 @@ class NodeSandbox(BaseSandbox):
 
             elapsed = round((time.time() - start_time) * 1000, 2)
 
+            stdout_str = stdout.decode().strip()
+            stderr_str = stderr.decode().strip()
+
             if exec_proc.returncode == 0:
-                output = stdout.decode().strip()
                 return SandboxResult(
                     success=True,
-                    output=output if output else "Code executed successfully",
+                    output=stdout_str if stdout_str else "Code executed successfully",
                     execution_time_ms=elapsed,
                     language="javascript",
                 )
             else:
+                # Include stderr in error for better debugging
+                error_parts = []
+                if stderr_str:
+                    error_parts.append(stderr_str)
+                if stdout_str:
+                    error_parts.append(f"Output: {stdout_str}")
+                
                 return SandboxResult(
                     success=False,
-                    output=stdout.decode().strip(),
-                    error=stderr.decode().strip(),
+                    output=stdout_str,
+                    error="\n".join(error_parts) if error_parts else "Execution failed",
                     execution_time_ms=elapsed,
                     language="javascript",
                 )
@@ -386,18 +506,21 @@ class NodeSandbox(BaseSandbox):
 
             elapsed = round((time.time() - start_time) * 1000, 2)
 
+            stdout_str = stdout.decode().strip()
+            stderr_str = stderr.decode().strip()
+
             if proc.returncode == 0:
                 return SandboxResult(
                     success=True,
-                    output=stdout.decode().strip(),
+                    output=stdout_str if stdout_str else "Code executed successfully",
                     execution_time_ms=elapsed,
                     language="javascript",
                 )
             else:
                 return SandboxResult(
                     success=False,
-                    output=stdout.decode().strip(),
-                    error=stderr.decode().strip(),
+                    output=stdout_str,
+                    error=stderr_str if stderr_str else "Execution failed",
                     execution_time_ms=elapsed,
                     language="javascript",
                 )
@@ -411,11 +534,27 @@ class NodeSandbox(BaseSandbox):
             )
 
     def validate(self, code: str) -> Dict[str, Any]:
-        """Check code for dangerous Node.js patterns."""
+        """Check code for dangerous Node.js patterns and unapproved packages."""
         issues = []
         for pattern in _DANGEROUS_RE:
             if pattern.search(code):
                 issues.append(f"Dangerous pattern: {pattern.pattern}")
+
+        # Check for unapproved packages
+        imported_packages = _extract_imports(code)
+        for pkg in imported_packages:
+            # Allow scoped packages that start with @ (they're checked separately)
+            if pkg.startswith("@"):
+                # Check if the full scoped package or any parent is approved
+                approved = False
+                for approved_pkg in PRE_APPROVED_PACKAGES:
+                    if pkg.startswith(approved_pkg) or approved_pkg.startswith(pkg):
+                        approved = True
+                        break
+                if not approved:
+                    issues.append(f"Unapproved package: {pkg}")
+            elif pkg not in PRE_APPROVED_PACKAGES:
+                issues.append(f"Unapproved package: {pkg}")
 
         return {
             "safe": len(issues) == 0,

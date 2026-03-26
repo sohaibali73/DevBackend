@@ -209,8 +209,16 @@ _SANDBOX_GLOBALS: Dict[str, Any] = {
         "str": str, "sum": sum, "tuple": tuple, "zip": zip,
         "print": print, "True": True, "False": False, "None": None,
         "isinstance": isinstance, "type": type, "hasattr": hasattr,
-        "getattr": getattr, "ValueError": ValueError, "TypeError": TypeError,
+        "getattr": getattr, "setattr": setattr, "dir": dir, "vars": vars,
+        "repr": repr, "hash": hash, "id": id, "callable": callable,
+        "iter": iter, "next": next, "enumerate": enumerate,
+        "property": property, "staticmethod": staticmethod, "classmethod": classmethod,
+        "super": super, "object": object, "chr": chr, "ord": ord,
+        "bin": bin, "hex": hex, "oct": oct,
+        "ValueError": ValueError, "TypeError": TypeError,
         "KeyError": KeyError, "IndexError": IndexError, "Exception": Exception,
+        "AttributeError": AttributeError, "NameError": NameError,
+        "RuntimeError": RuntimeError, "StopIteration": StopIteration,
         "__import__": __import__,
     },
     "math":      math,
@@ -232,6 +240,37 @@ if _NP_AVAILABLE:
 if _PD_AVAILABLE:
     _SANDBOX_GLOBALS["pd"]     = pd
     _SANDBOX_GLOBALS["pandas"] = pd
+
+# Inject matplotlib and its patches if available
+try:
+    import matplotlib
+    matplotlib.use("Agg")  # Non-interactive backend
+    import matplotlib.pyplot as plt
+    import matplotlib.patches as mpatches
+    from matplotlib.patches import FancyBboxPatch, Rectangle, Circle, Ellipse, Polygon, Wedge, Arrow
+    import matplotlib.patheffects as path_effects
+    from matplotlib.path import Path
+    import matplotlib.colors as mcolors
+    from matplotlib.collections import PatchCollection
+    from matplotlib.font_manager import FontProperties
+    
+    _SANDBOX_GLOBALS["matplotlib"] = matplotlib
+    _SANDBOX_GLOBALS["plt"] = plt
+    _SANDBOX_GLOBALS["mpatches"] = mpatches
+    _SANDBOX_GLOBALS["FancyBboxPatch"] = FancyBboxPatch
+    _SANDBOX_GLOBALS["Rectangle"] = Rectangle
+    _SANDBOX_GLOBALS["Circle"] = Circle
+    _SANDBOX_GLOBALS["Ellipse"] = Ellipse
+    _SANDBOX_GLOBALS["Polygon"] = Polygon
+    _SANDBOX_GLOBALS["Wedge"] = Wedge
+    _SANDBOX_GLOBALS["Arrow"] = Arrow
+    _SANDBOX_GLOBALS["path_effects"] = path_effects
+    _SANDBOX_GLOBALS["Path"] = Path
+    _SANDBOX_GLOBALS["mcolors"] = mcolors
+    _SANDBOX_GLOBALS["PatchCollection"] = PatchCollection
+    _SANDBOX_GLOBALS["FontProperties"] = FontProperties
+except ImportError:
+    pass
 
 
 # =============================================================================
