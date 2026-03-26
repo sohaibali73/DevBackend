@@ -320,6 +320,16 @@ except Exception as e:
     logger.error(f"✗ Failed to load agent_teams router: {e}")
     logger.debug(traceback.format_exc())
 
+try:
+    from api.routes import agent_teams_v2
+    app.include_router(agent_teams_v2.router)
+    routers_loaded.append("agent_teams_v2")
+    logger.info("✓ Loaded agent_teams_v2 router (Parallel execution, custom roles, unlimited agents)")
+except Exception as e:
+    routers_failed.append(("agent_teams_v2", str(e)))
+    logger.error(f"✗ Failed to load agent_teams_v2 router: {e}")
+    logger.debug(traceback.format_exc())
+
 # Start background task cleanup loop on app startup
 @app.on_event("startup")
 async def startup_task_manager():
