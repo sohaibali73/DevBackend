@@ -62,7 +62,7 @@ DEFAULT_CAPABILITIES = {
     "analyst": ["analyze", "calculate", "code", "visualize"],
     "critic": ["review", "challenge", "evaluate", "suggest"],
     "synthesizer": ["combine", "structure", "write", "summarize"],
-    "coder": ["code", "debug", "test", "execute"],
+    "coder": ["code", "debug", "test", "execute", "sandbox"],
     "writer": ["write", "edit", "proofread", "format"],
     "designer": ["design", "visualize", "layout", "style"],
     "translator": ["translate", "localize", "adapt"],
