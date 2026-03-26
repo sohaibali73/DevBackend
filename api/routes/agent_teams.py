@@ -10,19 +10,28 @@ import asyncio
 from typing import Optional, List
 from fastapi import APIRouter, HTTPException, Depends
 from fastapi.responses import StreamingResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, field_validator
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/agent-teams", tags=["agent-teams"])
 
+VALID_ROLES = ["leader", "researcher", "analyst", "critic", "synthesizer", "coder"]
+
 
 class TeamMemberCreate(BaseModel):
-    role: str
+    role: str = "leader"
     model_id: str = "claude-sonnet-4-20250514"
     provider: str = "anthropic"
     instructions: str = ""
     color: str = "#FEC00F"
+    
+    @field_validator('role')
+    @classmethod
+    def validate_role(cls, v: str) -> str:
+        if v not in VALID_ROLES:
+            return "leader"
+        return v
 
 
 class CreateTeamRequest(BaseModel):
