@@ -22,6 +22,8 @@ import os
 import logging
 from typing import List
 
+import openai
+
 from core.llm.openai_provider import OpenAIProvider
 
 logger = logging.getLogger(__name__)
@@ -146,8 +148,16 @@ class OpenRouterProvider(OpenAIProvider):
     _cached_models: List[str] = []
 
     def __init__(self, api_key: str):
+        # Pass extra headers to the OpenAI client for OpenRouter attribution
+        extra_headers = self._get_extra_headers()
         super().__init__(api_key=api_key, base_url=OPENROUTER_BASE_URL)
         self._api_key = api_key
+        # Update client with OpenRouter-specific headers
+        self._client = openai.AsyncOpenAI(
+            api_key=api_key,
+            base_url=OPENROUTER_BASE_URL,
+            default_headers=extra_headers,
+        )
 
     @property
     def provider_name(self) -> str:
