@@ -1722,8 +1722,8 @@ def generate_afl_code(description: str, strategy_type: str = "standalone", api_k
             "Return the AFL code inside a ```afl code block."
         )
         response = client.messages.create(
-            model="claude-haiku-4-5-20251001",
-            max_tokens=4096,
+            model="claude-opus-4-6",
+            max_tokens=15000,
             system=system,
             messages=[{"role": "user", "content": f"Generate {strategy_type} AFL code for: {description}"}],
         )
@@ -1760,8 +1760,8 @@ def debug_afl_code(code: str, error_message: str = "", api_key: str = None) -> D
         if error_message:
             prompt += f"\n\nAmiBroker error: {error_message}"
         response = client.messages.create(
-            model="claude-haiku-4-5-20251001",
-            max_tokens=4096,
+            model="claude-opus-4-6",
+            max_tokens=15000,
             system="Fix AFL syntax and logic issues. Return corrected code in a ```afl block.",
             messages=[{"role": "user", "content": prompt}],
         )
@@ -1792,7 +1792,7 @@ def explain_afl_code(code: str, api_key: str = None) -> Dict[str, Any]:
         import anthropic as _anthropic
         client = _anthropic.Anthropic(api_key=api_key)
         response = client.messages.create(
-            model="claude-haiku-4-5-20251001",
+            model="claude-sonnet-4-6",
             max_tokens=2048,
             system="Explain AFL code clearly for traders. Cover: purpose, indicators, entry/exit, parameters.",
             messages=[{"role": "user", "content": f"Explain this AFL:\n\n```afl\n{code}\n```"}],

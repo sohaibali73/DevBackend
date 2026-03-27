@@ -62,7 +62,7 @@ class SkillDefinition:
     description: str
     category: SkillCategory
     system_prompt: str = ""          # Optional system prompt override
-    max_tokens: int = 4096
+    max_tokens: int = 20000
     tags: List[str] = field(default_factory=list)
     enabled: bool = True
     # If True, the skill result is streamed back to the caller
@@ -250,7 +250,7 @@ _register(SkillDefinition(
         "Parameters → Backtest Settings → Indicators → Trading Logic → "
         "ExRem cleanup → Chart Visualization → Exploration (Filter + AddColumn)\n"
     ),
-    max_tokens=8192,
+    max_tokens=20000,
     tags=["afl", "amibroker", "trading", "code-generation"],
 ))
 

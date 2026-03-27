@@ -103,7 +103,7 @@ class AnthropicProvider(BaseLLMProvider):
         model: str,
         system: str = "",
         tools: Optional[List[Dict]] = None,
-        max_tokens: int = 4096,
+        max_tokens: int = 15000,
         **kwargs,
     ) -> AsyncGenerator[StreamChunk, None]:
         """
@@ -219,7 +219,7 @@ class AnthropicProvider(BaseLLMProvider):
         model: str,
         system: str = "",
         tools: Optional[List[Dict]] = None,
-        max_tokens: int = 4096,
+        max_tokens: int = 15000,
         **kwargs,
     ) -> LLMResponse:
         """
@@ -294,7 +294,7 @@ class AnthropicProvider(BaseLLMProvider):
         try:
             response = await self._client.messages.create(
                 model="claude-haiku-4-5-20251001",
-                max_tokens=5,
+                max_tokens=15000,
                 messages=[{"role": "user", "content": "Hi"}],
             )
             return response is not None

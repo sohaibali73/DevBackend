@@ -226,7 +226,7 @@ _register(SkillDefinition(
         "- SetOption('CommissionAmount', 0.0005) — 0.05% per trade\n"
         "- PositionSize = 100\n"
     ),
-    max_tokens=8192,
+    max_tokens=20000,
     tags=["afl", "amibroker", "trading", "code-generation"],
 ))
 

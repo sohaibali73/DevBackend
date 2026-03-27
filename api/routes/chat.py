@@ -76,7 +76,7 @@ def get_model_config(model: str) -> Dict:
     base_model = model.rsplit("-", 1)[0] if model.count("-") > 3 else model
 
     return MODEL_CAPABILITIES.get(base_model, {
-        "max_output_tokens": 16384,  # Safe default
+        "max_output_tokens": 50000,  # Safe default
         "context_window": 200000,
         "supports_adaptive_thinking": False,
         "supports_prompt_caching": False,
