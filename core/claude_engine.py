@@ -96,6 +96,14 @@ except ImportError:
     TRAINING_ENABLED = False
     get_training_manager = None
 
+# Comprehensive AFL validator — used for post-generation validation
+try:
+    from core.afl_validator import AFLValidator, validate_afl_code, fix_afl_code
+    AFL_VALIDATOR_AVAILABLE = True
+except ImportError:
+    AFL_VALIDATOR_AVAILABLE = False
+    logger.warning("core.afl_validator not available — using basic inline validation only")
+
 # ── Strategy type enumeration ─────────────────────────────────────────────────
 class StrategyType(str, Enum):
     """Strategy type for AFL generation (affects code structure)."""
@@ -643,6 +651,24 @@ class ClaudeAFLEngine:
                 },
             }
 
+            # Add comprehensive validation details when available
+            if AFL_VALIDATOR_AVAILABLE and code:
+                try:
+                    validation = validate_afl_code(code)
+                    result["validation"] = {
+                        "is_valid": validation.get("is_valid", True),
+                        "errors": validation.get("errors", []),
+                        "warnings": validation.get("warnings", []),
+                        "color_issues": validation.get("color_issues", []),
+                        "function_issues": validation.get("function_issues", []),
+                        "reserved_word_issues": validation.get("reserved_word_issues", []),
+                        "style_issues": validation.get("style_issues", []),
+                        "suggestions": validation.get("suggestions", []),
+                        "total_issues": validation.get("total_issues", 0),
+                    }
+                except Exception as e:
+                    logger.warning(f"Failed to add validation details to result: {e}")
+
             # Write to LRU cache
             self._request_cache[cache_key] = result
             if len(self._request_cache) > self._request_cache_maxsize:
@@ -710,7 +736,7 @@ class ClaudeAFLEngine:
         context: str                  = "",
         stream:  bool                 = False,
     ) -> Any:
-        """General-purpose AFL/AmiBroker chat."""
+        """General-purpose AFL/AmiBroker chat — always uses the AFL generator skill."""
         kb = truncate_context(context, max_tokens=600) if context else ""
 
         system = self._build_system_prompt(
@@ -723,7 +749,8 @@ class ClaudeAFLEngine:
             messages.extend(history[-MAX_RECENT_MESSAGES:])
         messages.append({"role": "user", "content": message})
 
-        return await self._call_claude(system, messages, stream=stream, use_skill=False)
+        # Always use the AFL skill so every chat benefits from the AmiBroker AFL Developer skill
+        return await self._call_claude(system, messages, stream=stream, use_skill=True)
 
     async def stream_chat(
         self,
@@ -765,7 +792,14 @@ class ClaudeAFLEngine:
     # =========================================================================
 
     def validate_code(self, code: str) -> Dict[str, Any]:
-        """Public validation interface — does NOT auto-fix, just reports issues."""
+        """Public validation interface — uses comprehensive AFLValidator when available."""
+        if AFL_VALIDATOR_AVAILABLE and code:
+            try:
+                return validate_afl_code(code)
+            except Exception as e:
+                logger.warning(f"Comprehensive validation failed in validate_code: {e}")
+
+        # Fallback to basic validation
         _, errs, warns = self._validate_and_fix(code, fix=False)
         return {"is_valid": not errs, "errors": errs, "warnings": warns}
 
@@ -774,10 +808,41 @@ class ClaudeAFLEngine:
         code: str,
         fix:  bool = True,
     ) -> Tuple[str, List[str], List[str]]:
-        """Check the generated AFL for common mistakes."""
+        """Check the generated AFL for common mistakes using comprehensive validator when available."""
         errors   = []
         warnings = []
 
+        # Use comprehensive AFLValidator if available
+        if AFL_VALIDATOR_AVAILABLE and code:
+            try:
+                if fix:
+                    # Run auto-fix first, then validate the fixed code
+                    fix_result = fix_afl_code(code)
+                    code = fix_result.get("fixed_code", code)
+                    fix_applied = fix_result.get("fixes_applied", [])
+                    validation = fix_result.get("validation", {})
+                else:
+                    # Just validate without fixing
+                    validation = validate_afl_code(code)
+                    fix_applied = []
+
+                # Collect errors and warnings from comprehensive validation
+                if fix_applied:
+                    errors.extend(fix_applied)
+                errors.extend(validation.get("errors", []))
+                errors.extend(validation.get("color_issues", []))
+                errors.extend(validation.get("function_issues", []))
+                errors.extend(validation.get("reserved_word_issues", []))
+                warnings.extend(validation.get("warnings", []))
+                warnings.extend(validation.get("style_issues", []))
+                warnings.extend(validation.get("suggestions", []))
+
+                return code, errors, warnings
+            except Exception as e:
+                logger.warning(f"Comprehensive validation failed, falling back to basic: {e}")
+                # Fall through to basic validation
+
+        # Basic inline validation fallback
         # Fix single-arg misuse
         for func, (pat, repl) in self._SINGLE_ARG_PATTERNS.items():
             if pat.search(code):

@@ -376,6 +376,7 @@ class ChatAgentRequest(BaseModel):
     use_prompt_caching: bool = True  # NEW: enable prompt caching by default
     max_iterations: int = 5  # NEW: configurable, increased default
     pin_model_version: bool = False  # NEW: option to use pinned snapshots
+    use_kb: bool = False  # Set to true to include KB context in chat
 
 
 # ---------------------------------------------------------------------------
@@ -685,8 +686,9 @@ async def chat_agent(
     ]
 
     file_context = await _fetch_file_context(db, conversation_id)
-    kb_context = await _fetch_kb_context(db, data.content)
-    kb_doc_context = await _fetch_kb_doc_refs(db, data.content)
+    # Only search KB when user explicitly requests it via use_kb flag
+    kb_context = await _fetch_kb_context(db, data.content) if data.use_kb else ""
+    kb_doc_context = await _fetch_kb_doc_refs(db, data.content) if data.use_kb else ""
 
     async def generate_stream():
         encoder = VercelAIStreamEncoder()
@@ -1112,7 +1114,8 @@ async def _chat_generic_endpoint(
     ]
 
     file_context = await _fetch_file_context(db, conversation_id)
-    kb_context = await _fetch_kb_context(db, data.content)
+    # Only search KB when user explicitly requests it via use_kb flag
+    kb_context = await _fetch_kb_context(db, data.content) if data.use_kb else ""
 
     # Build system prompt
     system_prompt = (

@@ -1,69 +1,42 @@
+
 """
 AFL Validator - Comprehensive sanity checker for AmiBroker Formula Language
-Prevents hallucinations, validates colors, functions, and syntax
+Improved version based on official documentation and common mistake patterns.
 """
 
 import re
 from typing import Dict, List, Set, Tuple, Any
 from dataclasses import dataclass, field
 
-
 # =============================================================================
-# VALID AMIBROKER COLORS (OFFICIAL ONLY - NO CUSTOM RGB)
+# VALID AMIBROKER COLORS (UPDATED WITH color.txt AND SYNTAX FILES)
 # =============================================================================
 
 VALID_COLORS: Set[str] = {
-    # Standard colors
-    "colorBlack",
-    "colorBlue", 
-    "colorBrightGreen",
-    "colorBrown",
-    "colorDarkBlue",
-    "colorDarkGreen",
-    "colorDarkGrey",
-    "colorDarkOliveGreen",
-    "colorDarkRed",
-    "colorDarkTeal",
-    "colorDarkYellow",
-    "colorDefault",
-    "colorGold",
-    "colorGreen",
-    "colorGrey40",
-    "colorGrey50",
-    "colorIndigo",
-    "colorLavender",
-    "colorLightBlue",
-    "colorLightGrey",
-    "colorLightOrange",
-    "colorLightYellow",
-    "colorLime",
-    "colorOrange",
-    "colorPaleGreen",
-    "colorPink",
-    "colorPlum",
-    "colorRed",
-    "colorRose",
-    "colorSeaGreen",
-    "colorSkyblue",
-    "colorTan",
-    "colorTeal",
-    "colorTurquoise",
-    "colorViolet",
-    "colorWhite",
-    "colorYellow",
-    "colorAqua",
-}
+    # Custom palette colors (Explicitly allowed per color.txt)
+    "colorCustom1", "colorCustom2", "colorCustom3", "colorCustom4",
+    "colorCustom5", "colorCustom6", "colorCustom7", "colorCustom8",
+    "colorCustom9", "colorCustom10", "colorCustom11", "colorCustom12",
+    "colorCustom13", "colorCustom14", "colorCustom15", "colorCustom16",
 
-# Colors that can be used with IIf for conditional coloring
-VALID_COLOR_FUNCTIONS = {
-    "ParamColor",
-    "ColorHSB",
-    "ColorRGB",  # Only when using predefined values
-    "ColorBlend",
+    # Standard colors (indices 16-55)
+    "colorBlack", "colorBrown", "colorDarkOliveGreen", "colorDarkGreen",
+    "colorDarkTeal", "colorDarkBlue", "colorIndigo", "colorDarkGrey",
+    "colorDarkRed", "colorOrange", "colorDarkYellow", "colorGreen",
+    "colorTeal", "colorBlue", "colorBlueGrey", "colorGrey40", # colorGrey40 added
+    "colorRed", "colorLightOrange", "colorLime", "colorSeaGreen",
+    "colorAqua", "colorLightBlue", "colorViolet", "colorGrey50",
+    "colorPink", "colorGold", "colorYellow", "colorBrightGreen",
+    "colorTurquoise", "colorSkyblue", "colorPlum", "colorLightGrey",
+    "colorRose", "colorTan", "colorLightYellow", "colorPaleGreen",
+    "colorPaleTurquoise", "colorPaleBlue", "colorLavender", "colorWhite",
+    
+    # Additional standard constants
+    "colorDefault", "colorGrey", # colorGrey is distinct from Grey40/50
 }
 
 # =============================================================================
-# VALID AMIBROKER FUNCTIONS
+# VALID AMIBROKER FUNCTIONS (UPDATED BASED ON SYNTAX.TXT)
 # =============================================================================
 
 # Single argument functions (take ONLY period, NOT array)
@@ -78,7 +51,10 @@ SINGLE_ARG_FUNCTIONS: Dict[str, int] = {
     "StochK": 1,
     "StochD": 1,
     "Chaikin": 1,
-    "UltOsc": 1,  # Has defaults
+    # "UltOsc": 1, # REMOVED - Common hallucination. UltOsc requires 3 cycles.
+    "RMI": 1,     # Added from SYNTAX.txt
+    "Trix": 1,    # Added from SYNTAX.txt
+    "OBV": 1,     # Also acts as no-arg depending on version, but usually 1 or 0. 
 }
 
 # Double argument functions (take array AND period)
@@ -109,13 +85,12 @@ DOUBLE_ARG_FUNCTIONS: Dict[str, int] = {
     "Correlation": 3,
     "Percentile": 3,
     "PercentRank": 2,
+    "OscP": 2, # Oscillator Price
+    "OscV": 2, # Oscillator Volume
 }
 
 # Multi-argument functions
 MULTI_ARG_FUNCTIONS: Dict[str, Tuple[int, int]] = {  # (min_args, max_args)
-    # FIX-09: Cum moved here from DOUBLE_ARG_FUNCTIONS.
-    # Cum(array) takes exactly 1 arg — an array, no period.
-    # It was wrong in DOUBLE_ARG_FUNCTIONS (which implies array+period).
     "Cum": (1, 1),
     "BBandTop": (3, 3),
     "BBandBot": (3, 3),
@@ -136,6 +111,7 @@ MULTI_ARG_FUNCTIONS: Dict[str, Tuple[int, int]] = {  # (min_args, max_args)
     "PlotText": (4, 5),
     "AddColumn": (2, 5),
     "AddTextColumn": (2, 4),
+    "AddMultiTextColumn": (3, 7), # Updated based on Code Requirements
     "IIf": (3, 3),
     "Cross": (2, 2),
     "ExRem": (2, 2),
@@ -153,11 +129,11 @@ MULTI_ARG_FUNCTIONS: Dict[str, Tuple[int, int]] = {  # (min_args, max_args)
     "SetForeign": (1, 3),
     "SetTradeDelays": (4, 4),
     "SetOption": (2, 2),
+    "UltOsc": (3, 3), # Fixed: Requires 3 cycles
 }
 
 # No argument functions
 NO_ARG_FUNCTIONS: Set[str] = {
-    "OBV",
     "GetCursorMouseButtons",
     "GetCursorXPosition",
     "GetCursorYPosition",
@@ -183,59 +159,26 @@ NO_ARG_FUNCTIONS: Set[str] = {
 }
 
 # =============================================================================
-# VALID PLOT STYLES
+# VALID PLOT STYLES & SHAPES (From SYNTAX.txt)
 # =============================================================================
 
 VALID_PLOT_STYLES: Set[str] = {
-    "styleLine",
-    "styleHistogram",
-    "styleCandle",
-    "styleBar",
-    "styleArea",
-    "styleDots",
-    "styleThick",
-    "styleDashed",
-    "styleNoLine",
-    "styleOwnScale",
-    "styleNoLabel",
-    "styleNoRescale",
-    "styleLeftAxisScale",
-    "styleNoDraw",
-    "styleNoTitle",
-    "stylePointAndFigure",
-    "styleCloud",
-    "styleClipMinMax",
-    "styleGradient",
-    "styleStaircase",
-    "styleSwingDots",
+    "styleLine", "styleHistogram", "styleCandle", "styleBar", "styleArea",
+    "styleDots", "styleThick", "styleDashed", "styleNoLine", "styleOwnScale",
+    "styleNoLabel", "styleNoRescale", "styleLeftAxisScale", "styleNoDraw",
+    "styleNoTitle", "stylePointAndFigure", "styleCloud", "styleClipMinMax",
+    "styleGradient", "styleStaircase", "styleSwingDots", "styleLog",
 }
 
-# =============================================================================
-# VALID SHAPES
-# =============================================================================
-
 VALID_SHAPES: Set[str] = {
-    "shapeNone",
-    "shapeUpArrow",
-    "shapeDownArrow",
-    "shapeUpTriangle",
-    "shapeDownTriangle",
-    "shapeHollowUpArrow",
-    "shapeHollowDownArrow",
-    "shapeHollowUpTriangle",
-    "shapeHollowDownTriangle",
-    "shapeCircle",
-    "shapeHollowCircle",
-    "shapeSquare",
-    "shapeHollowSquare",
-    "shapeStar",
-    "shapeHollowStar",
-    "shapeDigit0", "shapeDigit1", "shapeDigit2", "shapeDigit3", "shapeDigit4",
-    "shapeDigit5", "shapeDigit6", "shapeDigit7", "shapeDigit8", "shapeDigit9",
-    "shapeSmallCircle",
-    "shapeSmallSquare",
-    "shapeSmallUpTriangle",
-    "shapeSmallDownTriangle",
+    "shapeNone", "shapeUpArrow", "shapeDownArrow", "shapeUpTriangle",
+    "shapeDownTriangle", "shapeHollowUpArrow", "shapeHollowDownArrow",
+    "shapeHollowUpTriangle", "shapeHollowDownTriangle", "shapeCircle",
+    "shapeHollowCircle", "shapeSquare", "shapeHollowSquare", "shapeStar",
+    "shapeHollowStar", "shapeDigit0", "shapeDigit1", "shapeDigit2",
+    "shapeDigit3", "shapeDigit4", "shapeDigit5", "shapeDigit6", "shapeDigit7",
+    "shapeDigit8", "shapeDigit9", "shapeSmallCircle", "shapeSmallSquare",
+    "shapeSmallUpTriangle", "shapeSmallDownTriangle", "shapePositionAbove",
 }
 
 # =============================================================================
@@ -287,7 +230,8 @@ class ValidationResult:
             "reserved_word_issues": self.reserved_word_issues,
             "style_issues": self.style_issues,
             "suggestions": self.suggestions,
-            "total_issues": len(self.errors) + len(self.color_issues) + len(self.function_issues) + len(self.reserved_word_issues)
+            "total_issues": len(self.errors) + len(self.color_issues) + 
+                           len(self.function_issues) + len(self.reserved_word_issues)
         }
 
 
@@ -296,139 +240,92 @@ class ValidationResult:
 # =============================================================================
 
 class AFLValidator:
-    """
-    Comprehensive AFL code validator.
-    Prevents hallucinations by validating:
-    - Colors (only official AmiBroker colors)
-    - Function signatures (correct argument counts)
-    - Reserved words (not used as variables)
-    - Plot styles and shapes
-    """
-
     def __init__(self):
-        # FIX-04: Previously only SINGLE_ARG_FUNCTIONS and DOUBLE_ARG_FUNCTIONS
-        # were merged, so MACD, Plot, IIf, ExRem, Cross, OBV, etc. used as variable
-        # names were never caught by _validate_reserved_words.  All four function
-        # dicts are now included so the check covers every built-in AFL function.
         self.all_functions = {
             **{k: v for k, v in SINGLE_ARG_FUNCTIONS.items()},
             **{k: v for k, v in DOUBLE_ARG_FUNCTIONS.items()},
-            **{k: v[0] for k, v in MULTI_ARG_FUNCTIONS.items()},  # min_args as sentinel
+            **{k: v[0] for k, v in MULTI_ARG_FUNCTIONS.items()}, 
             **{k: 0 for k in NO_ARG_FUNCTIONS},
         }
 
     def validate(self, code: str) -> ValidationResult:
-        """
-        Perform comprehensive validation of AFL code.
-        """
         result = ValidationResult(is_valid=True)
-
-        # Remove comments for analysis
         clean_code = self._remove_comments(code)
 
-        # Run all validations
         self._validate_colors(clean_code, result)
         self._validate_functions(clean_code, result)
         self._validate_reserved_words(clean_code, result)
         self._validate_plot_styles(clean_code, result)
         self._validate_shapes(clean_code, result)
-        self._validate_syntax(code, result)
+        self._validate_syntax(code, result) # Pass original code to catch syntax structure
+        self._validate_common_mistakes(clean_code, result) # New checks
 
-        # Determine overall validity
         result.is_valid = (
             len(result.errors) == 0 and
             len(result.color_issues) == 0 and
             len(result.function_issues) == 0
         )
-
         return result
 
     def _remove_comments(self, code: str) -> str:
-        """Remove single-line and multi-line comments."""
-        # Remove multi-line comments /* */
         code = re.sub(r'/\*.*?\*/', '', code, flags=re.DOTALL)
-        # Remove single-line comments //
         code = re.sub(r'//.*$', '', code, flags=re.MULTILINE)
         return code
 
     def _validate_colors(self, code: str, result: ValidationResult):
-        """
-        Validate that only official AmiBroker colors are used.
-        No custom RGB values allowed.
-        """
-        # FIX-08: Removed re.IGNORECASE — AmiBroker color constants are case-sensitive
-        # camelCase (e.g. colorGreen, colorDarkRed).  With IGNORECASE, colorred would
-        # match the pattern but fail the VALID_COLORS lookup, producing a false positive.
-        color_pattern = r'\bcolor[A-Za-z0-9_]*'
+        """Validate that only official AmiBroker colors are used."""
+        
+        # 1. Find all potential color constants (camelCase starting with color)
+        color_pattern = r'\b(color[A-Za-z0-9_]*?)\b'
         found_colors = re.findall(color_pattern, code)
 
-        # Build a set of variable names assigned via ColorRGB() so we don't
-        # flag them as "invalid colors" in the loop below.
-        # Pattern: MyColor = ColorRGB(...) — capture the LHS variable name
+        # 2. Check for ColorRGB usage and valid variable assignment
         colorrgb_vars: set = set()
         colorrgb_assign_pattern = r'\b([A-Za-z_][A-Za-z0-9_]*)\s*=\s*ColorRGB\s*\('
         for m in re.finditer(colorrgb_assign_pattern, code):
-            colorrgb_vars.add(m.group(1))
-
-        for color in found_colors:
-            # Skip variables that were legitimately assigned via ColorRGB()
-            if color in colorrgb_vars:
-                continue
-            # Check if it's a valid color constant
-            if color not in VALID_COLORS:
-                # Check if it's close to a valid color (typo)
-                suggestions = self._find_similar(color, VALID_COLORS)
-                if suggestions:
-                    result.color_issues.append(
-                        f"Invalid color '{color}'. Did you mean: {', '.join(suggestions)}?"
-                    )
-                else:
-                    result.color_issues.append(
-                        f"Invalid color '{color}'. Use only official AmiBroker colors like colorRed, colorGreen, colorBlue, etc."
-                    )
-
-        # FIX-06: ColorRGB() is valid AFL when assigned to a UNIQUE variable name.
-        # The only error is when a ColorRGB() result is stored in a variable that
-        # shadows a predefined color constant (e.g. colorGreen = ColorRGB(...)).
-        # Blanket rejection of all ColorRGB() calls was wrong — the skill and
-        # AmiBroker itself support custom colors.
-        colorrgb_shadow_pattern = r'\b(color[A-Za-z0-9_]+)\s*=\s*ColorRGB\s*\('
-        for m in re.finditer(colorrgb_shadow_pattern, code):
             var_name = m.group(1)
+            # If user assigns ColorRGB to a reserved color name (e.g. colorRed = ColorRGB(...))
             if var_name in VALID_COLORS:
                 result.color_issues.append(
-                    f"'{var_name}' shadows a predefined AmiBroker color constant. "
-                    f"Use a unique name like 'My{var_name[5:]}' or 'Custom{var_name[5:]}' instead."
+                    f"CRITICAL: Variable '{var_name}' shadows a predefined AmiBroker color constant. "
+                    f"Use a unique name like 'MyColor' instead."
                 )
+            else:
+                colorrgb_vars.add(var_name)
 
-        # Check for ColorHSB usage (discouraged)
-        hsb_pattern = r'\bColorHSB\s*\('
-        if re.search(hsb_pattern, code):
-            result.warnings.append(
-                "ColorHSB detected. Consider using predefined colors for consistency."
-            )
-    
+        # 3. Validate found constants
+        for color in found_colors:
+            # Skip if it was a variable assigned via ColorRGB (e.g. MyColor = ColorRGB(..))
+            if color in colorrgb_vars:
+                continue
+            
+            if color not in VALID_COLORS:
+                suggestions = self._find_similar(color, VALID_COLORS)
+                msg = f"Invalid color constant '{color}'. "
+                if suggestions:
+                    msg += f"Did you mean: {', '.join(suggestions)}?"
+                else:
+                    msg += "Use official colors or define custom color via ColorRGB()."
+                result.color_issues.append(msg)
+
     def _validate_functions(self, code: str, result: ValidationResult):
-        """
-        Validate function signatures and argument counts.
-        Catches common hallucinations like RSI(Close, 14) instead of RSI(14).
-        """
-        # Pattern to match function calls: FunctionName(args)
         func_pattern = r'\b([A-Za-z_][A-Za-z0-9_]*)\s*\(([^()]*(?:\([^()]*\)[^()]*)*)\)'
         
         for match in re.finditer(func_pattern, code):
             func_name = match.group(1)
             args_str = match.group(2).strip()
-            
-            # Count arguments (simple comma split, accounting for nested parentheses)
             arg_count = self._count_args(args_str) if args_str else 0
             
-            # Check single-argument functions (common hallucination: adding Close as first arg)
+            # Skip if it looks like a function call but is actually a keyword (if, while)
+            if func_name in ["if", "while", "for", "else"]:
+                continue
+
+            # Check single-argument functions
             if func_name in SINGLE_ARG_FUNCTIONS:
                 expected = SINGLE_ARG_FUNCTIONS[func_name]
                 if arg_count != expected:
-                    if arg_count == 2:
-                        # Common mistake: RSI(Close, 14) instead of RSI(14)
+                    # Detect RSI(Close, 14) hallucination
+                    if arg_count == 2 and expected == 1:
                         result.function_issues.append(
                             f"HALLUCINATION DETECTED: {func_name}({args_str}) - "
                             f"{func_name} takes {expected} argument (period only), NOT an array. "
@@ -436,139 +333,141 @@ class AFLValidator:
                         )
                     else:
                         result.function_issues.append(
-                            f"Invalid {func_name}() call with {arg_count} arguments. Expected {expected}."
+                            f"Invalid {func_name}() call. Expected {expected} arg, got {arg_count}."
                         )
             
-            # Check double-argument functions (common hallucination: missing array)
+            # Check double-argument functions
             elif func_name in DOUBLE_ARG_FUNCTIONS:
                 expected = DOUBLE_ARG_FUNCTIONS[func_name]
                 if arg_count != expected:
                     if arg_count == 1 and expected == 2:
-                        # Common mistake: MA(14) instead of MA(Close, 14)
                         result.function_issues.append(
-                            f"HALLUCINATION DETECTED: {func_name}({args_str}) - "
-                            f"{func_name} requires {expected} arguments (array, period). "
+                            f"MISSING ARRAY: {func_name}({args_str}) - "
+                            f"{func_name} requires an array (e.g., Close) AND period. "
                             f"Correct usage: {func_name}(Close, {args_str})"
                         )
                     else:
                         result.function_issues.append(
-                            f"Invalid {func_name}() call with {arg_count} arguments. Expected {expected}."
+                            f"Invalid {func_name}() call. Expected {expected} args, got {arg_count}."
                         )
             
             # Check multi-argument functions
             elif func_name in MULTI_ARG_FUNCTIONS:
                 min_args, max_args = MULTI_ARG_FUNCTIONS[func_name]
-                if arg_count < min_args or arg_count > max_args:
+                if not (min_args <= arg_count <= max_args):
                     result.function_issues.append(
-                        f"Invalid {func_name}() call with {arg_count} arguments. "
-                        f"Expected {min_args}-{max_args} arguments."
+                        f"Invalid {func_name}() call. Expected {min_args}-{max_args} args, got {arg_count}."
                     )
             
             # Check no-arg functions
             elif func_name in NO_ARG_FUNCTIONS:
-                if arg_count > 0 and func_name not in ["Status"]:  # Status can take args
+                if arg_count > 0 and func_name not in ["Status"]:
                     result.function_issues.append(
                         f"Invalid {func_name}() call with {arg_count} arguments. "
                         f"{func_name} takes no arguments."
                     )
-    
+            
+            # Check for IIf Hallucinations (Assignment inside IIf)
+            if func_name == "IIf":
+                # Look for '=' inside arguments, which implies assignment, not value return
+                # Pattern: IIf( cond, var = 1, var = 2 ) -> WRONG
+                if re.search(r'=\s*(?:[^,]+)\s*,', args_str) or re.search(r',\s*[^,=]+=\s*', args_str):
+                     result.function_issues.append(
+                         f"SYNTAX ERROR: Assignment detected inside IIf() arguments. "
+                         f"IIf returns a value, it does not perform assignment. "
+                         f"Use: result = IIf(condition, true_val, false_val);"
+                     )
+
+    def _validate_common_mistakes(self, code: str, result: ValidationResult):
+        """
+        Checks for common logical mistakes found in AMIRBROKER MISTAKES.txt
+        """
+        
+        # 1. Array in scalar 'if' statement
+        # Matches: if ( Close > Open ) or if ( Cross(MA, Close) )
+        # Does NOT match: if ( Close[i] > Open[i] ) or if ( var > 0 )
+        # Heuristic: if keyword is followed by standard array names without subscripts
+        if_pattern = r'\bif\s*\(([^)]+)\)'
+        for m in re.finditer(if_pattern, code):
+            condition = m.group(1)
+            # Check if condition contains un-subscripted array names
+            # This regex looks for array names NOT followed by [
+            if re.search(r'\b(Close|Open|High|Low|Volume|C|O|H|L|V)\b(?!\s*\[)', condition):
+                result.warnings.append(
+                    f"SCALAR IF ERROR: 'if' statement contains array condition '{condition.strip()}'. "
+                    f"'if' statements require a single True/False value, not an array. "
+                    f"Use IIf() for array logic, or loop with subscripts [i]."
+                )
+
+        # 2. TimeFrameSet without TimeFrameExpand
+        if re.search(r'\bTimeFrameSet\s*\(', code):
+            if not re.search(r'\bTimeFrameExpand\s*\(', code):
+                result.errors.append(
+                    "LOGIC ERROR: TimeFrameSet() used without corresponding TimeFrameExpand(). "
+                    "Data compressed to a different timeframe must be expanded back to original "
+                    "interval to align with other data arrays."
+                )
+        
+        # 3. Assignment in condition (= vs ==)
+        # Matches: if ( x = 5 ) -> Wrong. Should be ==
+        # Allow common patterns like variable initialization outside logic blocks
+        assign_in_if = re.search(r'\bif\s*\([^)]*[^=!<>]=[^=][^)]*\)', code)
+        if assign_in_if:
+            result.warnings.append(
+                f"ASSIGNMENT IN CONDITION: '{assign_in_if.group(0)}'. "
+                f"Did you mean to use '==' (equality check) instead of '=' (assignment)?"
+            )
+
     def _count_args(self, args_str: str) -> int:
-        """Count arguments, accounting for nested parentheses."""
-        if not args_str.strip():
-            return 0
-        
-        count = 1
-        depth = 0
+        if not args_str.strip(): return 0
+        count = 1; depth = 0
         for char in args_str:
-            if char == '(':
-                depth += 1
-            elif char == ')':
-                depth -= 1
-            elif char == ',' and depth == 0:
-                count += 1
-        
+            if char == '(': depth += 1
+            elif char == ')': depth -= 1
+            elif char == ',' and depth == 0: count += 1
         return count
     
     def _validate_reserved_words(self, code: str, result: ValidationResult):
-        """
-        Check for reserved words being used as variable names.
-        """
-        # Pattern: variable = something (assignment)
         assignment_pattern = r'\b([A-Za-z_][A-Za-z0-9_]*)\s*='
         
         for match in re.finditer(assignment_pattern, code):
             var_name = match.group(1)
             
-            # Check if using price array as custom variable (shadowing)
             if var_name in RESERVED_PRICE_ARRAYS:
                 result.reserved_word_issues.append(
-                    f"Reserved word '{var_name}' used as variable. This shadows the built-in price array. "
-                    f"Use '{var_name}_Val' or '{var_name}_Custom' instead."
+                    f"Reserved word '{var_name}' used as variable. This shadows the built-in price array."
                 )
             
-            # Check if using function name as variable (very common mistake)
             if var_name in self.all_functions or var_name in NO_ARG_FUNCTIONS:
                 result.reserved_word_issues.append(
-                    f"Function name '{var_name}' used as variable. This shadows the built-in function. "
-                    f"Use '{var_name}_Val' or '{var_name}_Value' instead."
+                    f"Function name '{var_name}' used as variable. This shadows the built-in function."
                 )
     
     def _validate_plot_styles(self, code: str, result: ValidationResult):
-        """
-        Validate that only official plot styles are used.
-        """
-        # Find all style references
         style_pattern = r'\bstyle[A-Za-z0-9_]*'
         found_styles = re.findall(style_pattern, code)
-        
         for style in found_styles:
             if style not in VALID_PLOT_STYLES:
                 suggestions = self._find_similar(style, VALID_PLOT_STYLES)
                 if suggestions:
-                    result.style_issues.append(
-                        f"Invalid plot style '{style}'. Did you mean: {', '.join(suggestions)}?"
-                    )
-                else:
-                    result.style_issues.append(
-                        f"Invalid plot style '{style}'. Use official styles like styleLine, styleHistogram, etc."
-                    )
+                    result.style_issues.append(f"Invalid style '{style}'. Did you mean: {', '.join(suggestions)}?")
     
     def _validate_shapes(self, code: str, result: ValidationResult):
-        """
-        Validate that only official shapes are used.
-        """
         shape_pattern = r'\bshape[A-Za-z0-9_]*'
         found_shapes = re.findall(shape_pattern, code)
-        
         for shape in found_shapes:
             if shape not in VALID_SHAPES:
                 suggestions = self._find_similar(shape, VALID_SHAPES)
                 if suggestions:
-                    result.style_issues.append(
-                        f"Invalid shape '{shape}'. Did you mean: {', '.join(suggestions)}?"
-                    )
-                else:
-                    result.style_issues.append(
-                        f"Invalid shape '{shape}'. Use official shapes like shapeUpArrow, shapeDownArrow, etc."
-                    )
-    
+                    result.style_issues.append(f"Invalid shape '{shape}'. Did you mean: {', '.join(suggestions)}?")
+
     def _validate_syntax(self, code: str, result: ValidationResult):
-        """
-        Basic syntax validation.
-        """
         lines = code.split("\n")
-        
-        # Check balanced parentheses/brackets/braces
         paren = bracket = brace = 0
         for i, line in enumerate(lines, 1):
-            # Skip full-line comments
             stripped = line.strip()
-            if stripped.startswith("//"):
-                continue
-            
-            # Remove inline comments
-            if "//" in line:
-                line = line[:line.index("//")]
+            if stripped.startswith("//"): continue
+            if "//" in line: line = line[:line.index("//")]
             
             for char in line:
                 if char == '(': paren += 1
@@ -578,92 +477,52 @@ class AFLValidator:
                 elif char == '{': brace += 1
                 elif char == '}': brace -= 1
         
-        if paren != 0:
-            result.errors.append(f"Unbalanced parentheses: {abs(paren)} {'open' if paren > 0 else 'close'} missing")
-        if bracket != 0:
-            result.errors.append(f"Unbalanced brackets: {abs(bracket)} {'open' if bracket > 0 else 'close'} missing")
-        if brace != 0:
-            result.errors.append(f"Unbalanced braces: {abs(brace)} {'open' if brace > 0 else 'close'} missing")
-        
-        # Check for common syntax issues
-        if re.search(r';\s*;', code):
-            result.warnings.append("Double semicolons detected (;;)")
-        
-        # Check for missing semicolons in common patterns
-        # (This is a heuristic - AFL is forgiving about semicolons)
-        
+        if paren != 0: result.errors.append(f"Unbalanced parentheses: {abs(paren)} {'open' if paren > 0 else 'close'} missing")
+        if bracket != 0: result.errors.append(f"Unbalanced brackets: {abs(bracket)} {'open' if bracket > 0 else 'close'} missing")
+        if brace != 0: result.errors.append(f"Unbalanced braces: {abs(brace)} {'open' if brace > 0 else 'close'} missing")
+
     def _find_similar(self, word: str, valid_set: Set[str], max_results: int = 3) -> List[str]:
-        """
-        Find similar words from valid set (for typo suggestions).
-        """
         word_lower = word.lower()
         suggestions = []
-        
         for valid in valid_set:
             valid_lower = valid.lower()
-            # Simple similarity: starts with same prefix or contains word
             if valid_lower.startswith(word_lower[:4]) or word_lower in valid_lower:
                 suggestions.append(valid)
-        
         return suggestions[:max_results]
     
     def fix_code(self, code: str) -> Tuple[str, List[str]]:
-        """
-        Attempt to automatically fix common issues in AFL code.
-        Returns (fixed_code, list_of_fixes_applied).
-        """
         fixes = []
         fixed_code = code
         
-        # Fix 1: Single-arg function hallucinations (RSI(Close, 14) -> RSI(14))
+        # Fix: Single-arg function hallucinations (RSI(Close, 14) -> RSI(14))
         for func in SINGLE_ARG_FUNCTIONS:
             pattern = rf'\b{func}\s*\(\s*(Close|Open|High|Low|Volume|C|O|H|L|V)\s*,\s*(\d+)\s*\)'
             if re.search(pattern, fixed_code, re.IGNORECASE):
                 fixed_code = re.sub(pattern, rf'{func}(\2)', fixed_code, flags=re.IGNORECASE)
                 fixes.append(f"Fixed {func}(Close, n) -> {func}(n)")
         
-        # Fix 2: Double-arg function hallucinations (MA(14) -> MA(Close, 14))
+        # Fix: Double-arg function hallucinations (MA(14) -> MA(Close, 14))
         for func in ["MA", "EMA", "SMA", "WMA", "DEMA", "TEMA"]:
             pattern = rf'\b{func}\s*\(\s*(\d+)\s*\)'
             if re.search(pattern, fixed_code):
                 fixed_code = re.sub(pattern, rf'{func}(Close, \1)', fixed_code)
                 fixes.append(f"Fixed {func}(n) -> {func}(Close, n)")
         
-        # Fix 3: Variable shadowing (RSI = RSI(14) -> RSI_Val = RSI(14))
-        for func in list(SINGLE_ARG_FUNCTIONS.keys()) + list(DOUBLE_ARG_FUNCTIONS.keys()):
-            pattern = rf'\b{func}\s*=\s*{func}\s*\('
-            if re.search(pattern, fixed_code):
-                fixed_code = re.sub(pattern, f'{func}_Val = {func}(', fixed_code)
-                fixes.append(f"Fixed variable shadowing: {func} -> {func}_Val")
-        
         return fixed_code, fixes
-
 
 # =============================================================================
 # CONVENIENCE FUNCTIONS
 # =============================================================================
 
 def validate_afl_code(code: str) -> Dict[str, Any]:
-    """
-    Convenience function to validate AFL code.
-    Returns a dictionary with validation results.
-    """
     validator = AFLValidator()
     result = validator.validate(code)
     return result.to_dict()
 
-
 def fix_afl_code(code: str) -> Dict[str, Any]:
-    """
-    Attempt to fix common AFL issues.
-    Returns dictionary with fixed code and list of fixes applied.
-    """
     validator = AFLValidator()
     fixed_code, fixes = validator.fix_code(code)
-    
-    # Validate the fixed code
     validation = validator.validate(fixed_code)
-    
     return {
         "original_code": code,
         "fixed_code": fixed_code,
@@ -672,17 +531,7 @@ def fix_afl_code(code: str) -> Dict[str, Any]:
         "is_now_valid": validation.is_valid
     }
 
-
-def get_valid_colors() -> List[str]:
-    """Return list of all valid AmiBroker colors."""
-    return sorted(list(VALID_COLORS))
-
-
-def get_valid_styles() -> List[str]:
-    """Return list of all valid plot styles."""
-    return sorted(list(VALID_PLOT_STYLES))
-
-
-def get_valid_shapes() -> List[str]:
-    """Return list of all valid shapes."""
-    return sorted(list(VALID_SHAPES))
+def get_valid_colors() -> List[str]: return sorted(list(VALID_COLORS))
+def get_valid_styles() -> List[str]: return sorted(list(VALID_PLOT_STYLES))
+def get_valid_shapes() -> List[str]: return sorted(list(VALID_SHAPES))
+```

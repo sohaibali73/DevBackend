@@ -68,6 +68,7 @@ class GenerateRequest(BaseModel):
     stream: Optional[bool] = Field(False, description="Enable streaming responses")
     uploaded_file_ids: Optional[List[str]] = None  # File references for context
     kb_context: Optional[str] = None  # Additional knowledge base context
+    use_kb: Optional[bool] = Field(False, description="Set to true to include KB context in generation")
     thinking_mode: Optional[str] = Field(None, description="Extended thinking mode: enabled or disabled")
     thinking_budget: Optional[int] = Field(None, description="Thinking budget tokens (if enabled)")
 
@@ -164,10 +165,15 @@ async def _generate_simple(
         if request.uploaded_file_ids:
             file_context = _build_file_context(db, user_id, request.uploaded_file_ids)
 
-        # Combine with existing KB context
-        combined_context = request.kb_context or ""
+        # Build combined context:
+        # - Files uploaded → use ONLY file context (user provided direct context)
+        # - use_kb=True → include KB context (user explicitly requested it)
+        # - Otherwise → no context
+        combined_context = ""
         if file_context:
-            combined_context += "\n\nUPLOADED FILES:\n" + file_context
+            combined_context = "\n\nUPLOADED FILES:\n" + file_context
+        elif request.use_kb and request.kb_context:
+            combined_context = request.kb_context
 
         # Check if streaming is requested
         if request.stream:
@@ -653,65 +659,62 @@ async def upload_afl_file(
 ):
     """
     Upload a file for AFL generation context.
-    Supported: CSV, TXT, PDF, AFL files
+    Accepts any file type.
     """
     db = get_supabase()
 
-    # Validate file type
-    allowed_types = [
-        'text/csv',
-        'text/plain',
-        'application/pdf',
-        'application/vnd.ms-excel',
-        'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
-    ]
-
-    if file.content_type not in allowed_types and not file.filename.endswith('.afl'):
-        raise HTTPException(
-            status_code=400,
-            detail=f"Unsupported file type: {file.content_type}. Allowed: CSV, TXT, PDF, AFL"
-        )
-
-    # Validate file size (max 10MB)
-    max_size = 10 * 1024 * 1024  # 10MB
+    # Validate file size (max 50MB)
+    max_size = 50 * 1024 * 1024  # 50MB
     content = await file.read()
 
     if len(content) > max_size:
         raise HTTPException(
             status_code=400,
-            detail="File too large. Maximum size is 10MB"
+            detail="File too large. Maximum size is 50MB"
         )
 
     try:
-        # Process based on file type
+        # Process based on file type - handle text vs binary
         file_data = {}
 
-        if file.content_type == 'text/csv' or file.filename.endswith('.csv'):
+        # Text-based content types that can be decoded as UTF-8
+        text_types = [
+            'text/', 'application/json', 'application/xml', 'application/javascript',
+            'application/typescript', 'application/x-httpd-php', 'application/sql',
+            'application/graphql', 'application/x-yaml', 'application/yaml',
+        ]
+        
+        # Also treat common text-based extensions as text
+        text_extensions = ['.csv', '.txt', '.afl', '.json', '.xml', '.html', '.htm', 
+                          '.css', '.js', '.ts', '.py', '.java', '.c', '.cpp', '.h',
+                          '.md', '.sql', '.yaml', '.yml', '.toml', '.ini', '.cfg',
+                          '.log', '.sh', '.bat', '.ps1', '.rb', '.go', '.rs', '.php']
+        
+        filename_lower = (file.filename or '').lower()
+        content_type = file.content_type or "application/octet-stream"
+        
+        is_text = (
+            any(content_type.startswith(t) for t in text_types) or
+            any(filename_lower.endswith(ext) for ext in text_extensions)
+        )
+
+        if is_text:
+            # Decode as text
             text_content = content.decode('utf-8', errors='ignore')
             file_data = {
                 "filename": file.filename,
-                "content_type": "text/csv",
+                "content_type": content_type,
                 "text_content": text_content,
                 "preview": text_content[:500] + "..." if len(text_content) > 500 else text_content,
             }
-
-        elif file.content_type == 'application/pdf':
+        else:
+            # Store binary files as base64
             base64_content = base64.b64encode(content).decode('utf-8')
             file_data = {
                 "filename": file.filename,
-                "content_type": "application/pdf",
+                "content_type": content_type,
                 "base64_content": base64_content,
                 "size_bytes": len(content),
-            }
-
-        else:
-            # Text files (.txt, .afl)
-            text_content = content.decode('utf-8', errors='ignore')
-            file_data = {
-                "filename": file.filename,
-                "content_type": file.content_type or "text/plain",
-                "text_content": text_content,
-                "preview": text_content[:500] + "..." if len(text_content) > 500 else text_content,
             }
 
         # Store in database
@@ -732,12 +735,6 @@ async def upload_afl_file(
             "size_bytes": len(content),
             "preview": file_data.get("preview", ""),
         }
-
-    except UnicodeDecodeError:
-        raise HTTPException(
-            status_code=400,
-            detail="Unable to decode file. Please ensure it's a valid text file."
-        )
     except Exception as e:
         logger.error(f"File upload error: {e}")
         raise HTTPException(status_code=500, detail=f"Upload failed: {str(e)}")
@@ -818,8 +815,10 @@ def _build_file_context(db, user_id: str, file_ids: List[str]) -> str:
             file_context += text
         elif "preview" in file_data:
             file_context += file_data["preview"]
+        elif "base64_content" in file_data:
+            file_context += f"[Binary file: {file['filename']} ({file.get('content_type', 'unknown')})]"
         else:
-            file_context += f"[PDF file: {file['filename']}]"
+            file_context += f"[File: {file['filename']}]"
 
     return file_context
 
