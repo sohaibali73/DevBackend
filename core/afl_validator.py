@@ -534,4 +534,3 @@ def fix_afl_code(code: str) -> Dict[str, Any]:
 def get_valid_colors() -> List[str]: return sorted(list(VALID_COLORS))
 def get_valid_styles() -> List[str]: return sorted(list(VALID_PLOT_STYLES))
 def get_valid_shapes() -> List[str]: return sorted(list(VALID_SHAPES))
-```
