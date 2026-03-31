@@ -107,12 +107,18 @@ except ImportError:
 
 # AFL validator — single module-level instance (not re-created per call)
 try:
-    from core.afl_validator import AFLValidator, get_valid_colors
+    from core.afl_validator import AFLValidator, get_valid_colors, Severity
     _AFL_VALIDATOR  = AFLValidator()
     _AFL_AVAILABLE  = True
 except ImportError:
     _AFL_VALIDATOR  = None
     _AFL_AVAILABLE  = False
+    # Fallback Severity enum so the code doesn't crash
+    class Severity:
+        ERROR = "ERROR"
+        WARNING = "WARNING"
+        INFO = "INFO"
+        SUGGESTION = "SUGGESTION"
 
 # ── Shared ClaudeAFLEngine singleton (PERF FIX 3) ────────────────────────────
 # Previously, generate_afl_code / debug_afl_code / explain_afl_code each called
@@ -1683,27 +1689,61 @@ def get_stock_data(symbol: str, period: str = "1mo", info_type: str = "price") -
 
 
 def validate_afl(code: str) -> Dict[str, Any]:
-    """Validate AFL code using the module-level singleton validator."""
+    """Validate AFL code using the comprehensive 19-phase validator."""
     if not _AFL_AVAILABLE or _AFL_VALIDATOR is None:
         return {"success": False, "error": "AFL validator not available"}
 
-    result     = _AFL_VALIDATOR.validate(code)
+    validation = _AFL_VALIDATOR.validate(code)
     lines      = code.split("\n")
     code_upper = code.upper()
+
+    # Separate issues by severity for backward-compatible output
+    errors   = [i.message for i in validation.issues if i.severity == Severity.ERROR]
+    warnings = [i.message for i in validation.issues if i.severity == Severity.WARNING]
+    infos    = [i.message for i in validation.issues if i.severity == Severity.INFO]
+    suggs    = [i.message for i in validation.issues if i.severity == Severity.SUGGESTION]
+
     return {
-        "success":     result.is_valid,
-        "valid":       result.is_valid,
-        "errors":      result.errors + result.color_issues + result.function_issues,
-        "warnings":    result.warnings + result.reserved_word_issues + result.style_issues,
-        "line_count":  len(lines),
-        "has_buy_sell": "BUY" in code_upper or "SELL" in code_upper,
-        "has_plot":    "PLOT" in code_upper,
+        "success":          validation.is_valid,
+        "valid":            validation.is_valid,
+        "error_count":      validation.error_count,
+        "warning_count":    validation.warning_count,
+        "info_count":       validation.info_count,
+        "suggestion_count": validation.suggestion_count,
+        "cascade_count":    validation.cascade_count,
+        "errors":           errors,
+        "warnings":         warnings,
+        "suggestions":      suggs,
+        "issues":           [i.to_dict() for i in validation.issues],
+        "line_count":       len(lines),
+        "has_buy_sell":     "BUY" in code_upper or "SELL" in code_upper,
+        "has_plot":         "PLOT" in code_upper,
     }
+
+
+def _extract_afl_code(raw_text: str) -> str:
+    """Extract AFL code from markdown fenced blocks or return raw text."""
+    if "```" in raw_text:
+        parts = raw_text.split("```")
+        if len(parts) >= 3:
+            code = parts[1]
+            if code.startswith("afl\n"):
+                code = code[4:]
+            elif code.startswith("afl"):
+                code = code[3:]
+            return code.strip()
+    return raw_text.strip()
 
 
 def generate_afl_code(description: str, strategy_type: str = "standalone", api_key: str = None) -> Dict[str, Any]:
     """
-    Generate AFL code using a synchronous Anthropic client.
+    Generate AFL code using a synchronous Anthropic client, then validate and auto-fix.
+
+    Flow:
+    1. Generate AFL code from description
+    2. Run comprehensive 19-phase validator on the generated code
+    3. If errors found, send errors + code back to LLM for fixing (up to 2 rounds)
+    4. Return the validated/fixed code with validation report
 
     Called from handle_tool_call() which is synchronous, so we use the sync
     anthropic.Anthropic client directly instead of the async ClaudeAFLEngine.
@@ -1715,12 +1755,23 @@ def generate_afl_code(description: str, strategy_type: str = "standalone", api_k
         client = _anthropic.Anthropic(api_key=api_key)
         system = (
             "You are an expert AmiBroker AFL developer. Generate high-quality, production-ready AFL code. "
-            "Rules: single-arg functions RSI(14)/ATR(14)/ADX(14) have NO array arg; "
-            "double-arg functions MA(Close,20)/EMA(Close,12)/HHV(High,20) REQUIRE array arg. "
-            "Always use Param()/Optimize() for parameters. Add ExRem(Buy,Sell); ExRem(Sell,Buy). "
-            "Wrap in _SECTION_BEGIN/_SECTION_END. Include all sections for standalone strategies. "
-            "Return the AFL code inside a ```afl code block."
+            "CRITICAL RULES — follow exactly:\n"
+            "• Single-arg functions: RSI(14) / ATR(14) / ADX(14) / CCI(14) / MFI(14) / StochK(14) — NO array arg, period ONLY\n"
+            "• Double-arg functions: MA(Close,20) / EMA(Close,12) / HHV(High,20) / LLV(Low,20) / Sum(Volume,20) — REQUIRE array arg\n"
+            "• IIf(cond, trueVal, falseVal) — 3 args, all arrays. IIf CANNOT return strings.\n"
+            "• WriteIf(cond, \"text\", \"text\") — for string output in Title\n"
+            "• ExRem(Buy, Sell) and ExRem(Sell, Buy) — must use both to prevent duplicate signals\n"
+            "• if() conditions CANNOT contain arrays like Close, Open, MA(). Use IIf() for arrays.\n"
+            "• Plot() requires 3+ args: Plot(array, name, color, style)\n"
+            "• Always use Param(\"name\", default, min, max, step) for configurable parameters\n"
+            "• Always use SetPositionSize() or PositionSize for position sizing\n"
+            "• Wrap in _SECTION_BEGIN/_SECTION_END. Include all sections for standalone strategies.\n"
+            "• Use correct colors: colorGreen not color_green, styleLine not style_line\n"
+            "• Never use MA(20) — must be MA(Close, 20) or MA(Ref(Close,-1), 20)\n"
+            "• Return ONLY the AFL code inside a ```afl code block. No explanations outside the block."
         )
+
+        # ── Round 1: Generate ─────────────────────────────────────────────────
         response = client.messages.create(
             model="claude-opus-4-6",
             max_tokens=15000,
@@ -1728,22 +1779,70 @@ def generate_afl_code(description: str, strategy_type: str = "standalone", api_k
             messages=[{"role": "user", "content": f"Generate {strategy_type} AFL code for: {description}"}],
         )
         raw_text = response.content[0].text if response.content else ""
-        # Extract code from fenced block if present
-        afl_code = raw_text
-        if "```" in raw_text:
-            parts = raw_text.split("```")
-            if len(parts) >= 3:
-                afl_code = parts[1]
-                if afl_code.startswith("afl\n"):
-                    afl_code = afl_code[4:]
-                afl_code = afl_code.strip()
+        afl_code = _extract_afl_code(raw_text)
+
+        # ── Round 2: Validate ─────────────────────────────────────────────────
+        validation_result = None
+        validation_report = ""
+        if _AFL_AVAILABLE and _AFL_VALIDATOR:
+            validation_result = _AFL_VALIDATOR.validate(afl_code)
+            error_count = validation_result.error_count
+
+            # Build a concise error report for the fix prompt
+            error_lines = []
+            for issue in validation_result.issues:
+                if issue.severity == Severity.ERROR:
+                    error_lines.append(f"  L{issue.line}: [{issue.category}] {issue.message}")
+                    if issue.suggestion:
+                        error_lines.append(f"    → Fix: {issue.suggestion}")
+
+            if error_count > 0 and error_count <= 15:
+                # ── Round 3: Auto-fix via LLM ────────────────────────────────
+                error_report = "\n".join(error_lines[:15])
+                fix_prompt = (
+                    f"The AFL code below has {error_count} error(s) detected by the validator.\n\n"
+                    f"ERRORS:\n{error_report}\n\n"
+                    f"CURRENT CODE:\n```afl\n{afl_code}\n```\n\n"
+                    f"Fix ALL errors and return the corrected code in a ```afl block. "
+                    f"Do not add explanations — just the fixed code."
+                )
+                fix_response = client.messages.create(
+                    model="claude-opus-4-6",
+                    max_tokens=15000,
+                    system=system,
+                    messages=[{"role": "user", "content": fix_prompt}],
+                )
+                fix_raw = fix_response.content[0].text if fix_response.content else ""
+                fixed_code = _extract_afl_code(fix_raw)
+                if fixed_code and len(fixed_code) > 20:
+                    afl_code = fixed_code
+                    # Re-validate
+                    validation_result = _AFL_VALIDATOR.validate(afl_code)
+
+            # Build final report
+            if validation_result:
+                if validation_result.is_valid:
+                    validation_report = f"✅ Validation passed (0 errors, {validation_result.warning_count} warnings)"
+                else:
+                    remaining = []
+                    for issue in validation_result.issues:
+                        if issue.severity == Severity.ERROR:
+                            remaining.append(f"  L{issue.line}: [{issue.category}] {issue.message}")
+                    validation_report = (
+                        f"⚠️ {validation_result.error_count} error(s) remain after fix attempt:\n"
+                        + "\n".join(remaining[:10])
+                    )
+
         return {
-            "success":       True,
-            "description":   description,
-            "strategy_type": strategy_type,
-            "afl_code":      afl_code,
-            "explanation":   "",
-            "stats":         {},
+            "success":           True,
+            "description":       description,
+            "strategy_type":     strategy_type,
+            "afl_code":          afl_code,
+            "validation_valid":  validation_result.is_valid if validation_result else None,
+            "validation_errors":  validation_result.error_count if validation_result else 0,
+            "validation_warnings": validation_result.warning_count if validation_result else 0,
+            "validation_report": validation_report,
+            "issues":            [i.to_dict() for i in validation_result.issues] if validation_result else [],
         }
     except Exception as e:
         return {"success": False, "error": str(e)}
@@ -1808,30 +1907,48 @@ def explain_afl_code(code: str, api_key: str = None) -> Dict[str, Any]:
 
 
 def sanity_check_afl(code: str, auto_fix: bool = True) -> Dict[str, Any]:
-    """Comprehensive AFL sanity check using the module-level singleton validator."""
+    """Comprehensive 19-phase AFL sanity check with validation report."""
     if not _AFL_AVAILABLE or _AFL_VALIDATOR is None:
         return {"success": False, "error": "AFL validator not available"}
 
-    original = _AFL_VALIDATOR.validate(code)
-    result = {
-        "success":            original.is_valid,
-        "original_valid":     original.is_valid,
-        "total_issues_found": len(original.errors) + len(original.color_issues) + len(original.function_issues),
-    }
-    if auto_fix and not original.is_valid:
-        fixed_code, fixes = _AFL_VALIDATOR.fix_code(code)
-        fixed_v = _AFL_VALIDATOR.validate(fixed_code)
-        result.update({
-            "auto_fixed":   True,
-            "fixes_applied": fixes,
-            "fixed_code":   fixed_code,
-            "fixed_valid":  fixed_v.is_valid,
-            "success":      fixed_v.is_valid,
-        })
+    validation = _AFL_VALIDATOR.validate(code)
+
+    # Build a structured report
+    errors   = [i for i in validation.issues if i.severity == Severity.ERROR]
+    warnings = [i for i in validation.issues if i.severity == Severity.WARNING]
+    suggs    = [i for i in validation.issues if i.severity == Severity.SUGGESTION]
+    cascades = [i for i in validation.issues if i.cascading]
+
+    report_lines = []
+    if validation.is_valid:
+        report_lines.append(f"✅ AFL code passed all {len(validation.issues)} checks (0 errors)")
     else:
-        result["auto_fixed"]  = False
-        result["fixed_code"]  = code
-    return result
+        report_lines.append(f"❌ Found {validation.error_count} error(s), {validation.warning_count} warning(s)")
+    for issue in validation.issues[:20]:
+        prefix = "  " + ("❌" if issue.severity == Severity.ERROR else "⚠️" if issue.severity == Severity.WARNING else "💡")
+        report_lines.append(f"{prefix} L{issue.line}: [{issue.category}] {issue.message}")
+        if issue.suggestion:
+            report_lines.append(f"     → {issue.suggestion}")
+        if issue.cascading:
+            report_lines.append(f"     ⚡ Cascading from line {issue.cascading_parent}")
+    if len(validation.issues) > 20:
+        report_lines.append(f"  ... and {len(validation.issues) - 20} more issues")
+
+    report = "\n".join(report_lines)
+
+    return {
+        "success":          validation.is_valid,
+        "is_valid":         validation.is_valid,
+        "error_count":      validation.error_count,
+        "warning_count":    validation.warning_count,
+        "info_count":       validation.info_count,
+        "suggestion_count": validation.suggestion_count,
+        "cascade_count":    validation.cascade_count,
+        "total_issues":     len(validation.issues),
+        "issues":           [i.to_dict() for i in validation.issues],
+        "report":           report,
+        "line_count":       len(code.split("\n")),
+    }
 
 
 def get_stock_chart(symbol: str, period: str = "3mo", interval: str = "1d", chart_type: str = "candlestick") -> Dict[str, Any]:

@@ -12,7 +12,7 @@ from fastapi import APIRouter, HTTPException, Depends, Request
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 import anthropic
-from anthropic import APIError, RateLimitError
+from anthropic import APIError, RateLimitError, APIStatusError
 
 from api.dependencies import get_current_user_id, get_user_api_keys
 from core.claude_engine import ClaudeAFLEngine
@@ -235,12 +235,13 @@ def ensure_tool_results_first(content: list) -> list:
 
 async def retry_with_exponential_backoff(
     func,
-    max_retries: int = 3,
-    initial_delay: float = 1.0,
-    max_delay: float = 60.0,
+    max_retries: int = 5,
+    initial_delay: float = 2.0,
+    max_delay: float = 120.0,
 ):
     """
-    Retry a function with exponential backoff for rate limit errors.
+    Retry a function with exponential backoff for rate limit and overloaded errors.
+    Retries: RateLimitError (429), overloaded_error (529), and connection errors.
     """
     delay = initial_delay
     last_error = None
@@ -252,12 +253,22 @@ async def retry_with_exponential_backoff(
             last_error = e
             if attempt == max_retries - 1:
                 raise
-
-            # Wait with exponential backoff
+            print(f"[retry] Rate limit hit, attempt {attempt + 1}/{max_retries}, waiting {delay:.1f}s")
             await asyncio.sleep(delay)
             delay = min(delay * 2, max_delay)
+        except APIStatusError as e:
+            # Retry on overloaded (529) and server errors (500-503)
+            if e.status_code in (529, 500, 502, 503):
+                last_error = e
+                if attempt == max_retries - 1:
+                    raise
+                print(f"[retry] Server error {e.status_code}, attempt {attempt + 1}/{max_retries}, waiting {delay:.1f}s")
+                await asyncio.sleep(delay)
+                delay = min(delay * 2, max_delay)
+            else:
+                raise
         except APIError as e:
-            # Don't retry on other API errors
+            # Don't retry on other API errors (4xx client errors)
             raise
 
     raise last_error
@@ -1030,6 +1041,14 @@ async def chat_agent(
 
         except RateLimitError as e:
             error_msg = f"Rate limit exceeded: {str(e)}\n\nPlease wait a moment and try again."
+            yield encoder.encode_text(f"\n\n{error_msg}")
+            yield encoder.encode_error(error_msg)
+            yield encoder.encode_finish_message("error")
+        except APIStatusError as e:
+            if e.status_code == 529:
+                error_msg = "Anthropic API is currently overloaded. Please try again in a few moments."
+            else:
+                error_msg = f"API error (status {e.status_code}): {str(e)}"
             yield encoder.encode_text(f"\n\n{error_msg}")
             yield encoder.encode_error(error_msg)
             yield encoder.encode_finish_message("error")
