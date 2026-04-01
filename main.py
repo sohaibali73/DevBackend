@@ -241,6 +241,16 @@ except Exception as e:
     logger.debug(traceback.format_exc())
 
 try:
+    from api.routes import skills_execute
+    app.include_router(skills_execute.router)
+    routers_loaded.append("skills_execute")
+    logger.info("✓ Loaded skills_execute router (Direct skill execution endpoint)")
+except Exception as e:
+    routers_failed.append(("skills_execute", str(e)))
+    logger.error(f"✗ Failed to load skills_execute router: {e}")
+    logger.debug(traceback.format_exc())
+
+try:
     from api.routes import yfinance
     app.include_router(yfinance.router)
     routers_loaded.append("yfinance")
