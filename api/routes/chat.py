@@ -10,7 +10,7 @@ from datetime import datetime
 
 from fastapi import APIRouter, HTTPException, Depends, Request
 from fastapi.responses import StreamingResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, ValidationError
 import anthropic
 from anthropic import APIError, RateLimitError, APIStatusError
 
@@ -389,6 +389,61 @@ class ChatAgentRequest(BaseModel):
     pin_model_version: bool = False  # NEW: option to use pinned snapshots
     use_kb: bool = False  # Set to true to include KB context in chat
 
+    class Config:
+        # Allow extra fields from frontend that we don't need (id, trigger, messages, etc.)
+        extra = "ignore"
+
+
+def _extract_content_from_request(request_body: dict) -> dict:
+    """
+    Compatibility layer: extract 'content' string from various frontend request formats.
+
+    Frontend may send:
+      - content: "hello"                       (standard)
+      - messages: [{"role":"user","content":"hello"}]  (array format)
+      - messages: [{"role":"user","parts":[{"type":"text","text":"hello"}]}]  (AI-SDK format)
+
+    Also maps camelCase → snake_case:
+      - conversationId → conversation_id
+    """
+    # Already has content — pass through
+    if "content" in request_body and request_body["content"]:
+        # Map camelCase aliases
+        if "conversationId" in request_body and "conversation_id" not in request_body:
+            request_body["conversation_id"] = request_body.pop("conversationId")
+        return request_body
+
+    # Try to extract from messages array
+    messages = request_body.get("messages")
+    if messages and isinstance(messages, list):
+        # Find the last user message
+        for msg in reversed(messages):
+            if not isinstance(msg, dict) or msg.get("role") != "user":
+                continue
+
+            content = msg.get("content")
+            if isinstance(content, str) and content.strip():
+                request_body["content"] = content.strip()
+                break
+
+            # AI-SDK parts format: [{"type":"text","text":"hello"}]
+            parts = msg.get("parts")
+            if isinstance(parts, list):
+                text_parts = []
+                for p in parts:
+                    if isinstance(p, dict) and p.get("type") == "text":
+                        text_parts.append(p.get("text", ""))
+                combined = " ".join(text_parts).strip()
+                if combined:
+                    request_body["content"] = combined
+                    break
+
+    # Map camelCase → snake_case
+    if "conversationId" in request_body and "conversation_id" not in request_body:
+        request_body["conversation_id"] = request_body.pop("conversationId")
+
+    return request_body
+
 
 # ---------------------------------------------------------------------------
 # File context helpers (referenced in main endpoint)
@@ -636,10 +691,9 @@ async def delete_conversation(
 
 @router.post("/agent")
 async def chat_agent(
-    data: ChatAgentRequest,
+    request: Request,
     user_id: str = Depends(get_current_user_id),
     api_keys: dict = Depends(get_user_api_keys),
-    request: Request = None,
 ):
     """
     Chat endpoint with full agent capabilities: tool use, streaming, artifacts.
@@ -649,6 +703,20 @@ async def chat_agent(
     - GPT/OpenAI models → new generic path via OpenAI provider
     - OpenRouter models → new generic path via OpenRouter provider
     """
+    # ── Compatibility layer: accept multiple frontend request formats ─────
+    # Frontend may send: messages array, camelCase fields, AI-SDK parts, etc.
+    try:
+        raw_body = await request.json()
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid JSON body")
+
+    body = _extract_content_from_request(dict(raw_body))
+
+    try:
+        data = ChatAgentRequest(**body)
+    except ValidationError as e:
+        raise HTTPException(status_code=422, detail=e.errors())
+
     # ── Provider routing: check if this is a non-Claude model ─────────────
     requested_model = (data.model or "").strip()
     is_claude_model = (
