@@ -72,8 +72,14 @@ RECOMMENDED_MODEL_SNAPSHOTS = {
 
 def get_model_config(model: str) -> Dict:
     """Get configuration for a specific model with safe defaults."""
-    # Strip snapshot suffix if present
-    base_model = model.rsplit("-", 1)[0] if model.count("-") > 3 else model
+    # Strip snapshot date suffixes (e.g., -20250514) from model names
+    base_model = re.sub(r'-\d{8}$', '', model)
+    # Fallback: if no date suffix, try to handle other snapshot patterns
+    if base_model == model and '-' in model:
+        # Handle patterns like "claude-sonnet-4-6-20250514"
+        parts = model.split('-')
+        if len(parts) >= 4 and parts[-1].isdigit() and len(parts[-1]) == 8:
+            base_model = '-'.join(parts[:-1])
 
     return MODEL_CAPABILITIES.get(base_model, {
         "max_output_tokens": 50000,  # Safe default
@@ -109,6 +115,16 @@ _DEFAULT_TITLES = {"New Conversation", "AFL Code Chat", "New Chat", "Untitled", 
 # Helpers
 # ---------------------------------------------------------------------------
 
+def _safe_json_parse(data):
+    """Safely parse JSON, returning original data if parsing fails."""
+    if not isinstance(data, str):
+        return data
+    try:
+        return json.loads(data)
+    except (json.JSONDecodeError, ValueError):
+        return data
+
+
 def sanitize_title(title: str) -> str:
     """Strip [FORMATTING:...] and similar system instruction tags from titles."""
     if not title:
@@ -133,24 +149,38 @@ async def _get_or_create_conversation(
     """
     raw_title = sanitize_title(content[:50] + "..." if len(content) > 50 else content)
 
-    if not conversation_id:
-        result = db.table("conversations").insert({
-            "user_id": user_id,
-            "title": raw_title,
-            "conversation_type": "agent",
-        }).execute()
-        return result.data[0]["id"]
+    try:
+        if not conversation_id:
+            result = db.table("conversations").insert({
+                "user_id": user_id,
+                "title": raw_title,
+                "conversation_type": "agent",
+            }).execute()
 
-    # Existing conversation — update title if still a placeholder
-    check = db.table("conversations").select("title").eq("id", conversation_id).execute()
-    if check.data:
-        current = check.data[0].get("title", "")
-        if current in _DEFAULT_TITLES or not current:
-            db.table("conversations").update({"title": raw_title}).eq(
-                "id", conversation_id
-            ).execute()
+            if not result.data or len(result.data) == 0:
+                raise HTTPException(status_code=500, detail="Failed to create conversation")
 
-    return conversation_id
+            return result.data[0]["id"]
+
+        # Existing conversation — update title if still a placeholder
+        check = db.table("conversations").select("title").eq("id", conversation_id).execute()
+
+        if check.data and len(check.data) > 0:
+            current = check.data[0].get("title", "")
+            if current in _DEFAULT_TITLES or not current:
+                db.table("conversations").update({"title": raw_title}).eq(
+                    "id", conversation_id
+                ).execute()
+
+        return conversation_id
+
+    except Exception as e:
+        if isinstance(e, HTTPException):
+            raise
+        raise HTTPException(
+            status_code=500,
+            detail=f"Database error in conversation management: {str(e)}"
+        )
 
 
 def sanitize_message_history(messages: list) -> list:
@@ -201,13 +231,19 @@ def sanitize_message_history(messages: list) -> list:
                 ]
 
                 if orphaned:
-                    # CRITICAL FIX: Remove the orphaned assistant message entirely
-                    # This is more robust than injecting dummy results
+                    # Skip orphaned assistant message with tool_use blocks that have no results
+                    # Log this for debugging
+                    print(f"Warning: Removing orphaned assistant message with tool_use IDs: {orphaned}")
                     i += 1
                     continue
 
         sanitized.append(msg)
         i += 1
+
+    # Validate that we maintain proper role alternation
+    for idx in range(len(sanitized) - 1):
+        if sanitized[idx].get("role") == sanitized[idx + 1].get("role"):
+            print(f"Warning: Consecutive {sanitized[idx].get('role')} messages at index {idx}")
 
     return sanitized
 
@@ -1298,23 +1334,24 @@ async def _chat_generic_endpoint(
                     except Exception as tool_error:
                         result = json.dumps({"error": str(tool_error)})
 
+                    parsed_result = _safe_json_parse(result)
                     tools_used.append({
                         "tool": tool_name,
                         "toolCallId": tc["id"],
                         "input": tool_args,
-                        "result": json.loads(result) if isinstance(result, str) else result,
+                        "result": parsed_result,
                     })
 
                     yield encoder.encode_tool_result(tc["id"], result)
 
-                    # Feed result back
+                    # Feed result back in proper API format
                     messages.append({
                         "role": "user",
-                        "content": json.dumps({
-                            "tool_result": tool_name,
-                            "tool_call_id": tc["id"],
-                            "result": result,
-                        }),
+                        "content": [{
+                            "type": "tool_result",
+                            "tool_use_id": tc["id"],
+                            "content": result if isinstance(result, str) else json.dumps(result),
+                        }]
                     })
 
             # Persist assistant message
@@ -1407,7 +1444,7 @@ async def list_available_models(
 
     return {
         "models": models,
-        "default": "claude-sonnet-4-20250514",
+        "default": "claude-sonnet-4-6",  # Matches MODEL_CAPABILITIES keys
         "user_has_keys": {
             "anthropic": bool(api_keys.get("claude")),
             "openai": bool(api_keys.get("openai")),
