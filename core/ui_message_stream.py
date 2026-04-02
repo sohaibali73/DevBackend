@@ -1,14 +1,21 @@
 """
-UI Message Stream Protocol for AI SDK 6.x Generative UI
-========================================================
+UI Message Stream Protocol for AI SDK v7 Beta
+==============================================
 
-This module implements the UIMessageStreamResponse format used by AI SDK 6.x
+This module implements the UIMessageStreamResponse format used by AI SDK v7 Beta
 for generative user interfaces with tool parts.
 
 Key concepts:
 - Messages have a `parts` array with typed content
 - Tool parts use `tool-${toolName}` type naming
 - Tool states: 'input-available' -> 'output-available' or 'output-error'
+- v7 Beta uses JSON objects with "type" field instead of type codes
+
+v7 Beta Protocol Format:
+- Uses JSON objects with "type" field (e.g., {"type":"text-delta","id":"text-1","delta":"Hello"})
+- Supports: start, text-start, text-delta, text-end, tool-input-start, tool-input-delta,
+  tool-input-available, tool-output-available, tool-output-error, start-step, finish-step,
+  finish, error, data-{name}
 
 See: https://ai-sdk.dev/docs/ai-sdk-ui/generative-user-interfaces
 """
@@ -68,7 +75,7 @@ class ToolPart:
 
 @dataclass 
 class UIMessage:
-    """UI Message format for AI SDK 6.x."""
+    """UI Message format for AI SDK v7 Beta."""
     id: str
     role: str  # 'user' | 'assistant' | 'system'
     parts: List[Dict] = field(default_factory=list)
@@ -99,109 +106,157 @@ class UIMessage:
 
 class UIMessageStreamEncoder:
     """
-    Encoder for UI Message Stream Response format.
+    Encoder for UI Message Stream Response format - v7 Beta.
     
-    This produces output compatible with `toUIMessageStreamResponse()` from AI SDK.
+    This produces output compatible with `toUIMessageStreamResponse()` from AI SDK v7 Beta.
     
-    Stream format uses newline-delimited JSON events:
-    - message-start: Start of a new message
+    Stream format uses JSON objects with "type" field:
+    - start: Start of a new message
+    - text-start: Start of text content
     - text-delta: Text content chunk
-    - tool-call-start: Tool call begins
-    - tool-input: Tool input available
-    - tool-output: Tool result available  
-    - tool-error: Tool execution failed
-    - message-end: Message complete
+    - text-end: End of text content
+    - tool-input-start: Tool call begins
+    - tool-input-delta: Tool input streaming
+    - tool-input-available: Tool input available
+    - tool-output-available: Tool result available  
+    - tool-output-error: Tool execution failed
+    - start-step: Start of a new step
+    - finish-step: End of a step
     - finish: Stream complete
+    - error: Error occurred
+    - data-{name}: Custom data parts
     """
     
     @staticmethod
-    def message_start(message_id: str, role: str = "assistant") -> str:
+    def encode_start(message_id: str, role: str = "assistant", message_metadata: Optional[Any] = None) -> str:
         """Signal start of new message."""
-        return json.dumps({
-            "type": "message-start",
-            "messageId": message_id,
-            "role": role
-        }) + "\n"
+        chunk = {"type": "start", "messageId": message_id, "role": role}
+        if message_metadata is not None:
+            chunk["messageMetadata"] = message_metadata
+        return json.dumps(chunk) + "\n"
     
     @staticmethod
-    def text_delta(text: str) -> str:
+    def encode_text_start(text_id: str, provider_metadata: Optional[Dict] = None) -> str:
+        """Signal start of text block."""
+        chunk = {"type": "text-start", "id": text_id}
+        if provider_metadata:
+            chunk["providerMetadata"] = provider_metadata
+        return json.dumps(chunk) + "\n"
+    
+    @staticmethod
+    def encode_text_delta(text_id: str, delta: str, provider_metadata: Optional[Dict] = None) -> str:
         """Stream text content delta."""
-        return json.dumps({
-            "type": "text-delta",
-            "text": text
-        }) + "\n"
+        if not delta:
+            return ""
+        chunk = {"type": "text-delta", "id": text_id, "delta": delta}
+        if provider_metadata:
+            chunk["providerMetadata"] = provider_metadata
+        return json.dumps(chunk) + "\n"
     
     @staticmethod
-    def tool_call_start(tool_name: str, tool_call_id: str) -> str:
-        """Signal tool call starting (input-available state)."""
-        return json.dumps({
-            "type": "tool-call-start",
-            "toolName": tool_name,
-            "toolCallId": tool_call_id,
-            "partType": f"tool-{tool_name}",
-            "state": ToolState.INPUT_AVAILABLE.value
-        }) + "\n"
+    def encode_text_end(text_id: str, provider_metadata: Optional[Dict] = None) -> str:
+        """Signal end of text block."""
+        chunk = {"type": "text-end", "id": text_id}
+        if provider_metadata:
+            chunk["providerMetadata"] = provider_metadata
+        return json.dumps(chunk) + "\n"
     
     @staticmethod
-    def tool_input(tool_name: str, tool_call_id: str, input_args: Dict) -> str:
-        """Tool input arguments available."""
-        return json.dumps({
-            "type": "tool-input",
-            "toolName": tool_name,
-            "toolCallId": tool_call_id,
-            "partType": f"tool-{tool_name}",
-            "state": ToolState.INPUT_AVAILABLE.value,
-            "input": input_args
-        }) + "\n"
+    def encode_tool_input_start(tool_name: str, tool_call_id: str, provider_executed: bool = False, dynamic: bool = False, title: Optional[str] = None, provider_metadata: Optional[Dict] = None) -> str:
+        """Signal tool call starting (input-streaming state)."""
+        chunk = {"type": "tool-input-start", "toolName": tool_name, "toolCallId": tool_call_id}
+        if provider_executed:
+            chunk["providerExecuted"] = provider_executed
+        if dynamic:
+            chunk["dynamic"] = dynamic
+        if title:
+            chunk["title"] = title
+        if provider_metadata:
+            chunk["providerMetadata"] = provider_metadata
+        return json.dumps(chunk) + "\n"
     
     @staticmethod
-    def tool_output(tool_name: str, tool_call_id: str, output: Any) -> str:
+    def encode_tool_input_delta(tool_call_id: str, input_text_delta: str) -> str:
+        """Stream tool call argument delta."""
+        if not input_text_delta:
+            return ""
+        return json.dumps({"type": "tool-input-delta", "toolCallId": tool_call_id, "inputTextDelta": input_text_delta}) + "\n"
+    
+    @staticmethod
+    def encode_tool_input_available(tool_name: str, tool_call_id: str, input: Any, provider_executed: bool = False, dynamic: bool = False, title: Optional[str] = None, provider_metadata: Optional[Dict] = None) -> str:
+        """Tool input arguments available (input-available state)."""
+        chunk = {"type": "tool-input-available", "toolName": tool_name, "toolCallId": tool_call_id, "input": input}
+        if provider_executed:
+            chunk["providerExecuted"] = provider_executed
+        if dynamic:
+            chunk["dynamic"] = dynamic
+        if title:
+            chunk["title"] = title
+        if provider_metadata:
+            chunk["providerMetadata"] = provider_metadata
+        return json.dumps(chunk) + "\n"
+    
+    @staticmethod
+    def encode_tool_output_available(tool_name: str, tool_call_id: str, output: Any, provider_executed: bool = False, dynamic: bool = False, preliminary: bool = False, provider_metadata: Optional[Dict] = None) -> str:
         """Tool execution result (output-available state)."""
-        return json.dumps({
-            "type": "tool-output",
-            "toolName": tool_name,
-            "toolCallId": tool_call_id,
-            "partType": f"tool-{tool_name}",
-            "state": ToolState.OUTPUT_AVAILABLE.value,
-            "output": output
-        }) + "\n"
+        chunk = {"type": "tool-output-available", "toolName": tool_name, "toolCallId": tool_call_id, "output": output}
+        if provider_executed:
+            chunk["providerExecuted"] = provider_executed
+        if dynamic:
+            chunk["dynamic"] = dynamic
+        if preliminary:
+            chunk["preliminary"] = preliminary
+        if provider_metadata:
+            chunk["providerMetadata"] = provider_metadata
+        return json.dumps(chunk) + "\n"
     
     @staticmethod
-    def tool_error(tool_name: str, tool_call_id: str, error: str) -> str:
+    def encode_tool_output_error(tool_name: str, tool_call_id: str, error_text: str, provider_executed: bool = False, dynamic: bool = False, provider_metadata: Optional[Dict] = None) -> str:
         """Tool execution failed (output-error state)."""
-        return json.dumps({
-            "type": "tool-error",
-            "toolName": tool_name,
-            "toolCallId": tool_call_id,
-            "partType": f"tool-{tool_name}",
-            "state": ToolState.OUTPUT_ERROR.value,
-            "errorText": error
-        }) + "\n"
+        chunk = {"type": "tool-output-error", "toolName": tool_name, "toolCallId": tool_call_id, "errorText": error_text}
+        if provider_executed:
+            chunk["providerExecuted"] = provider_executed
+        if dynamic:
+            chunk["dynamic"] = dynamic
+        if provider_metadata:
+            chunk["providerMetadata"] = provider_metadata
+        return json.dumps(chunk) + "\n"
     
     @staticmethod
-    def message_end(message_id: str) -> str:
-        """Signal message complete."""
-        return json.dumps({
-            "type": "message-end",
-            "messageId": message_id
-        }) + "\n"
+    def encode_start_step() -> str:
+        """Signal start of a new step."""
+        return json.dumps({"type": "start-step"}) + "\n"
     
     @staticmethod
-    def finish(finish_reason: str = "stop", usage: Optional[Dict] = None) -> str:
+    def encode_finish_step() -> str:
+        """Signal step complete."""
+        return json.dumps({"type": "finish-step"}) + "\n"
+    
+    @staticmethod
+    def encode_finish(finish_reason: str = "stop", message_metadata: Optional[Any] = None) -> str:
         """Signal stream complete."""
-        return json.dumps({
-            "type": "finish",
-            "finishReason": finish_reason,
-            "usage": usage or {"promptTokens": 0, "completionTokens": 0}
-        }) + "\n"
+        chunk = {"type": "finish", "finishReason": finish_reason}
+        if message_metadata is not None:
+            chunk["messageMetadata"] = message_metadata
+        return json.dumps(chunk) + "\n"
     
     @staticmethod
-    def error(message: str) -> str:
+    def encode_error(message: str) -> str:
         """Stream error event."""
-        return json.dumps({
-            "type": "error",
-            "error": message
-        }) + "\n"
+        return json.dumps({"type": "error", "errorText": message}) + "\n"
+    
+    @staticmethod
+    def encode_message_metadata(message_metadata: Any) -> str:
+        """Encode message metadata update."""
+        return json.dumps({"type": "message-metadata", "messageMetadata": message_metadata}) + "\n"
+    
+    @staticmethod
+    def encode_abort(reason: Optional[str] = None) -> str:
+        """Encode abort signal."""
+        chunk = {"type": "abort"}
+        if reason:
+            chunk["reason"] = reason
+        return json.dumps(chunk) + "\n"
 
 
 class GenerativeUITools:

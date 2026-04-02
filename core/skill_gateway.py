@@ -257,7 +257,7 @@ class SkillGateway:
             }
 
     # ------------------------------------------------------------------
-    # Public API – Vercel AI SDK Data Stream Protocol streaming
+    # Public API – Vercel AI SDK v7 Beta UI Message Stream Protocol streaming
     # ------------------------------------------------------------------
     def stream_ai_sdk(
         self,
@@ -270,15 +270,18 @@ class SkillGateway:
         extra_context: str = "",
     ) -> Generator[str, None, None]:
         """
-        Stream response in Vercel AI SDK Data Stream Protocol format.
+        Stream response in Vercel AI SDK v7 Beta UI Message Stream Protocol format.
 
-        Yields pre-formatted strings ready to be sent as an SSE-style stream::
+        Yields pre-formatted JSON objects ready to be sent as an SSE-style stream::
 
-            0:"chunk of text"\\n
+            {"type":"start","messageId":"msg_…"}\\n
+            {"type":"text-start","id":"text_…"}\\n
+            {"type":"text-delta","id":"text_…","delta":"chunk of text"}\\n
             …
-            d:{"finishReason":"stop","usage":{…}}\\n
+            {"type":"text-end","id":"text_…"}\\n
+            {"type":"finish","finishReason":"stop"}\\n
 
-        This is compatible with ``useChat()`` / ``useCompletion()`` on the
+        This is compatible with ``useChat()`` from @ai-sdk/react v7 Beta on the
         Next.js frontend.
         """
         skill = self._resolve_skill(skill_slug)
@@ -288,10 +291,16 @@ class SkillGateway:
 
         start = time.time()
         full_text = ""
+        message_id = f"msg_{int(time.time() * 1000)}"
+        text_id = f"text_{int(time.time() * 1000)}"
+        text_started = False
 
         try:
             # Include files-api beta so we can retrieve generated files after streaming
             active_betas = list(SKILLS_BETAS) + ["files-api-2025-04-14"]
+
+            # v7 Beta: Emit start chunk
+            yield json.dumps({"type": "start", "messageId": message_id}) + "\n"
 
             with self.client.beta.messages.stream(
                 model=self.model,
@@ -304,11 +313,19 @@ class SkillGateway:
             ) as stream:
                 for text in stream.text_stream:
                     full_text += text
-                    # AI SDK text chunk: 0:"text"\n
-                    yield f"0:{json.dumps(text)}\n"
+                    # v7 Beta: Start text block if not started
+                    if not text_started:
+                        yield json.dumps({"type": "text-start", "id": text_id}) + "\n"
+                        text_started = True
+                    # v7 Beta: Text delta chunk
+                    yield json.dumps({"type": "text-delta", "id": text_id, "delta": text}) + "\n"
 
                 # Get the final message to extract file artifacts
                 final_msg = stream.get_final_message()
+
+            # v7 Beta: Close text block if open
+            if text_started:
+                yield json.dumps({"type": "text-end", "id": text_id}) + "\n"
 
             elapsed = time.time() - start
 
@@ -333,17 +350,19 @@ class SkillGateway:
                                 tool_name=f"skill:{skill.slug}",
                                 file_id=claude_file_id or None,
                             )
-                            # Emit file download event as custom data (type 2)
-                            file_event = [{
-                                "type": "file_download",
-                                "file_id": entry.file_id,
-                                "filename": entry.filename,
-                                "download_url": f"/files/{entry.file_id}/download",
-                                "file_type": entry.file_type,
-                                "size_kb": entry.size_kb,
-                                "tool_name": f"skill:{skill.slug}",
-                            }]
-                            yield f"2:{json.dumps(file_event)}\n"
+                            # v7 Beta: Emit file download event as data-{name}
+                            yield json.dumps({
+                                "type": "data-file_download",
+                                "data": {
+                                    "type": "file_download",
+                                    "file_id": entry.file_id,
+                                    "filename": entry.filename,
+                                    "download_url": f"/files/{entry.file_id}/download",
+                                    "file_type": entry.file_type,
+                                    "size_kb": entry.size_kb,
+                                    "tool_name": f"skill:{skill.slug}",
+                                }
+                            }) + "\n"
                             logger.info(
                                 "Skill %s stream produced file: %s (%.1f KB)",
                                 skill_slug, fname, entry.size_kb
@@ -351,7 +370,7 @@ class SkillGateway:
                 except Exception as dl_err:
                     logger.warning("Failed to download streamed skill files: %s", dl_err)
 
-            # AI SDK finish message
+            # v7 Beta: Emit finish message
             usage = {"promptTokens": 0, "completionTokens": 0}
             if final_msg and hasattr(final_msg, "usage"):
                 usage = {
@@ -366,12 +385,12 @@ class SkillGateway:
                 "skillName": skill.name,
                 "executionTime": round(elapsed, 2),
             }
-            yield f"d:{json.dumps(finish_data)}\n"
+            yield json.dumps({"type": "finish", **finish_data}) + "\n"
 
         except Exception as exc:
             logger.error("Skill %s AI SDK stream error: %s", skill_slug, exc, exc_info=True)
-            error_data = json.dumps(str(exc))
-            yield f"3:{error_data}\n"
+            # v7 Beta: Emit error chunk
+            yield json.dumps({"type": "error", "errorText": str(exc)}) + "\n"
 
     # ------------------------------------------------------------------
     # Multi-skill execution

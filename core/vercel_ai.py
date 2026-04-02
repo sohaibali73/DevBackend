@@ -1,18 +1,23 @@
 """
-Vercel AI SDK Integration Module
-================================
-Native integration with Vercel AI Gateway and AI SDK Data Stream Protocol.
+Vercel AI SDK Integration Module - v7 Beta
+==========================================
+Native integration with Vercel AI Gateway and AI SDK v7 Beta UI Message Stream Protocol.
 
 This module provides:
 1. Vercel AI Gateway client (proxied Anthropic API)
-2. AI SDK Data Stream Protocol encoder
+2. AI SDK v7 Beta UI Message Stream Protocol encoder
 3. Generative UI component streaming
 4. Tool calling with proper streaming format
 
+v7 Beta Protocol Format:
+- Uses JSON objects with "type" field (e.g., {"type":"text-delta","id":"text-1","delta":"Hello"})
+- Supports: start, text-start, text-delta, text-end, tool-input-start, tool-input-delta,
+  tool-input-available, tool-output-available, tool-output-error, start-step, finish-step,
+  finish, error, data-{name}
+
 Compatible with:
-- useChat() hook from @ai-sdk/react
-- streamUI() from ai/rsc
-- generateText() from ai
+- useChat() hook from @ai-sdk/react v7 Beta
+- AI SDK v7 Beta UI Message Stream Protocol
 """
 
 import json
@@ -22,30 +27,12 @@ import time
 import httpx
 from typing import Dict, Any, List, Optional, AsyncGenerator, Union, Callable
 from dataclasses import dataclass, field
-from enum import Enum
 import anthropic
 
 logger = logging.getLogger(__name__)
 
 # Default model
 DEFAULT_MODEL = "claude-sonnet-4-20250514"
-
-
-class StreamPartType(Enum):
-    """Vercel AI SDK Data Stream Protocol part types."""
-    TEXT = "0"           # Text delta
-    DATA = "2"           # JSON data array
-    ERROR = "3"          # Error message
-    ASSISTANT_MESSAGE = "4"  # Assistant message
-    ASSISTANT_CONTROL = "5"  # Assistant control data
-    DATA_MESSAGE = "6"   # Data message
-    TOOL_CALL_STREAMING_START = "7"  # Tool call start (streaming)
-    TOOL_CALL_DELTA = "8"  # Tool call argument delta
-    TOOL_CALL = "9"      # Complete tool call
-    TOOL_RESULT = "a"    # Tool result
-    FINISH_MESSAGE = "d"  # Finish with reason
-    FINISH_STEP = "e"    # Finish step
-    START_STEP = "f"     # Start step
 
 
 @dataclass
@@ -60,86 +47,156 @@ class StreamMessage:
 
 class VercelAIStreamProtocol:
     """
-    Encoder for Vercel AI SDK Data Stream Protocol.
+    Encoder for Vercel AI SDK v7 Beta UI Message Stream Protocol.
     
-    Format: {type}:{JSON value}\n
+    Format: {"type":"...", ...}\n
     
-    See: https://sdk.vercel.ai/docs/ai-sdk-ui/stream-protocol
+    See: https://ai-sdk.dev/docs/ai-sdk-ui/stream-protocol
     """
     
     @staticmethod
-    def text(content: str) -> str:
+    def encode_start(message_id: str, message_metadata: Optional[Any] = None) -> str:
+        """Signal start of new message."""
+        chunk = {"type": "start", "messageId": message_id}
+        if message_metadata is not None:
+            chunk["messageMetadata"] = message_metadata
+        return json.dumps(chunk) + "\n"
+    
+    @staticmethod
+    def encode_text_start(text_id: str, provider_metadata: Optional[Dict] = None) -> str:
+        """Signal start of text block."""
+        chunk = {"type": "text-start", "id": text_id}
+        if provider_metadata:
+            chunk["providerMetadata"] = provider_metadata
+        return json.dumps(chunk) + "\n"
+    
+    @staticmethod
+    def encode_text(text_id: str, delta: str, provider_metadata: Optional[Dict] = None) -> str:
         """Encode text delta."""
-        return f"{StreamPartType.TEXT.value}:{json.dumps(content)}\n"
+        if not delta:
+            return ""
+        chunk = {"type": "text-delta", "id": text_id, "delta": delta}
+        if provider_metadata:
+            chunk["providerMetadata"] = provider_metadata
+        return json.dumps(chunk) + "\n"
     
     @staticmethod
-    def data(data: List[Any]) -> str:
-        """Encode data array."""
-        return f"{StreamPartType.DATA.value}:{json.dumps(data)}\n"
+    def encode_text_end(text_id: str, provider_metadata: Optional[Dict] = None) -> str:
+        """Signal end of text block."""
+        chunk = {"type": "text-end", "id": text_id}
+        if provider_metadata:
+            chunk["providerMetadata"] = provider_metadata
+        return json.dumps(chunk) + "\n"
     
     @staticmethod
-    def error(message: str) -> str:
+    def encode_error(message: str) -> str:
         """Encode error message."""
-        return f"{StreamPartType.ERROR.value}:{json.dumps(message)}\n"
+        return json.dumps({"type": "error", "errorText": message}) + "\n"
     
     @staticmethod
-    def tool_call_streaming_start(tool_call_id: str, tool_name: str) -> str:
+    def encode_tool_input_start(tool_call_id: str, tool_name: str, provider_executed: bool = False, dynamic: bool = False, title: Optional[str] = None, provider_metadata: Optional[Dict] = None) -> str:
         """Signal start of streaming tool call."""
-        return f"{StreamPartType.TOOL_CALL_STREAMING_START.value}:{json.dumps({'toolCallId': tool_call_id, 'toolName': tool_name})}\n"
+        chunk = {"type": "tool-input-start", "toolCallId": tool_call_id, "toolName": tool_name}
+        if provider_executed:
+            chunk["providerExecuted"] = provider_executed
+        if dynamic:
+            chunk["dynamic"] = dynamic
+        if title:
+            chunk["title"] = title
+        if provider_metadata:
+            chunk["providerMetadata"] = provider_metadata
+        return json.dumps(chunk) + "\n"
     
     @staticmethod
-    def tool_call_delta(tool_call_id: str, args_text_delta: str) -> str:
+    def encode_tool_input_delta(tool_call_id: str, input_text_delta: str) -> str:
         """Stream tool call argument delta."""
-        return f"{StreamPartType.TOOL_CALL_DELTA.value}:{json.dumps({'toolCallId': tool_call_id, 'argsTextDelta': args_text_delta})}\n"
+        if not input_text_delta:
+            return ""
+        return json.dumps({"type": "tool-input-delta", "toolCallId": tool_call_id, "inputTextDelta": input_text_delta}) + "\n"
     
     @staticmethod
-    def tool_call(tool_call_id: str, tool_name: str, args: Dict[str, Any]) -> str:
-        """Encode complete tool call."""
-        return f"{StreamPartType.TOOL_CALL.value}:{json.dumps({'toolCallId': tool_call_id, 'toolName': tool_name, 'args': args})}\n"
+    def encode_tool_input_available(tool_call_id: str, tool_name: str, input: Any, provider_executed: bool = False, dynamic: bool = False, title: Optional[str] = None, provider_metadata: Optional[Dict] = None) -> str:
+        """Encode complete tool call input."""
+        chunk = {"type": "tool-input-available", "toolCallId": tool_call_id, "toolName": tool_name, "input": input}
+        if provider_executed:
+            chunk["providerExecuted"] = provider_executed
+        if dynamic:
+            chunk["dynamic"] = dynamic
+        if title:
+            chunk["title"] = title
+        if provider_metadata:
+            chunk["providerMetadata"] = provider_metadata
+        return json.dumps(chunk) + "\n"
     
     @staticmethod
-    def tool_result(tool_call_id: str, result: Any) -> str:
+    def encode_tool_output_available(tool_call_id: str, output: Any, provider_executed: bool = False, dynamic: bool = False, preliminary: bool = False, provider_metadata: Optional[Dict] = None) -> str:
         """Encode tool result."""
-        result_str = result if isinstance(result, str) else json.dumps(result)
-        return f"{StreamPartType.TOOL_RESULT.value}:{json.dumps({'toolCallId': tool_call_id, 'result': result_str})}\n"
+        chunk = {"type": "tool-output-available", "toolCallId": tool_call_id, "output": output}
+        if provider_executed:
+            chunk["providerExecuted"] = provider_executed
+        if dynamic:
+            chunk["dynamic"] = dynamic
+        if preliminary:
+            chunk["preliminary"] = preliminary
+        if provider_metadata:
+            chunk["providerMetadata"] = provider_metadata
+        return json.dumps(chunk) + "\n"
     
     @staticmethod
-    def finish_message(
-        finish_reason: str = "stop",
-        usage: Optional[Dict[str, int]] = None,
-        is_continued: bool = False
-    ) -> str:
-        """Encode finish message with reason and usage."""
-        payload = {
-            "finishReason": finish_reason,
-            "usage": usage or {"promptTokens": 0, "completionTokens": 0},
-            "isContinued": is_continued
-        }
-        return f"{StreamPartType.FINISH_MESSAGE.value}:{json.dumps(payload)}\n"
+    def encode_tool_output_error(tool_call_id: str, error_text: str, provider_executed: bool = False, dynamic: bool = False, provider_metadata: Optional[Dict] = None) -> str:
+        """Encode tool execution error."""
+        chunk = {"type": "tool-output-error", "toolCallId": tool_call_id, "errorText": error_text}
+        if provider_executed:
+            chunk["providerExecuted"] = provider_executed
+        if dynamic:
+            chunk["dynamic"] = dynamic
+        if provider_metadata:
+            chunk["providerMetadata"] = provider_metadata
+        return json.dumps(chunk) + "\n"
     
     @staticmethod
-    def finish_step(
-        finish_reason: str = "stop",
-        usage: Optional[Dict[str, int]] = None,
-        is_continued: bool = False
-    ) -> str:
-        """Encode finish step."""
-        payload = {
-            "finishReason": finish_reason,
-            "usage": usage or {"promptTokens": 0, "completionTokens": 0},
-            "isContinued": is_continued
-        }
-        return f"{StreamPartType.FINISH_STEP.value}:{json.dumps(payload)}\n"
+    def encode_data(data_name: str, data: Any, data_id: Optional[str] = None, transient: bool = False) -> str:
+        """Encode custom data (type data-{name})."""
+        chunk = {"type": f"data-{data_name}", "data": data}
+        if data_id:
+            chunk["id"] = data_id
+        if transient:
+            chunk["transient"] = transient
+        return json.dumps(chunk) + "\n"
     
     @staticmethod
-    def start_step(message_id: str) -> str:
+    def encode_start_step() -> str:
         """Signal start of a new step."""
-        return f"{StreamPartType.START_STEP.value}:{json.dumps({'messageId': message_id})}\n"
+        return json.dumps({"type": "start-step"}) + "\n"
     
     @staticmethod
-    def assistant_message(message_id: str) -> str:
-        """Encode assistant message metadata."""
-        return f"{StreamPartType.ASSISTANT_MESSAGE.value}:{json.dumps({'id': message_id})}\n"
+    def encode_finish_step() -> str:
+        """Signal end of a step."""
+        return json.dumps({"type": "finish-step"}) + "\n"
+    
+    @staticmethod
+    def encode_finish_message(
+        stop_reason: str = "stop",
+        message_metadata: Optional[Any] = None
+    ) -> str:
+        """Encode finish message with reason."""
+        chunk = {"type": "finish", "finishReason": stop_reason}
+        if message_metadata is not None:
+            chunk["messageMetadata"] = message_metadata
+        return json.dumps(chunk) + "\n"
+    
+    @staticmethod
+    def encode_message_metadata(message_metadata: Any) -> str:
+        """Encode message metadata update."""
+        return json.dumps({"type": "message-metadata", "messageMetadata": message_metadata}) + "\n"
+    
+    @staticmethod
+    def encode_abort(reason: Optional[str] = None) -> str:
+        """Encode abort signal."""
+        chunk = {"type": "abort"}
+        if reason:
+            chunk["reason"] = reason
+        return json.dumps(chunk) + "\n"
 
 
 class GenerativeUIStream:
@@ -167,13 +224,14 @@ class GenerativeUIStream:
         Returns:
             Encoded component data
         """
-        component_data = [{
-            "type": "component",
-            "componentType": component_type,
-            "componentId": component_id or f"comp_{hash(json.dumps(props)) % 100000}",
-            "props": props
-        }]
-        return VercelAIStreamProtocol.data(component_data)
+        return VercelAIStreamProtocol.encode_data(
+            data_name="component",
+            data={
+                "componentType": component_type,
+                "componentId": component_id or f"comp_{hash(json.dumps(props)) % 100000}",
+                "props": props
+            }
+        )
     
     @staticmethod
     def code_artifact(
@@ -187,15 +245,16 @@ class GenerativeUIStream:
         
         This format is compatible with AI SDK's artifact rendering.
         """
-        artifact_data = [{
-            "type": "artifact",
-            "artifactType": "code",
-            "id": artifact_id or f"code_{hash(code) % 100000}",
-            "language": language,
-            "title": title or f"{language.upper()} Code",
-            "content": code
-        }]
-        return VercelAIStreamProtocol.data(artifact_data)
+        return VercelAIStreamProtocol.encode_data(
+            data_name="artifact",
+            data={
+                "artifactType": "code",
+                "id": artifact_id or f"code_{hash(code) % 100000}",
+                "language": language,
+                "title": title or f"{language.upper()} Code",
+                "content": code
+            }
+        )
     
     @staticmethod
     def react_component(
@@ -306,7 +365,7 @@ class VercelAIGatewayClient:
         tool_handler: Optional[Callable[[str, str, Dict], Any]] = None
     ) -> AsyncGenerator[str, None]:
         """
-        Stream chat completion with AI SDK Data Stream Protocol.
+        Stream chat completion with AI SDK v7 Beta UI Message Stream Protocol.
         
         Args:
             messages: Conversation messages
@@ -316,31 +375,39 @@ class VercelAIGatewayClient:
             tool_handler: Async function to handle tool calls
             
         Yields:
-            AI SDK Data Stream Protocol formatted chunks
+            AI SDK v7 Beta UI Message Stream Protocol formatted chunks
         """
         protocol = VercelAIStreamProtocol()
+        text_id = f"text_{int(time.time() * 1000)}"
+        text_started = False
         
         try:
             # Generate message ID
             message_id = f"msg_{int(time.time() * 1000)}"
             
             # Signal start
-            yield protocol.start_step(message_id)
+            yield protocol.encode_start(message_id)
             
             if self.use_gateway:
                 async for chunk in self._stream_via_gateway(
-                    messages, system, tools, max_tokens, tool_handler, protocol
+                    messages, system, tools, max_tokens, tool_handler, protocol, text_id
                 ):
-                    yield chunk
+                    if chunk:
+                        yield chunk
             else:
                 async for chunk in self._stream_via_anthropic(
-                    messages, system, tools, max_tokens, tool_handler, protocol
+                    messages, system, tools, max_tokens, tool_handler, protocol, text_id
                 ):
-                    yield chunk
+                    if chunk:
+                        yield chunk
+            
+            # Ensure text block is closed
+            if text_started:
+                yield protocol.encode_text_end(text_id)
                     
         except Exception as e:
             logger.error(f"Stream error: {e}", exc_info=True)
-            yield protocol.error(str(e))
+            yield protocol.encode_error(str(e))
     
     async def _stream_via_anthropic(
         self,
@@ -349,12 +416,14 @@ class VercelAIGatewayClient:
         tools: Optional[List[Dict]],
         max_tokens: int,
         tool_handler: Optional[Callable],
-        protocol: VercelAIStreamProtocol
+        protocol: VercelAIStreamProtocol,
+        text_id: str
     ) -> AsyncGenerator[str, None]:
         """Stream using direct Anthropic SDK."""
         
         accumulated_text = ""
         pending_tool_calls = []
+        text_started = False
         
         # Build request
         request_kwargs = {
@@ -377,13 +446,18 @@ class VercelAIGatewayClient:
                     if event.type == "content_block_start":
                         if hasattr(event.content_block, "type"):
                             if event.content_block.type == "tool_use":
+                                # Close text block if open
+                                if text_started:
+                                    yield protocol.encode_text_end(text_id)
+                                    text_started = False
+                                
                                 # Start streaming tool call
                                 current_tool = {
                                     "id": event.content_block.id,
                                     "name": event.content_block.name,
                                     "input": ""
                                 }
-                                yield protocol.tool_call_streaming_start(
+                                yield protocol.encode_tool_input_start(
                                     current_tool["id"],
                                     current_tool["name"]
                                 )
@@ -393,13 +467,16 @@ class VercelAIGatewayClient:
                             if event.delta.type == "text_delta":
                                 text = event.delta.text
                                 accumulated_text += text
-                                yield protocol.text(text)
+                                if not text_started:
+                                    yield protocol.encode_text_start(text_id)
+                                    text_started = True
+                                yield protocol.encode_text(text_id, text)
                                 
                             elif event.delta.type == "input_json_delta":
                                 if current_tool:
                                     delta = event.delta.partial_json
                                     current_tool["input"] += delta
-                                    yield protocol.tool_call_delta(
+                                    yield protocol.encode_tool_input_delta(
                                         current_tool["id"],
                                         delta
                                     )
@@ -412,7 +489,7 @@ class VercelAIGatewayClient:
                             except json.JSONDecodeError:
                                 args = {}
                             
-                            yield protocol.tool_call(
+                            yield protocol.encode_tool_input_available(
                                 current_tool["id"],
                                 current_tool["name"],
                                 args
@@ -437,31 +514,26 @@ class VercelAIGatewayClient:
                                 tool_call["name"],
                                 tool_call["args"]
                             )
-                            yield protocol.tool_result(tool_call["id"], result)
+                            yield protocol.encode_tool_output_available(tool_call["id"], result)
                         except Exception as e:
-                            yield protocol.tool_result(
+                            yield protocol.encode_tool_output_error(
                                 tool_call["id"],
-                                json.dumps({"error": str(e)})
+                                str(e)
                             )
                 
                 # Emit finish
-                usage = {
-                    "promptTokens": final_message.usage.input_tokens,
-                    "completionTokens": final_message.usage.output_tokens
-                }
-                
                 finish_reason = "stop"
                 if final_message.stop_reason == "tool_use":
                     finish_reason = "tool-calls"
                 elif final_message.stop_reason == "max_tokens":
                     finish_reason = "length"
                 
-                yield protocol.finish_step(finish_reason, usage)
-                yield protocol.finish_message(finish_reason, usage)
+                yield protocol.encode_finish_step()
+                yield protocol.encode_finish_message(finish_reason)
                 
         except Exception as e:
             logger.error(f"Anthropic stream error: {e}")
-            yield protocol.error(str(e))
+            yield protocol.encode_error(str(e))
     
     async def _stream_via_gateway(
         self,
@@ -470,7 +542,8 @@ class VercelAIGatewayClient:
         tools: Optional[List[Dict]],
         max_tokens: int,
         tool_handler: Optional[Callable],
-        protocol: VercelAIStreamProtocol
+        protocol: VercelAIStreamProtocol,
+        text_id: str
     ) -> AsyncGenerator[str, None]:
         """Stream using Vercel AI Gateway."""
         
@@ -505,21 +578,23 @@ class VercelAIGatewayClient:
                             event = json.loads(data)
                             # Process gateway event and convert to AI SDK format
                             async for chunk in self._process_gateway_event(
-                                event, protocol, tool_handler
+                                event, protocol, tool_handler, text_id
                             ):
-                                yield chunk
+                                if chunk:
+                                    yield chunk
                         except json.JSONDecodeError:
                             continue
                             
         except httpx.HTTPError as e:
             logger.error(f"Gateway HTTP error: {e}")
-            yield protocol.error(f"Gateway error: {str(e)}")
+            yield protocol.encode_error(f"Gateway error: {str(e)}")
     
     async def _process_gateway_event(
         self,
         event: Dict,
         protocol: VercelAIStreamProtocol,
-        tool_handler: Optional[Callable]
+        tool_handler: Optional[Callable],
+        text_id: str
     ) -> AsyncGenerator[str, None]:
         """Process a gateway SSE event."""
         event_type = event.get("type")
@@ -527,14 +602,10 @@ class VercelAIGatewayClient:
         if event_type == "content_block_delta":
             delta = event.get("delta", {})
             if delta.get("type") == "text_delta":
-                yield protocol.text(delta.get("text", ""))
+                yield protocol.encode_text(text_id, delta.get("text", ""))
         
         elif event_type == "message_stop":
-            usage = event.get("usage", {})
-            yield protocol.finish_message("stop", {
-                "promptTokens": usage.get("input_tokens", 0),
-                "completionTokens": usage.get("output_tokens", 0)
-            })
+            yield protocol.encode_finish_message("stop")
     
     async def generate(
         self,
