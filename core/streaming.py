@@ -22,10 +22,10 @@ logger = logging.getLogger(__name__)
 
 class VercelAIStreamEncoder:
     """
-    Encode responses for Vercel AI SDK v7 Beta UI Message Stream Protocol.
+    Encode responses for Vercel AI SDK v7 UI Message Stream Protocol.
     
-    This is the format expected by useChat() in AI SDK v7 Beta.
-    Format: {"type":"...", ...}\n  (JSON-Lines format)
+    This is the format expected by useChat() in AI SDK v7.
+    Format: Server-Sent Events (SSE) with 'data: ' prefix and '\n\n' suffix.
     
     Chunk types:
     - start: Start of message
@@ -45,12 +45,17 @@ class VercelAIStreamEncoder:
     """
     
     @staticmethod
+    def _encode(chunk: dict) -> str:
+        """Encode a chunk according to SSE protocol v1 requirements."""
+        return f"data: {json.dumps(chunk)}\n\n"
+    
+    @staticmethod
     def encode_start(message_id: str, message_metadata: Optional[Any] = None) -> str:
         """Signal start of new message."""
         chunk = {"type": "start", "messageId": message_id}
         if message_metadata is not None:
             chunk["messageMetadata"] = message_metadata
-        return f"{json.dumps(chunk)}\n"
+        return VercelAIStreamEncoder._encode(chunk)
     
     @staticmethod
     def encode_text_start(text_id: str, provider_metadata: Optional[Dict] = None) -> str:
@@ -58,17 +63,17 @@ class VercelAIStreamEncoder:
         chunk = {"type": "text-start", "id": text_id}
         if provider_metadata:
             chunk["providerMetadata"] = provider_metadata
-        return f"{json.dumps(chunk)}\n"
+        return VercelAIStreamEncoder._encode(chunk)
     
     @staticmethod
     def encode_text_delta(text_id: str, delta: str, provider_metadata: Optional[Dict] = None) -> str:
-        """Encode text delta using AI SDK v7 Beta UI Message Stream Protocol."""
+        """Encode text delta using AI SDK v7 UI Message Stream Protocol."""
         if not delta:
             return ""
         chunk = {"type": "text-delta", "id": text_id, "delta": delta}
         if provider_metadata:
             chunk["providerMetadata"] = provider_metadata
-        return f"{json.dumps(chunk)}\n"
+        return VercelAIStreamEncoder._encode(chunk)
     
     @staticmethod
     def encode_text_end(text_id: str, provider_metadata: Optional[Dict] = None) -> str:
@@ -76,7 +81,7 @@ class VercelAIStreamEncoder:
         chunk = {"type": "text-end", "id": text_id}
         if provider_metadata:
             chunk["providerMetadata"] = provider_metadata
-        return f"{json.dumps(chunk)}\n"
+        return VercelAIStreamEncoder._encode(chunk)
     
     @staticmethod
     def encode_tool_input_start(tool_call_id: str, tool_name: str, provider_executed: bool = False, dynamic: bool = False, title: Optional[str] = None, provider_metadata: Optional[Dict] = None) -> str:
@@ -90,14 +95,14 @@ class VercelAIStreamEncoder:
             chunk["title"] = title
         if provider_metadata:
             chunk["providerMetadata"] = provider_metadata
-        return f"{json.dumps(chunk)}\n"
+        return VercelAIStreamEncoder._encode(chunk)
     
     @staticmethod
     def encode_tool_input_delta(tool_call_id: str, input_text_delta: str) -> str:
         """Stream tool call argument delta."""
         if not input_text_delta:
             return ""
-        return f"{json.dumps({'type': 'tool-input-delta', 'toolCallId': tool_call_id, 'inputTextDelta': input_text_delta})}\n"
+        return VercelAIStreamEncoder._encode({'type': 'tool-input-delta', 'toolCallId': tool_call_id, 'inputTextDelta': input_text_delta})
     
     @staticmethod
     def encode_tool_input_available(tool_call_id: str, tool_name: str, input: Any, provider_executed: bool = False, dynamic: bool = False, title: Optional[str] = None, provider_metadata: Optional[Dict] = None) -> str:
@@ -111,7 +116,7 @@ class VercelAIStreamEncoder:
             chunk["title"] = title
         if provider_metadata:
             chunk["providerMetadata"] = provider_metadata
-        return f"{json.dumps(chunk)}\n"
+        return VercelAIStreamEncoder._encode(chunk)
     
     @staticmethod
     def encode_tool_output_available(tool_call_id: str, output: Any, provider_executed: bool = False, dynamic: bool = False, preliminary: bool = False, provider_metadata: Optional[Dict] = None) -> str:
@@ -125,7 +130,7 @@ class VercelAIStreamEncoder:
             chunk["preliminary"] = preliminary
         if provider_metadata:
             chunk["providerMetadata"] = provider_metadata
-        return f"{json.dumps(chunk)}\n"
+        return VercelAIStreamEncoder._encode(chunk)
     
     @staticmethod
     def encode_tool_output_error(tool_call_id: str, error_text: str, provider_executed: bool = False, dynamic: bool = False, provider_metadata: Optional[Dict] = None) -> str:
@@ -137,7 +142,7 @@ class VercelAIStreamEncoder:
             chunk["dynamic"] = dynamic
         if provider_metadata:
             chunk["providerMetadata"] = provider_metadata
-        return f"{json.dumps(chunk)}\n"
+        return VercelAIStreamEncoder._encode(chunk)
     
     @staticmethod
     def encode_data(data_name: str, data: Any = None, data_id: Optional[str] = None, transient: bool = False) -> str:
@@ -157,22 +162,22 @@ class VercelAIStreamEncoder:
             chunk["id"] = data_id
         if transient:
             chunk["transient"] = transient
-        return f"{json.dumps(chunk)}\n"
+        return VercelAIStreamEncoder._encode(chunk)
     
     @staticmethod
     def encode_error(error_message: str) -> str:
         """Encode error message."""
-        return f"{json.dumps({'type': 'error', 'errorText': error_message})}\n"
+        return VercelAIStreamEncoder._encode({'type': 'error', 'errorText': error_message})
     
     @staticmethod
     def encode_start_step() -> str:
         """Signal start of a new step."""
-        return f"{json.dumps({'type': 'start-step'})}\n"
+        return VercelAIStreamEncoder._encode({'type': 'start-step'})
     
     @staticmethod
     def encode_finish_step() -> str:
         """Signal end of a step."""
-        return f"{json.dumps({'type': 'finish-step'})}\n"
+        return VercelAIStreamEncoder._encode({'type': 'finish-step'})
     
     @staticmethod
     def encode_finish_message(stop_reason: str = "stop", message_metadata: Optional[Any] = None) -> str:
@@ -180,12 +185,12 @@ class VercelAIStreamEncoder:
         chunk = {"type": "finish", "finishReason": stop_reason}
         if message_metadata is not None:
             chunk["messageMetadata"] = message_metadata
-        return f"{json.dumps(chunk)}\n"
+        return VercelAIStreamEncoder._encode(chunk)
     
     @staticmethod
     def encode_message_metadata(message_metadata: Any) -> str:
         """Encode message metadata update."""
-        return f"{json.dumps({'type': 'message-metadata', 'messageMetadata': message_metadata})}\n"
+        return VercelAIStreamEncoder._encode({'type': 'message-metadata', 'messageMetadata': message_metadata})
     
     @staticmethod
     def encode_abort(reason: Optional[str] = None) -> str:
@@ -193,12 +198,12 @@ class VercelAIStreamEncoder:
         chunk = {"type": "abort"}
         if reason:
             chunk["reason"] = reason
-        return f"{json.dumps(chunk)}\n"
+        return VercelAIStreamEncoder._encode(chunk)
     
     @staticmethod
     def encode_done() -> str:
-        """Signal stream termination."""
-        return "[DONE]\n"
+        """Signal stream termination (required by AI SDK v7 protocol)."""
+        return "data: [DONE]\n\n"
 
     # ── Convenience wrapper methods ──────────────────────────────────────
     # These methods provide a simpler API for chat.py while delegating to
@@ -240,7 +245,7 @@ class VercelAIStreamEncoder:
     @staticmethod
     def encode_file_download(file_id: str, filename: str, download_url: str, file_type: str = "unknown", size_kb: float = 0, tool_name: str = "") -> str:
         """Emit a downloadable-file event as custom data (type data-file_download)."""
-        return f"{json.dumps({'type': 'data-file_download', 'data': {'file_id': file_id, 'filename': filename, 'download_url': download_url, 'file_type': file_type, 'size_kb': size_kb, 'tool_name': tool_name}})}\n"
+        return VercelAIStreamEncoder._encode({'type': 'data-file_download', 'data': {'file_id': file_id, 'filename': filename, 'download_url': download_url, 'file_type': file_type, 'size_kb': size_kb, 'tool_name': tool_name}})
 
 
 # ============================================================================
@@ -448,6 +453,7 @@ async def stream_claude_response(
                     finish_reason = "length"
                 yield encoder.encode_finish_step()
                 yield encoder.encode_finish_message(finish_reason)
+                yield encoder.encode_done()
                 break
 
             messages.append({
@@ -570,6 +576,7 @@ async def stream_with_artifacts(
 
         yield encoder.encode_finish_step()
         yield encoder.encode_finish_message("stop")
+        yield encoder.encode_done()
 
     except Exception as e:
         logger.error(f"Streaming with artifacts error: {e}", exc_info=True)

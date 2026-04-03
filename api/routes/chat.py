@@ -1171,6 +1171,7 @@ async def chat_agent(
 
             yield encoder.encode_finish_step()
             yield encoder.encode_finish_message("stop", usage)
+            yield encoder.encode_done()
 
         except RateLimitError as e:
             error_msg = f"Rate limit exceeded: {str(e)}\n\nPlease wait a moment and try again."
@@ -1193,14 +1194,14 @@ async def chat_agent(
 
     return StreamingResponse(
         generate_stream(),
-        media_type="text/plain; charset=utf-8",
+        media_type="text/event-stream",
         headers={
             "Cache-Control": "no-cache",
             "Connection": "keep-alive",
-            "Content-Type": "text/plain; charset=utf-8",
-            "X-Vercel-AI-Data-Stream": "v1",
+            "Content-Type": "text/event-stream",
+            "x-vercel-ai-ui-message-stream": "v1",
             "X-Conversation-Id": conversation_id,
-            "Access-Control-Expose-Headers": "X-Conversation-Id, X-Vercel-AI-Data-Stream",
+            "Access-Control-Expose-Headers": "X-Conversation-Id, x-vercel-ai-ui-message-stream",
             "Access-Control-Allow-Origin": "*",
         },
     )
