@@ -823,6 +823,7 @@ async def chat_agent(
         message_id = f"msg_{int(_time.time() * 1000)}"
         text_id = f"text_{int(_time.time() * 1000)}"
         yield encoder.encode_start(message_id)
+        yield encoder.encode_start_step()
 
         try:
             engine = _get_engine(api_keys["claude"])
@@ -1197,9 +1198,9 @@ async def chat_agent(
             "Cache-Control": "no-cache",
             "Connection": "keep-alive",
             "Content-Type": "text/plain; charset=utf-8",
-            "X-Vercel-AI-Data-Stream": "v1",
+            "x-vercel-ai-ui-message-stream": "v1",
             "X-Conversation-Id": conversation_id,
-            "Access-Control-Expose-Headers": "X-Conversation-Id, X-Vercel-AI-Data-Stream",
+            "Access-Control-Expose-Headers": "X-Conversation-Id, x-vercel-ai-ui-message-stream",
             "Access-Control-Allow-Origin": "*",
         },
     )
@@ -1430,9 +1431,9 @@ async def _chat_generic_endpoint(
             "Cache-Control": "no-cache",
             "Connection": "keep-alive",
             "Content-Type": "text/plain; charset=utf-8",
-            "X-Vercel-AI-Data-Stream": "v1",
+            "x-vercel-ai-ui-message-stream": "v1",
             "X-Conversation-Id": conversation_id,
-            "Access-Control-Expose-Headers": "X-Conversation-Id, X-Vercel-AI-Data-Stream",
+            "Access-Control-Expose-Headers": "X-Conversation-Id, x-vercel-ai-ui-message-stream",
             "Access-Control-Allow-Origin": "*",
         },
     )

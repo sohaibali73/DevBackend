@@ -50,7 +50,7 @@ class VercelAIStreamEncoder:
         chunk = {"type": "start", "messageId": message_id}
         if message_metadata is not None:
             chunk["messageMetadata"] = message_metadata
-        return json.dumps(chunk) + "\n"
+        return f"data: {json.dumps(chunk)}\n\n"
     
     @staticmethod
     def encode_text_start(text_id: str, provider_metadata: Optional[Dict] = None) -> str:
@@ -58,7 +58,7 @@ class VercelAIStreamEncoder:
         chunk = {"type": "text-start", "id": text_id}
         if provider_metadata:
             chunk["providerMetadata"] = provider_metadata
-        return json.dumps(chunk) + "\n"
+        return f"data: {json.dumps(chunk)}\n\n"
     
     @staticmethod
     def encode_text_delta(text_id: str, delta: str, provider_metadata: Optional[Dict] = None) -> str:
@@ -68,7 +68,7 @@ class VercelAIStreamEncoder:
         chunk = {"type": "text-delta", "id": text_id, "delta": delta}
         if provider_metadata:
             chunk["providerMetadata"] = provider_metadata
-        return json.dumps(chunk) + "\n"
+        return f"data: {json.dumps(chunk)}\n\n"
     
     @staticmethod
     def encode_text_end(text_id: str, provider_metadata: Optional[Dict] = None) -> str:
@@ -76,7 +76,7 @@ class VercelAIStreamEncoder:
         chunk = {"type": "text-end", "id": text_id}
         if provider_metadata:
             chunk["providerMetadata"] = provider_metadata
-        return json.dumps(chunk) + "\n"
+        return f"data: {json.dumps(chunk)}\n\n"
     
     @staticmethod
     def encode_tool_input_start(tool_call_id: str, tool_name: str, provider_executed: bool = False, dynamic: bool = False, title: Optional[str] = None, provider_metadata: Optional[Dict] = None) -> str:
@@ -90,14 +90,14 @@ class VercelAIStreamEncoder:
             chunk["title"] = title
         if provider_metadata:
             chunk["providerMetadata"] = provider_metadata
-        return json.dumps(chunk) + "\n"
+        return f"data: {json.dumps(chunk)}\n\n"
     
     @staticmethod
     def encode_tool_input_delta(tool_call_id: str, input_text_delta: str) -> str:
         """Stream tool call argument delta."""
         if not input_text_delta:
             return ""
-        return json.dumps({"type": "tool-input-delta", "toolCallId": tool_call_id, "inputTextDelta": input_text_delta}) + "\n"
+        return f"data: {json.dumps({'type': 'tool-input-delta', 'toolCallId': tool_call_id, 'inputTextDelta': input_text_delta})}\n\n"
     
     @staticmethod
     def encode_tool_input_available(tool_call_id: str, tool_name: str, input: Any, provider_executed: bool = False, dynamic: bool = False, title: Optional[str] = None, provider_metadata: Optional[Dict] = None) -> str:
@@ -111,7 +111,7 @@ class VercelAIStreamEncoder:
             chunk["title"] = title
         if provider_metadata:
             chunk["providerMetadata"] = provider_metadata
-        return json.dumps(chunk) + "\n"
+        return f"data: {json.dumps(chunk)}\n\n"
     
     @staticmethod
     def encode_tool_output_available(tool_call_id: str, output: Any, provider_executed: bool = False, dynamic: bool = False, preliminary: bool = False, provider_metadata: Optional[Dict] = None) -> str:
@@ -125,7 +125,7 @@ class VercelAIStreamEncoder:
             chunk["preliminary"] = preliminary
         if provider_metadata:
             chunk["providerMetadata"] = provider_metadata
-        return json.dumps(chunk) + "\n"
+        return f"data: {json.dumps(chunk)}\n\n"
     
     @staticmethod
     def encode_tool_output_error(tool_call_id: str, error_text: str, provider_executed: bool = False, dynamic: bool = False, provider_metadata: Optional[Dict] = None) -> str:
@@ -137,7 +137,7 @@ class VercelAIStreamEncoder:
             chunk["dynamic"] = dynamic
         if provider_metadata:
             chunk["providerMetadata"] = provider_metadata
-        return json.dumps(chunk) + "\n"
+        return f"data: {json.dumps(chunk)}\n\n"
     
     @staticmethod
     def encode_data(data_name: str, data: Any = None, data_id: Optional[str] = None, transient: bool = False) -> str:
@@ -157,22 +157,22 @@ class VercelAIStreamEncoder:
             chunk["id"] = data_id
         if transient:
             chunk["transient"] = transient
-        return json.dumps(chunk) + "\n"
+        return f"data: {json.dumps(chunk)}\n\n"
     
     @staticmethod
     def encode_error(error_message: str) -> str:
         """Encode error message."""
-        return json.dumps({"type": "error", "errorText": error_message}) + "\n"
+        return f"data: {json.dumps({'type': 'error', 'errorText': error_message})}\n\n"
     
     @staticmethod
     def encode_start_step() -> str:
         """Signal start of a new step."""
-        return json.dumps({"type": "start-step"}) + "\n"
+        return f"data: {json.dumps({'type': 'start-step'})}\n\n"
     
     @staticmethod
     def encode_finish_step() -> str:
         """Signal end of a step."""
-        return json.dumps({"type": "finish-step"}) + "\n"
+        return f"data: {json.dumps({'type': 'finish-step'})}\n\n"
     
     @staticmethod
     def encode_finish_message(stop_reason: str = "stop", message_metadata: Optional[Any] = None) -> str:
@@ -180,12 +180,12 @@ class VercelAIStreamEncoder:
         chunk = {"type": "finish", "finishReason": stop_reason}
         if message_metadata is not None:
             chunk["messageMetadata"] = message_metadata
-        return json.dumps(chunk) + "\n"
+        return f"data: {json.dumps(chunk)}\n\n"
     
     @staticmethod
     def encode_message_metadata(message_metadata: Any) -> str:
         """Encode message metadata update."""
-        return json.dumps({"type": "message-metadata", "messageMetadata": message_metadata}) + "\n"
+        return f"data: {json.dumps({'type': 'message-metadata', 'messageMetadata': message_metadata})}\n\n"
     
     @staticmethod
     def encode_abort(reason: Optional[str] = None) -> str:
@@ -193,7 +193,12 @@ class VercelAIStreamEncoder:
         chunk = {"type": "abort"}
         if reason:
             chunk["reason"] = reason
-        return json.dumps(chunk) + "\n"
+        return f"data: {json.dumps(chunk)}\n\n"
+    
+    @staticmethod
+    def encode_done() -> str:
+        """Signal stream termination."""
+        return "data: [DONE]\n\n"
 
     # ── Convenience wrapper methods ──────────────────────────────────────
     # These methods provide a simpler API for chat.py while delegating to
@@ -235,17 +240,7 @@ class VercelAIStreamEncoder:
     @staticmethod
     def encode_file_download(file_id: str, filename: str, download_url: str, file_type: str = "unknown", size_kb: float = 0, tool_name: str = "") -> str:
         """Emit a downloadable-file event as custom data (type data-file_download)."""
-        return json.dumps({
-            "type": "data-file_download",
-            "data": {
-                "file_id": file_id,
-                "filename": filename,
-                "download_url": download_url,
-                "file_type": file_type,
-                "size_kb": size_kb,
-                "tool_name": tool_name
-            }
-        }) + "\n"
+        return f"data: {json.dumps({'type': 'data-file_download', 'data': {'file_id': file_id, 'filename': filename, 'download_url': download_url, 'file_type': file_type, 'size_kb': size_kb, 'tool_name': tool_name}})}\n\n"
 
 
 # ============================================================================
@@ -277,7 +272,7 @@ class GenerativeUIStreamBuilder:
             "content": code,
             "props": props or {}
         }]
-        return json.dumps({"type": "data-artifact", "data": component_data}) + "\n"
+        return f"data: {json.dumps({'type': 'data-artifact', 'data': component_data})}\n\n"
     
     @staticmethod
     def add_react_component(
@@ -310,7 +305,7 @@ class GenerativeUIStreamBuilder:
             "title": title,
             "config": config or {}
         }]
-        return json.dumps({"type": "data-component", "data": chart_data}) + "\n"
+        return f"data: {json.dumps({'type': 'data-component', 'data': chart_data})}\n\n"
     
     @staticmethod
     def add_mermaid_diagram(code: str, title: Optional[str] = None) -> str:
