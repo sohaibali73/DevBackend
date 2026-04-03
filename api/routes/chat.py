@@ -1168,6 +1168,7 @@ async def chat_agent(
                 "iterations": iteration,
             })
 
+            yield encoder.encode_finish_step()
             yield encoder.encode_finish_message("stop", usage)
 
         except RateLimitError as e:
@@ -1413,6 +1414,7 @@ async def _chat_generic_endpoint(
                 "provider": provider_name,
             })
 
+            yield encoder.encode_finish_step()
             yield encoder.encode_finish_message("stop", usage)
 
         except Exception as e:
