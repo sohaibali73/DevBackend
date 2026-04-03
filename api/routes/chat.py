@@ -818,6 +818,12 @@ async def chat_agent(
             "cache_read_input_tokens": 0,
         }
 
+        # ✅ FIX: Always emit start first — AI SDK v7 requires this
+        import time as _time
+        message_id = f"msg_{int(_time.time() * 1000)}"
+        text_id = f"text_{int(_time.time() * 1000)}"
+        yield encoder.encode_start(message_id)
+
         try:
             engine = _get_engine(api_keys["claude"])
             client = anthropic.AsyncAnthropic(api_key=api_keys["claude"])
@@ -909,6 +915,7 @@ async def chat_agent(
                 assistant_content_blocks = []
                 pending_tool_calls = []
                 iteration_start_time = datetime.now()
+                text_started = False  # ✅ FIX: Track text block state
 
                 # Build API request parameters
                 api_params = {
@@ -937,6 +944,11 @@ async def chat_agent(
                                 hasattr(event.content_block, "type")
                                 and event.content_block.type == "tool_use"
                             ):
+                                # ✅ FIX: Close any open text block before tool
+                                if text_started:
+                                    yield encoder.encode_text_end(text_id)
+                                    text_started = False
+
                                 pending_tool_calls.append({
                                     "id": event.content_block.id,
                                     "name": event.content_block.name,
@@ -948,7 +960,12 @@ async def chat_agent(
                                 if event.delta.type == "text_delta":
                                     text = event.delta.text
                                     accumulated_content += text
-                                    yield encoder.encode_text(text)
+
+                                    # ✅ FIX: Open text block once, stream deltas directly
+                                    if not text_started:
+                                        yield encoder.encode_text_start(text_id)
+                                        text_started = True
+                                    yield encoder.encode_text_delta(text_id, text)
 
                                 elif event.delta.type == "input_json_delta":
                                     if pending_tool_calls:
@@ -956,6 +973,11 @@ async def chat_agent(
 
                         elif event.type == "content_block_stop":
                             if pending_tool_calls and pending_tool_calls[-1].get("input"):
+                                # ✅ FIX: Close text block before tool results
+                                if text_started:
+                                    yield encoder.encode_text_end(text_id)
+                                    text_started = False
+
                                 tool_call = pending_tool_calls[-1]
 
                                 try:
@@ -1083,6 +1105,11 @@ async def chat_agent(
                     messages.append({"role": "user", "content": user_message_content})
                 else:
                     break
+
+            # ✅ FIX: Close text block after all iterations complete
+            if text_started:
+                yield encoder.encode_text_end(text_id)
+                text_started = False
 
             # ── Artifact detection & Generative UI streaming ──────────────
             artifacts = ArtifactParser.extract_artifacts(accumulated_content)
