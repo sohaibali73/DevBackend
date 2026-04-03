@@ -1169,8 +1169,9 @@ async def chat_agent(
             "Cache-Control": "no-cache",
             "Connection": "keep-alive",
             "Content-Type": "text/plain; charset=utf-8",
+            "X-Vercel-AI-Data-Stream": "v1",
             "X-Conversation-Id": conversation_id,
-            "Access-Control-Expose-Headers": "X-Conversation-Id",
+            "Access-Control-Expose-Headers": "X-Conversation-Id, X-Vercel-AI-Data-Stream",
             "Access-Control-Allow-Origin": "*",
         },
     )
@@ -1400,8 +1401,9 @@ async def _chat_generic_endpoint(
             "Cache-Control": "no-cache",
             "Connection": "keep-alive",
             "Content-Type": "text/plain; charset=utf-8",
+            "X-Vercel-AI-Data-Stream": "v1",
             "X-Conversation-Id": conversation_id,
-            "Access-Control-Expose-Headers": "X-Conversation-Id",
+            "Access-Control-Expose-Headers": "X-Conversation-Id, X-Vercel-AI-Data-Stream",
             "Access-Control-Allow-Origin": "*",
         },
     )
