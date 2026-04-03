@@ -140,8 +140,18 @@ class VercelAIStreamEncoder:
         return json.dumps(chunk) + "\n"
     
     @staticmethod
-    def encode_data(data_name: str, data: Any, data_id: Optional[str] = None, transient: bool = False) -> str:
-        """Encode custom data (type data-{name})."""
+    def encode_data(data_name: str, data: Any = None, data_id: Optional[str] = None, transient: bool = False) -> str:
+        """
+        Encode custom data (type data-{name}).
+        
+        Supports two calling conventions:
+        1. encode_data("name", data)        — explicit name + data (original API)
+        2. encode_data({"key": "value"})     — single dict (chat.py shorthand, uses "custom" as name)
+        """
+        # Support chat.py shorthand: encode_data({"key": "value"})
+        if isinstance(data_name, dict) and data is None:
+            data = data_name
+            data_name = "custom"
         chunk = {"type": f"data-{data_name}", "data": data}
         if data_id:
             chunk["id"] = data_id
@@ -184,6 +194,43 @@ class VercelAIStreamEncoder:
         if reason:
             chunk["reason"] = reason
         return json.dumps(chunk) + "\n"
+
+    # ── Convenience wrapper methods ──────────────────────────────────────
+    # These methods provide a simpler API for chat.py while delegating to
+    # the full v7 Beta protocol methods above.
+
+    @staticmethod
+    def encode_text(text: str, text_id: Optional[str] = None) -> str:
+        """
+        Convenience: Encode a complete text block (start + delta + end).
+        Used by chat.py for simple text streaming.
+        """
+        import time as _time
+        tid = text_id or f"text_{int(_time.time() * 1000)}"
+        return (
+            VercelAIStreamEncoder.encode_text_start(tid)
+            + VercelAIStreamEncoder.encode_text_delta(tid, text)
+            + VercelAIStreamEncoder.encode_text_end(tid)
+        )
+
+    @staticmethod
+    def encode_tool_call(tool_call_id: str, tool_name: str, input: Any) -> str:
+        """
+        Convenience: Encode a complete tool call (input-start + input-available).
+        Used by chat.py for tool invocation streaming.
+        """
+        return (
+            VercelAIStreamEncoder.encode_tool_input_start(tool_call_id, tool_name)
+            + VercelAIStreamEncoder.encode_tool_input_available(tool_call_id, tool_name, input)
+        )
+
+    @staticmethod
+    def encode_tool_result(tool_call_id: str, output: Any) -> str:
+        """
+        Convenience: Encode a tool result.
+        Used by chat.py for tool result streaming.
+        """
+        return VercelAIStreamEncoder.encode_tool_output_available(tool_call_id, output)
 
     @staticmethod
     def encode_file_download(file_id: str, filename: str, download_url: str, file_type: str = "unknown", size_kb: float = 0, tool_name: str = "") -> str:
