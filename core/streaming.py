@@ -202,8 +202,10 @@ class VercelAIStreamEncoder:
     
     @staticmethod
     def encode_done() -> str:
-        """Signal stream termination (required by AI SDK v7 protocol)."""
-        return "data: [DONE]\n\n"
+        """Signal stream termination (AI SDK v7 protocol)."""
+        # The finish event already signals completion. [DONE] is legacy OpenAI format.
+        # Return empty string as no separate terminator is required for v7 protocol.
+        return ""
 
     # ── Convenience wrapper methods ──────────────────────────────────────
     # These methods provide a simpler API for chat.py while delegating to
