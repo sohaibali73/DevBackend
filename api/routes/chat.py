@@ -1178,6 +1178,7 @@ async def chat_agent(
             yield encoder.encode_text(f"\n\n{error_msg}")
             yield encoder.encode_error(error_msg)
             yield encoder.encode_finish_message("error")
+            yield encoder.encode_done()
         except APIStatusError as e:
             if e.status_code == 529:
                 error_msg = "Anthropic API is currently overloaded. Please try again in a few moments."
@@ -1186,11 +1187,13 @@ async def chat_agent(
             yield encoder.encode_text(f"\n\n{error_msg}")
             yield encoder.encode_error(error_msg)
             yield encoder.encode_finish_message("error")
+            yield encoder.encode_done()
         except Exception as e:
             error_msg = f"{str(e)}\n{traceback.format_exc()[:500]}"
             yield encoder.encode_text(f"\n\nError: {str(e)}")
             yield encoder.encode_error(error_msg)
             yield encoder.encode_finish_message("error")
+            yield encoder.encode_done()
 
     return StreamingResponse(
         generate_stream(),
@@ -1418,12 +1421,14 @@ async def _chat_generic_endpoint(
 
             yield encoder.encode_finish_step()
             yield encoder.encode_finish_message("stop", usage)
+            yield encoder.encode_done()
 
         except Exception as e:
             error_msg = f"{str(e)}\n{traceback.format_exc()[:500]}"
             yield encoder.encode_text(f"\n\nError: {str(e)}")
             yield encoder.encode_error(error_msg)
             yield encoder.encode_finish_message("error")
+            yield encoder.encode_done()
 
     return StreamingResponse(
         generate_stream(),
