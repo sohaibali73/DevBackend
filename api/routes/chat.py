@@ -10,9 +10,9 @@ from datetime import datetime
 
 from fastapi import APIRouter, HTTPException, Depends, Request
 from fastapi.responses import StreamingResponse
-from pydantic import BaseModel, ValidationError
+from pydantic import BaseModel
 import anthropic
-from anthropic import APIError, RateLimitError, APIStatusError
+from anthropic import APIError, RateLimitError
 
 from api.dependencies import get_current_user_id, get_user_api_keys
 from core.claude_engine import ClaudeAFLEngine
@@ -72,17 +72,11 @@ RECOMMENDED_MODEL_SNAPSHOTS = {
 
 def get_model_config(model: str) -> Dict:
     """Get configuration for a specific model with safe defaults."""
-    # Strip snapshot date suffixes (e.g., -20250514) from model names
-    base_model = re.sub(r'-\d{8}$', '', model)
-    # Fallback: if no date suffix, try to handle other snapshot patterns
-    if base_model == model and '-' in model:
-        # Handle patterns like "claude-sonnet-4-6-20250514"
-        parts = model.split('-')
-        if len(parts) >= 4 and parts[-1].isdigit() and len(parts[-1]) == 8:
-            base_model = '-'.join(parts[:-1])
+    # Strip snapshot suffix if present
+    base_model = model.rsplit("-", 1)[0] if model.count("-") > 3 else model
 
     return MODEL_CAPABILITIES.get(base_model, {
-        "max_output_tokens": 50000,  # Safe default
+        "max_output_tokens": 16384,  # Safe default
         "context_window": 200000,
         "supports_adaptive_thinking": False,
         "supports_prompt_caching": False,
@@ -115,16 +109,6 @@ _DEFAULT_TITLES = {"New Conversation", "AFL Code Chat", "New Chat", "Untitled", 
 # Helpers
 # ---------------------------------------------------------------------------
 
-def _safe_json_parse(data):
-    """Safely parse JSON, returning original data if parsing fails."""
-    if not isinstance(data, str):
-        return data
-    try:
-        return json.loads(data)
-    except (json.JSONDecodeError, ValueError):
-        return data
-
-
 def sanitize_title(title: str) -> str:
     """Strip [FORMATTING:...] and similar system instruction tags from titles."""
     if not title:
@@ -149,38 +133,24 @@ async def _get_or_create_conversation(
     """
     raw_title = sanitize_title(content[:50] + "..." if len(content) > 50 else content)
 
-    try:
-        if not conversation_id:
-            result = db.table("conversations").insert({
-                "user_id": user_id,
-                "title": raw_title,
-                "conversation_type": "agent",
-            }).execute()
+    if not conversation_id:
+        result = db.table("conversations").insert({
+            "user_id": user_id,
+            "title": raw_title,
+            "conversation_type": "agent",
+        }).execute()
+        return result.data[0]["id"]
 
-            if not result.data or len(result.data) == 0:
-                raise HTTPException(status_code=500, detail="Failed to create conversation")
+    # Existing conversation — update title if still a placeholder
+    check = db.table("conversations").select("title").eq("id", conversation_id).execute()
+    if check.data:
+        current = check.data[0].get("title", "")
+        if current in _DEFAULT_TITLES or not current:
+            db.table("conversations").update({"title": raw_title}).eq(
+                "id", conversation_id
+            ).execute()
 
-            return result.data[0]["id"]
-
-        # Existing conversation — update title if still a placeholder
-        check = db.table("conversations").select("title").eq("id", conversation_id).execute()
-
-        if check.data and len(check.data) > 0:
-            current = check.data[0].get("title", "")
-            if current in _DEFAULT_TITLES or not current:
-                db.table("conversations").update({"title": raw_title}).eq(
-                    "id", conversation_id
-                ).execute()
-
-        return conversation_id
-
-    except Exception as e:
-        if isinstance(e, HTTPException):
-            raise
-        raise HTTPException(
-            status_code=500,
-            detail=f"Database error in conversation management: {str(e)}"
-        )
+    return conversation_id
 
 
 def sanitize_message_history(messages: list) -> list:
@@ -231,19 +201,13 @@ def sanitize_message_history(messages: list) -> list:
                 ]
 
                 if orphaned:
-                    # Skip orphaned assistant message with tool_use blocks that have no results
-                    # Log this for debugging
-                    print(f"Warning: Removing orphaned assistant message with tool_use IDs: {orphaned}")
+                    # CRITICAL FIX: Remove the orphaned assistant message entirely
+                    # This is more robust than injecting dummy results
                     i += 1
                     continue
 
         sanitized.append(msg)
         i += 1
-
-    # Validate that we maintain proper role alternation
-    for idx in range(len(sanitized) - 1):
-        if sanitized[idx].get("role") == sanitized[idx + 1].get("role"):
-            print(f"Warning: Consecutive {sanitized[idx].get('role')} messages at index {idx}")
 
     return sanitized
 
@@ -271,13 +235,12 @@ def ensure_tool_results_first(content: list) -> list:
 
 async def retry_with_exponential_backoff(
     func,
-    max_retries: int = 5,
-    initial_delay: float = 2.0,
-    max_delay: float = 120.0,
+    max_retries: int = 3,
+    initial_delay: float = 1.0,
+    max_delay: float = 60.0,
 ):
     """
-    Retry a function with exponential backoff for rate limit and overloaded errors.
-    Retries: RateLimitError (429), overloaded_error (529), and connection errors.
+    Retry a function with exponential backoff for rate limit errors.
     """
     delay = initial_delay
     last_error = None
@@ -289,22 +252,12 @@ async def retry_with_exponential_backoff(
             last_error = e
             if attempt == max_retries - 1:
                 raise
-            print(f"[retry] Rate limit hit, attempt {attempt + 1}/{max_retries}, waiting {delay:.1f}s")
+
+            # Wait with exponential backoff
             await asyncio.sleep(delay)
             delay = min(delay * 2, max_delay)
-        except APIStatusError as e:
-            # Retry on overloaded (529) and server errors (500-503)
-            if e.status_code in (529, 500, 502, 503):
-                last_error = e
-                if attempt == max_retries - 1:
-                    raise
-                print(f"[retry] Server error {e.status_code}, attempt {attempt + 1}/{max_retries}, waiting {delay:.1f}s")
-                await asyncio.sleep(delay)
-                delay = min(delay * 2, max_delay)
-            else:
-                raise
         except APIError as e:
-            # Don't retry on other API errors (4xx client errors)
+            # Don't retry on other API errors
             raise
 
     raise last_error
@@ -423,62 +376,6 @@ class ChatAgentRequest(BaseModel):
     use_prompt_caching: bool = True  # NEW: enable prompt caching by default
     max_iterations: int = 5  # NEW: configurable, increased default
     pin_model_version: bool = False  # NEW: option to use pinned snapshots
-    use_kb: bool = False  # Set to true to include KB context in chat
-
-    class Config:
-        # Allow extra fields from frontend that we don't need (id, trigger, messages, etc.)
-        extra = "ignore"
-
-
-def _extract_content_from_request(request_body: dict) -> dict:
-    """
-    Compatibility layer: extract 'content' string from various frontend request formats.
-
-    Frontend may send:
-      - content: "hello"                       (standard)
-      - messages: [{"role":"user","content":"hello"}]  (array format)
-      - messages: [{"role":"user","parts":[{"type":"text","text":"hello"}]}]  (AI-SDK format)
-
-    Also maps camelCase → snake_case:
-      - conversationId → conversation_id
-    """
-    # Already has content — pass through
-    if "content" in request_body and request_body["content"]:
-        # Map camelCase aliases
-        if "conversationId" in request_body and "conversation_id" not in request_body:
-            request_body["conversation_id"] = request_body.pop("conversationId")
-        return request_body
-
-    # Try to extract from messages array
-    messages = request_body.get("messages")
-    if messages and isinstance(messages, list):
-        # Find the last user message
-        for msg in reversed(messages):
-            if not isinstance(msg, dict) or msg.get("role") != "user":
-                continue
-
-            content = msg.get("content")
-            if isinstance(content, str) and content.strip():
-                request_body["content"] = content.strip()
-                break
-
-            # AI-SDK parts format: [{"type":"text","text":"hello"}]
-            parts = msg.get("parts")
-            if isinstance(parts, list):
-                text_parts = []
-                for p in parts:
-                    if isinstance(p, dict) and p.get("type") == "text":
-                        text_parts.append(p.get("text", ""))
-                combined = " ".join(text_parts).strip()
-                if combined:
-                    request_body["content"] = combined
-                    break
-
-    # Map camelCase → snake_case
-    if "conversationId" in request_body and "conversation_id" not in request_body:
-        request_body["conversation_id"] = request_body.pop("conversationId")
-
-    return request_body
 
 
 # ---------------------------------------------------------------------------
@@ -725,44 +622,12 @@ async def delete_conversation(
 # Main Chat Endpoint
 # ---------------------------------------------------------------------------
 
-@router.post("/agent/stream")
-async def chat_agent_raw_stream(
-    request: Request,
-    user_id: str = Depends(get_current_user_id),
-    api_keys: dict = Depends(get_user_api_keys),
-):
-    """
-    Raw streaming endpoint for direct frontend connection.
-    Bypasses all proxy translation layers. Native v7 UI Message Stream Protocol only.
-    Call this endpoint directly from frontend useChat() hook.
-    """
-    # Reuse the same exact generate_stream() implementation
-    raw_stream = chat_agent(request, user_id, api_keys)
-    
-    # Override headers to disable ALL buffering
-    return StreamingResponse(
-        raw_stream.body_iterator,
-        media_type="text/event-stream",
-        headers={
-            "Cache-Control": "no-cache",
-            "Connection": "keep-alive",
-            "Content-Type": "text/event-stream",
-            "X-Vercel-AI-UI-Message-Stream": "v1",
-            "X-Accel-Buffering": "no",
-            "X-Content-Type-Options": "nosniff",
-            "Transfer-Encoding": "chunked",
-            "Access-Control-Expose-Headers": "*",
-            "Access-Control-Allow-Origin": "*",
-            "Access-Control-Allow-Methods": "*",
-            "Access-Control-Allow-Headers": "*",
-        },
-    )
-
 @router.post("/agent")
 async def chat_agent(
-    request: Request,
+    data: ChatAgentRequest,
     user_id: str = Depends(get_current_user_id),
     api_keys: dict = Depends(get_user_api_keys),
+    request: Request = None,
 ):
     """
     Chat endpoint with full agent capabilities: tool use, streaming, artifacts.
@@ -772,20 +637,6 @@ async def chat_agent(
     - GPT/OpenAI models → new generic path via OpenAI provider
     - OpenRouter models → new generic path via OpenRouter provider
     """
-    # ── Compatibility layer: accept multiple frontend request formats ─────
-    # Frontend may send: messages array, camelCase fields, AI-SDK parts, etc.
-    try:
-        raw_body = await request.json()
-    except Exception:
-        raise HTTPException(status_code=400, detail="Invalid JSON body")
-
-    body = _extract_content_from_request(dict(raw_body))
-
-    try:
-        data = ChatAgentRequest(**body)
-    except ValidationError as e:
-        raise HTTPException(status_code=422, detail=e.errors())
-
     # ── Provider routing: check if this is a non-Claude model ─────────────
     requested_model = (data.model or "").strip()
     is_claude_model = (
@@ -834,9 +685,8 @@ async def chat_agent(
     ]
 
     file_context = await _fetch_file_context(db, conversation_id)
-    # Only search KB when user explicitly requests it via use_kb flag
-    kb_context = await _fetch_kb_context(db, data.content) if data.use_kb else ""
-    kb_doc_context = await _fetch_kb_doc_refs(db, data.content) if data.use_kb else ""
+    kb_context = await _fetch_kb_context(db, data.content)
+    kb_doc_context = await _fetch_kb_doc_refs(db, data.content)
 
     async def generate_stream():
         encoder = VercelAIStreamEncoder()
@@ -850,13 +700,6 @@ async def chat_agent(
             "cache_creation_input_tokens": 0,
             "cache_read_input_tokens": 0,
         }
-
-        # ✅ FIX: Always emit start first — AI SDK v7 requires this
-        import time as _time
-        message_id = f"msg_{int(_time.time() * 1000)}"
-        text_id = f"text_{int(_time.time() * 1000)}"
-        yield encoder.encode_start(message_id)
-        yield encoder.encode_start_step()
 
         try:
             engine = _get_engine(api_keys["claude"])
@@ -949,7 +792,6 @@ async def chat_agent(
                 assistant_content_blocks = []
                 pending_tool_calls = []
                 iteration_start_time = datetime.now()
-                text_started = False  # ✅ FIX: Track text block state
 
                 # Build API request parameters
                 api_params = {
@@ -978,11 +820,6 @@ async def chat_agent(
                                 hasattr(event.content_block, "type")
                                 and event.content_block.type == "tool_use"
                             ):
-                                # ✅ FIX: Close any open text block before tool
-                                if text_started:
-                                    yield encoder.encode_text_end(text_id)
-                                    text_started = False
-
                                 pending_tool_calls.append({
                                     "id": event.content_block.id,
                                     "name": event.content_block.name,
@@ -994,12 +831,7 @@ async def chat_agent(
                                 if event.delta.type == "text_delta":
                                     text = event.delta.text
                                     accumulated_content += text
-
-                                    # ✅ FIX: Open text block once, stream deltas directly
-                                    if not text_started:
-                                        yield encoder.encode_text_start(text_id)
-                                        text_started = True
-                                    yield encoder.encode_text_delta(text_id, text)
+                                    yield encoder.encode_text(text)
 
                                 elif event.delta.type == "input_json_delta":
                                     if pending_tool_calls:
@@ -1007,11 +839,6 @@ async def chat_agent(
 
                         elif event.type == "content_block_stop":
                             if pending_tool_calls and pending_tool_calls[-1].get("input"):
-                                # ✅ FIX: Close text block before tool results
-                                if text_started:
-                                    yield encoder.encode_text_end(text_id)
-                                    text_started = False
-
                                 tool_call = pending_tool_calls[-1]
 
                                 try:
@@ -1140,11 +967,6 @@ async def chat_agent(
                 else:
                     break
 
-            # ✅ FIX: Close text block after all iterations complete
-            if text_started:
-                yield encoder.encode_text_end(text_id)
-                text_started = False
-
             # ── Artifact detection & Generative UI streaming ──────────────
             artifacts = ArtifactParser.extract_artifacts(accumulated_content)
 
@@ -1202,77 +1024,31 @@ async def chat_agent(
                 "iterations": iteration,
             })
 
-            yield encoder.encode_finish_step()
             yield encoder.encode_finish_message("stop", usage)
-            yield encoder.encode_done()
 
         except RateLimitError as e:
             error_msg = f"Rate limit exceeded: {str(e)}\n\nPlease wait a moment and try again."
             yield encoder.encode_text(f"\n\n{error_msg}")
             yield encoder.encode_error(error_msg)
             yield encoder.encode_finish_message("error")
-            yield encoder.encode_done()
-        except APIStatusError as e:
-            if e.status_code == 529:
-                error_msg = "Anthropic API is currently overloaded. Please try again in a few moments."
-            else:
-                error_msg = f"API error (status {e.status_code}): {str(e)}"
-            yield encoder.encode_text(f"\n\n{error_msg}")
-            yield encoder.encode_error(error_msg)
-            yield encoder.encode_finish_message("error")
-            yield encoder.encode_done()
         except Exception as e:
             error_msg = f"{str(e)}\n{traceback.format_exc()[:500]}"
             yield encoder.encode_text(f"\n\nError: {str(e)}")
             yield encoder.encode_error(error_msg)
             yield encoder.encode_finish_message("error")
-            yield encoder.encode_done()
 
-    # Auto-detect which streaming protocol to use
-    use_v7_protocol = request.headers.get('x-vercel-ai-ui-message-stream') == 'v1'
-    
-    if use_v7_protocol:
-        # ✅ AI SDK v7 UI Message Stream Protocol (SSE format)
-        return StreamingResponse(
-            generate_stream(),
-            media_type="text/event-stream",
-            headers={
-                "Cache-Control": "no-cache",
-                "Connection": "keep-alive",
-                "Content-Type": "text/event-stream",
-                "X-Vercel-AI-UI-Message-Stream": "v1",
-                "X-Conversation-Id": conversation_id,
-                "Access-Control-Expose-Headers": "X-Conversation-Id, X-Vercel-AI-UI-Message-Stream",
-                "Access-Control-Allow-Origin": "*",
-                "X-Accel-Buffering": "no",
-                "X-Content-Type-Options": "nosniff",
-                "Transfer-Encoding": "chunked",
-            },
-        )
-    else:
-        # ✅ Legacy AI SDK v6/v4 JSON Lines format (raw JSON)
-        async def generate_stream_raw_json():
-            encoder = VercelAIStreamEncoder()
-            async for chunk in generate_stream():
-                # Strip SSE 'data: ' prefix and double newlines for raw JSON lines format
-                if chunk.startswith('data: '):
-                    yield chunk[6:].rstrip('\n\n') + '\n'
-        
-        return StreamingResponse(
-            generate_stream_raw_json(),
-            media_type="application/x-ndjson",
-            headers={
-                "Cache-Control": "no-cache",
-                "Connection": "keep-alive",
-                "Content-Type": "application/x-ndjson",
-                "X-Conversation-Id": conversation_id,
-                "Access-Control-Expose-Headers": "X-Conversation-Id",
-                "Access-Control-Allow-Origin": "*",
-                "X-Accel-Buffering": "no",
-                "X-Content-Type-Options": "nosniff",
-                "Transfer-Encoding": "chunked",
-            },
-        )
+    return StreamingResponse(
+        generate_stream(),
+        media_type="text/plain; charset=utf-8",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "Content-Type": "text/plain; charset=utf-8",
+            "X-Conversation-Id": conversation_id,
+            "Access-Control-Expose-Headers": "X-Conversation-Id",
+            "Access-Control-Allow-Origin": "*",
+        },
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -1336,8 +1112,7 @@ async def _chat_generic_endpoint(
     ]
 
     file_context = await _fetch_file_context(db, conversation_id)
-    # Only search KB when user explicitly requests it via use_kb flag
-    kb_context = await _fetch_kb_context(db, data.content) if data.use_kb else ""
+    kb_context = await _fetch_kb_context(db, data.content)
 
     # Build system prompt
     system_prompt = (
@@ -1433,24 +1208,23 @@ async def _chat_generic_endpoint(
                     except Exception as tool_error:
                         result = json.dumps({"error": str(tool_error)})
 
-                    parsed_result = _safe_json_parse(result)
                     tools_used.append({
                         "tool": tool_name,
                         "toolCallId": tc["id"],
                         "input": tool_args,
-                        "result": parsed_result,
+                        "result": json.loads(result) if isinstance(result, str) else result,
                     })
 
                     yield encoder.encode_tool_result(tc["id"], result)
 
-                    # Feed result back in proper API format
+                    # Feed result back
                     messages.append({
                         "role": "user",
-                        "content": [{
-                            "type": "tool_result",
-                            "tool_use_id": tc["id"],
-                            "content": result if isinstance(result, str) else json.dumps(result),
-                        }]
+                        "content": json.dumps({
+                            "tool_result": tool_name,
+                            "tool_call_id": tc["id"],
+                            "result": result,
+                        }),
                     })
 
             # Persist assistant message
@@ -1484,16 +1258,13 @@ async def _chat_generic_endpoint(
                 "provider": provider_name,
             })
 
-            yield encoder.encode_finish_step()
             yield encoder.encode_finish_message("stop", usage)
-            yield encoder.encode_done()
 
         except Exception as e:
             error_msg = f"{str(e)}\n{traceback.format_exc()[:500]}"
             yield encoder.encode_text(f"\n\nError: {str(e)}")
             yield encoder.encode_error(error_msg)
             yield encoder.encode_finish_message("error")
-            yield encoder.encode_done()
 
     return StreamingResponse(
         generate_stream(),
@@ -1502,9 +1273,8 @@ async def _chat_generic_endpoint(
             "Cache-Control": "no-cache",
             "Connection": "keep-alive",
             "Content-Type": "text/plain; charset=utf-8",
-            "X-Vercel-AI-Data-Stream": "v1",
             "X-Conversation-Id": conversation_id,
-            "Access-Control-Expose-Headers": "X-Conversation-Id, X-Vercel-AI-Data-Stream",
+            "Access-Control-Expose-Headers": "X-Conversation-Id",
             "Access-Control-Allow-Origin": "*",
         },
     )
@@ -1547,7 +1317,7 @@ async def list_available_models(
 
     return {
         "models": models,
-        "default": "claude-sonnet-4-6",  # Matches MODEL_CAPABILITIES keys
+        "default": "claude-sonnet-4-20250514",
         "user_has_keys": {
             "anthropic": bool(api_keys.get("claude")),
             "openai": bool(api_keys.get("openai")),
