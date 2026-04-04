@@ -1195,19 +1195,45 @@ async def chat_agent(
             yield encoder.encode_finish_message("error")
             yield encoder.encode_done()
 
-    return StreamingResponse(
-        generate_stream(),
-        media_type="text/event-stream",
-        headers={
-            "Cache-Control": "no-cache",
-            "Connection": "keep-alive",
-            "Content-Type": "text/event-stream",
-            "x-vercel-ai-ui-message-stream": "v1",
-            "X-Conversation-Id": conversation_id,
-            "Access-Control-Expose-Headers": "X-Conversation-Id, x-vercel-ai-ui-message-stream",
-            "Access-Control-Allow-Origin": "*",
-        },
-    )
+    # Auto-detect which streaming protocol to use
+    use_v7_protocol = request.headers.get('x-vercel-ai-ui-message-stream') == 'v1'
+    
+    if use_v7_protocol:
+        # ✅ AI SDK v7 UI Message Stream Protocol (SSE format)
+        return StreamingResponse(
+            generate_stream(),
+            media_type="text/event-stream",
+            headers={
+                "Cache-Control": "no-cache",
+                "Connection": "keep-alive",
+                "Content-Type": "text/event-stream",
+                "X-Vercel-AI-UI-Message-Stream": "v1",
+                "X-Conversation-Id": conversation_id,
+                "Access-Control-Expose-Headers": "X-Conversation-Id, X-Vercel-AI-UI-Message-Stream",
+                "Access-Control-Allow-Origin": "*",
+            },
+        )
+    else:
+        # ✅ Legacy AI SDK v6/v4 JSON Lines format (raw JSON)
+        async def generate_stream_raw_json():
+            encoder = VercelAIStreamEncoder()
+            async for chunk in generate_stream():
+                # Strip SSE 'data: ' prefix and double newlines for raw JSON lines format
+                if chunk.startswith('data: '):
+                    yield chunk[6:].rstrip('\n\n') + '\n'
+        
+        return StreamingResponse(
+            generate_stream_raw_json(),
+            media_type="application/x-ndjson",
+            headers={
+                "Cache-Control": "no-cache",
+                "Connection": "keep-alive",
+                "Content-Type": "application/x-ndjson",
+                "X-Conversation-Id": conversation_id,
+                "Access-Control-Expose-Headers": "X-Conversation-Id",
+                "Access-Control-Allow-Origin": "*",
+            },
+        )
 
 
 # ---------------------------------------------------------------------------
