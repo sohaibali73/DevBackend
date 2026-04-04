@@ -725,6 +725,39 @@ async def delete_conversation(
 # Main Chat Endpoint
 # ---------------------------------------------------------------------------
 
+@router.post("/agent/stream")
+async def chat_agent_raw_stream(
+    request: Request,
+    user_id: str = Depends(get_current_user_id),
+    api_keys: dict = Depends(get_user_api_keys),
+):
+    """
+    Raw streaming endpoint for direct frontend connection.
+    Bypasses all proxy translation layers. Native v7 UI Message Stream Protocol only.
+    Call this endpoint directly from frontend useChat() hook.
+    """
+    # Reuse the same exact generate_stream() implementation
+    raw_stream = chat_agent(request, user_id, api_keys)
+    
+    # Override headers to disable ALL buffering
+    return StreamingResponse(
+        raw_stream.body_iterator,
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "Content-Type": "text/event-stream",
+            "X-Vercel-AI-UI-Message-Stream": "v1",
+            "X-Accel-Buffering": "no",
+            "X-Content-Type-Options": "nosniff",
+            "Transfer-Encoding": "chunked",
+            "Access-Control-Expose-Headers": "*",
+            "Access-Control-Allow-Origin": "*",
+            "Access-Control-Allow-Methods": "*",
+            "Access-Control-Allow-Headers": "*",
+        },
+    )
+
 @router.post("/agent")
 async def chat_agent(
     request: Request,
