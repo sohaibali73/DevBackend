@@ -1211,6 +1211,9 @@ async def chat_agent(
                 "X-Conversation-Id": conversation_id,
                 "Access-Control-Expose-Headers": "X-Conversation-Id, X-Vercel-AI-UI-Message-Stream",
                 "Access-Control-Allow-Origin": "*",
+                "X-Accel-Buffering": "no",
+                "X-Content-Type-Options": "nosniff",
+                "Transfer-Encoding": "chunked",
             },
         )
     else:
@@ -1232,6 +1235,9 @@ async def chat_agent(
                 "X-Conversation-Id": conversation_id,
                 "Access-Control-Expose-Headers": "X-Conversation-Id",
                 "Access-Control-Allow-Origin": "*",
+                "X-Accel-Buffering": "no",
+                "X-Content-Type-Options": "nosniff",
+                "Transfer-Encoding": "chunked",
             },
         )
 
