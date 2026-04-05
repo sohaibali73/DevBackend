@@ -23,7 +23,7 @@ logger = logging.getLogger(__name__)
 app = FastAPI(
     title="Analyst by Potomac API",
     description="AI-powered AmiBroker AFL development platform with streaming support",
-    version="2.0",
+    version="3.6",
 )
 
 # CORS middleware — open to all origins
@@ -362,7 +362,7 @@ async def root():
     """Root endpoint."""
     return {
         "name": "Analyst by Potomac API",
-        "version": "2.0",
+        "version": "3.6",
         "status": "online",
         "routers_loaded": routers_loaded,
         "routers_failed": [name for name, _ in routers_failed] if routers_failed else None,
