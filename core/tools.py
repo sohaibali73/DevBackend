@@ -1164,7 +1164,6 @@ TOOL_DEFINITIONS = [
     # Generic Skill Invocation — use for document/presentation/excel generation and specialist skills
     {
         "name": "invoke_skill",
-        "defer_loading": True,
         "description": (
             "Invoke a registered Claude custom skill by its slug. Use this for document generation, "
             "presentation creation, Excel spreadsheets, and specialist analysis. Available skill slugs:\n"
