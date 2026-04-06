@@ -871,13 +871,31 @@ async def chat_agent(
                                 # CRITICAL FIX: Don't skip web_search - handle it properly
                                 # If you don't have the tool handler, return an error result
                                 try:
-                                    result = await asyncio.to_thread(
-                                        handle_tool_call,
-                                        tool_name=tool_name,
-                                        tool_input=tool_input,
-                                        supabase_client=db,
-                                        api_key=api_keys.get("claude"),
+                                    # Long-running skills (DOCX/PPTX/etc) can take 60-120 s.
+                                    # Run the tool in a background task and emit a small
+                                    # keepalive heartbeat every 15 s so the SSE connection
+                                    # and Railway's proxy don't drop due to inactivity.
+                                    _tool_task = asyncio.create_task(
+                                        asyncio.to_thread(
+                                            handle_tool_call,
+                                            tool_name=tool_name,
+                                            tool_input=tool_input,
+                                            supabase_client=db,
+                                            api_key=api_keys.get("claude"),
+                                        )
                                     )
+                                    while True:
+                                        _done, _ = await asyncio.wait(
+                                            {_tool_task}, timeout=15.0
+                                        )
+                                        if _done:
+                                            result = await _tool_task  # result or re-raise
+                                            break
+                                        # Tool still running — emit heartbeat to keep alive
+                                        yield encoder.encode_data({
+                                            "skill_heartbeat": True,
+                                            "skill_slug": tool_input.get("skill_slug", ""),
+                                        })
                                 except Exception as tool_error:
                                     result = json.dumps({"error": str(tool_error)})
 
