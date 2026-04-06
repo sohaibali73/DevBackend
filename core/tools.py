@@ -84,6 +84,7 @@ TOOL_SEARCH_NON_DEFERRED: frozenset = frozenset({
     "search_knowledge_base",
     "get_stock_data",
     "technical_analysis",
+    "invoke_skill",         # REQUIRED: All skill routing goes through this tool
 })
 
 # ── Optional heavy dependencies — guarded with try/except at use sites ────────
