@@ -289,11 +289,12 @@ class SkillGateway:
         messages = self._build_messages(user_message, conversation_history)
         tokens = max_tokens or skill.max_tokens
 
+        import re as _re
+
         start = time.time()
         full_text = ""
         message_id = f"msg_{int(time.time() * 1000)}"
         text_id = f"text_{int(time.time() * 1000)}"
-        text_started = False
 
         try:
             # Include files-api beta so we can retrieve generated files after streaming
@@ -311,26 +312,52 @@ class SkillGateway:
                 container=skill.to_container(),
                 tools=[CODE_EXECUTION_TOOL],
             ) as stream:
+                # IMPORTANT: Buffer ALL text — do NOT stream it to the client yet.
+                #
+                # Claude's narration often contains the ephemeral Claude file ID URL
+                # (e.g. "/files/file_011CZnXtx.../download") which we must strip before
+                # sending to the user.  We only know whether files were produced AFTER
+                # the full stream completes, so we cannot clean in real-time.
+                #
+                # For document-generation skills the user sees the Shimmer/"Thinking…"
+                # indicator during this period — no UX regression.
                 for text in stream.text_stream:
                     full_text += text
-                    # v7 Beta: Start text block if not started
-                    if not text_started:
-                        yield json.dumps({"type": "text-start", "id": text_id}) + "\n"
-                        text_started = True
-                    # v7 Beta: Text delta chunk
-                    yield json.dumps({"type": "text-delta", "id": text_id, "delta": text}) + "\n"
 
                 # Get the final message to extract file artifacts
                 final_msg = stream.get_final_message()
-
-            # v7 Beta: Close text block if open
-            if text_started:
-                yield json.dumps({"type": "text-end", "id": text_id}) + "\n"
 
             elapsed = time.time() - start
 
             # Extract file artifacts from the final message
             files = self._extract_files(final_msg) if final_msg else []
+
+            # ── Clean and emit buffered text ─────────────────────────────────
+            # If the skill produced files, strip every reference to Claude's
+            # ephemeral file IDs from the text before sending it to the client.
+            # Those URLs (file_xxx) are now replaced by permanent Railway UUIDs
+            # carried in the data-file_download event below.
+            text_to_emit = full_text
+            if files:
+                # Remove any "/files/file_<id>/download" links Claude wrote
+                text_to_emit = _re.sub(
+                    r'/files/file_[A-Za-z0-9_-]+/download',
+                    '',
+                    text_to_emit,
+                )
+                # Also strip bare "file_<id>" references
+                text_to_emit = _re.sub(
+                    r'\bfile_[A-Za-z0-9]{20,}\b',
+                    '',
+                    text_to_emit,
+                )
+                # Collapse repeated blank lines left by the removal
+                text_to_emit = _re.sub(r'\n{3,}', '\n\n', text_to_emit).strip()
+
+            if text_to_emit:
+                yield json.dumps({"type": "text-start", "id": text_id}) + "\n"
+                yield json.dumps({"type": "text-delta", "id": text_id, "delta": text_to_emit}) + "\n"
+                yield json.dumps({"type": "text-end", "id": text_id}) + "\n"
 
             # If files were produced, download them and emit download events
             if files:
