@@ -175,20 +175,25 @@ _register(SkillDefinition(
     is_builtin=True,
 ))
 
-# ── B4. Anthropic DOCX ─────────────────────────────────────────────────────
+# ── B4. Anthropic DOCX (redirected to Potomac custom skill) ────────────────
+# NOTE: The Anthropic-hosted "docx" builtin now requires a skill_id in the
+# container params (API changed).  We redirect this slug to use the Potomac
+# custom DOCX skill (skill_01Jhf6196usgAdPmnZQGedXM) so that calls to
+# invoke_skill(skill_slug="docx") still work correctly.
 _register(SkillDefinition(
-    skill_id="",
+    skill_id="skill_01Jhf6196usgAdPmnZQGedXM",  # same as potomac-docx-skill
     name="Word Document (docx)",
     slug="docx",
     description=(
-        "Create, read, edit, or manipulate Word documents (.docx files). "
-        "Triggers for: Word doc, word document, .docx, reports with formatting, "
-        "tables of contents, headings, page numbers, or letterheads."
+        "Create professional Potomac-branded Word documents (.docx files). "
+        "Use for: Word doc, word document, .docx, reports, market commentary, "
+        "fact sheets, memos, or any professional document with Potomac branding. "
+        "Prefer 'potomac-docx-skill' for explicit Potomac branding requirements."
     ),
     category=SkillCategory.DOCUMENT,
-    max_tokens=8192,
+    max_tokens=16384,
     tags=["docx", "word", "document", "report", "memo", "letter"],
-    is_builtin=True,
+    is_builtin=False,  # use custom skill pathway (has valid skill_id)
 ))
 
 

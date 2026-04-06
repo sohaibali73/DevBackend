@@ -1007,24 +1007,33 @@ async def chat_agent(
             all_parts = tool_parts + parts
 
             if accumulated_content or tools_used:
-                db.table("messages").insert({
-                    "conversation_id": conversation_id,
-                    "role": "assistant",
-                    "content": accumulated_content or "(Tool results returned)",
-                    "metadata": {
-                        "parts": all_parts,
-                        "artifacts": artifacts,
-                        "has_artifacts": len(artifacts) > 0,
-                        "tools_used": tools_used,
-                        "usage": total_usage,  # NEW: Include full usage tracking
-                        "model": model_to_use,  # NEW: Track which model was used
-                        "iterations": iteration,  # NEW: Track iteration count
-                    },
-                }).execute()
+                try:
+                    db.table("messages").insert({
+                        "conversation_id": conversation_id,
+                        "role": "assistant",
+                        "content": accumulated_content or "(Tool results returned)",
+                        "metadata": {
+                            "parts": all_parts,
+                            "artifacts": artifacts,
+                            "has_artifacts": len(artifacts) > 0,
+                            "tools_used": tools_used,
+                            "usage": total_usage,
+                            "model": model_to_use,
+                            "iterations": iteration,
+                        },
+                    }).execute()
+                    print(f"[chat/agent] ✓ Saved assistant message to DB for conv {conversation_id}")
+                except Exception as db_err:
+                    import traceback as _tb
+                    print(f"[chat/agent] ✗ FAILED to save assistant message: {db_err}")
+                    print(f"[chat/agent] DB traceback: {_tb.format_exc()[:800]}")
 
-            db.table("conversations").update({"updated_at": "now()"}).eq(
-                "id", conversation_id
-            ).execute()
+            try:
+                db.table("conversations").update({"updated_at": "now()"}).eq(
+                    "id", conversation_id
+                ).execute()
+            except Exception as conv_err:
+                print(f"[chat/agent] ✗ FAILED to update conversation timestamp: {conv_err}")
 
             # NEW: Enhanced usage reporting with caching metrics
             usage = {
