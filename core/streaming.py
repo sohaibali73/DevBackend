@@ -229,7 +229,7 @@ class VercelAIStreamEncoder:
         Returns:
             Data stream protocol formatted string
         """
-        return f"2:{json.dumps([{'type': 'data-file_download', 'file_id': file_id, 'filename': filename, 'download_url': download_url, 'file_type': file_type, 'size_kb': size_kb, 'tool_name': tool_name}])}\n"
+        return f"2:{json.dumps([{'type': 'file_download', 'file_id': file_id, 'filename': filename, 'download_url': download_url, 'file_type': file_type, 'size_kb': size_kb, 'tool_name': tool_name}])}\n"
 
 
 # ============================================================================
