@@ -348,7 +348,10 @@ class SkillGateway:
                                 filename=fname,
                                 file_type=ext,
                                 tool_name=f"skill:{skill.slug}",
-                                file_id=claude_file_id or None,
+                                # Do NOT pass claude_file_id — let store_file generate
+                                # a permanent backend UUID so the download URL is
+                                # always served from Railway/Supabase, never from
+                                # Claude's ephemeral Files API (expires in 72 h).
                             )
                             # v7 Beta: Emit file download event as data-{name}
                             yield json.dumps({

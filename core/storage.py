@@ -28,6 +28,7 @@ ALLOWED_MIME_TYPES = {
         "text/plain",
         "text/csv",
         "application/json",
+        "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
         "application/vnd.openxmlformats-officedocument.presentationml.presentation",
         "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         "image/png",

@@ -40,25 +40,65 @@ This document explains the production file pipeline for all Claude skills (docx,
 └─────────────────────────────────────┬────────────────────────┘
                                       │
 ┌─────────────────────────────────────▼────────────────────────┐
-│  5. 3-Tier Persistent Storage                                 │
+│  5. store_file() generates a fresh backend UUID (NOT Claude's│
+│     file_id) so the download URL NEVER references Claude     │
+│                                                              │
+│     3-Tier Persistent Storage:                               │
 │     ✅  Memory Cache    →  instant O(1) reads                │
-│     ✅  Railway Volume  →  disk persistence                  │
+│     ✅  Railway Volume  →  disk persistence (synchronous)    │
 │     ✅  Supabase Storage →  permanent cross-deployment backup│
-│     ✅  Returns permanent system file_id (UUID v4)           │
+│     ✅  `generated_files` DB table →  permanent record       │
+│     ✅  Returns permanent backend UUID (not Claude file_id)  │
 └─────────────────────────────────────┬────────────────────────┘
                                       │
 ┌─────────────────────────────────────▼────────────────────────┐
 │  6. Stream Event Emitted to Client                           │
 │     ✅  `data-file_download` event sent over AI SDK stream   │
-│     ✅  Contains download URL, filename, size, type          │
+│     ✅  Contains /files/{uuid}/download URL                  │
+│     ✅  User NEVER sees a Claude file_id                     │
 └─────────────────────────────────────┬────────────────────────┘
                                       │
 ┌─────────────────────────────────────▼────────────────────────┐
-│  7. Swift Client Downloads Directly From Backend             │
-│     ✅  Authenticated GET request to `/files/{file_id}/download`
-│     ✅  Backend serves file directly (never proxies Claude)  │
+│  7. Client Downloads Directly From Backend (Railway)         │
+│     ✅  Authenticated GET /files/{uuid}/download             │
+│     ✅  Backend serves from Railway volume or Supabase       │
+│     ✅  Never proxies Claude — file is permanent             │
 └──────────────────────────────────────────────────────────────┘
 ```
+
+---
+
+## **🔹 Key Design Rule — No Claude File IDs in Download URLs**
+
+```
+❌  WRONG (old behaviour):
+    store_file(..., file_id=claude_file_id)
+    → download_url = /files/file_011CZnXtx.../download   ← Claude ID, expires 72h
+
+✅  CORRECT (current behaviour):
+    store_file(...)          # file_id omitted → auto UUID
+    → download_url = /files/550e8400-e29b-41d4-a716.../download  ← permanent
+```
+
+Claude's `file_xxx` IDs are **only** used internally to download bytes from
+Anthropic immediately after skill execution.  They are thrown away after that.
+The client sees only the backend UUID.
+
+---
+
+## **🔹 Supabase `generated_files` Table**
+
+Every skill-generated file gets a row:
+
+| Column | Type | Description |
+|--------|------|-------------|
+| `file_id` | TEXT PK | Backend UUID (served in download URL) |
+| `filename` | TEXT | Original filename e.g. `Potomac_Q1.docx` |
+| `file_type` | TEXT | `docx`, `pptx`, `pdf`, `xlsx`, … |
+| `size_kb` | FLOAT | File size in kilobytes |
+| `tool_name` | TEXT | e.g. `skill:potomac-docx-skill` |
+| `storage_path` | TEXT | Supabase bucket path `{file_id}/{filename}` |
+| `created_at` | TIMESTAMPTZ | Row creation timestamp |
 
 ---
 
@@ -72,7 +112,7 @@ In your Swift stream parser, listen for this exact event:
   "type": "data-file_download",
   "data": {
     "type": "file_download",
-    "file_id": "550e8400-e29b-41d4-a716-446655440000",
+    "file_id": "550e8400-e29b-41d4-a716-446655440000",   // ← backend UUID
     "filename": "Fund_Fact_Sheet_Q1_2026.docx",
     "download_url": "/files/550e8400-e29b-41d4-a716-446655440000/download",
     "file_type": "docx",
@@ -157,7 +197,8 @@ class SkillGenerationViewModel: ObservableObject {
 2.  **Do not proxy Claude files:**
     - Always download files to your backend first
     - Claude `file_id` expires after 72 hours
-    - Your system `file_id` is permanent
+    - Your system `file_id` is a permanent UUID
+    - **Never pass `file_id=claude_file_id` to `store_file()`**
 
 3.  **All skills use the exact same pipeline:**
     - potomac-docx-skill
@@ -167,7 +208,7 @@ class SkillGenerationViewModel: ObservableObject {
     - docx
     - pptx
     - xlsx
-    - All future skills will automatically follow this pattern
+    - All future skills automatically follow this pattern
 
 4.  **Stream is safe to terminate:**
     - File download happens after the text stream completes
@@ -186,7 +227,7 @@ Authorization: Bearer {user_token}
 Returns:
 - Correct Content-Type for file
 - `Content-Disposition: attachment; filename="..."`
-- Raw binary file bytes
+- Raw binary file bytes (served from Railway volume or Supabase Storage)
 - CORS headers enabled for Swift client
 
 ---
@@ -208,5 +249,7 @@ Returns:
 ✅ This entire pipeline is already fully implemented in production  
 ✅ All existing skills already work this way  
 ✅ No backend changes required for new skills  
+✅ `generated_files` Supabase table exists with permanent records  
 ✅ Swift client only needs to implement the `data-file_download` event handler  
-✅ Files are automatically persisted forever
+✅ Files are automatically persisted forever on Railway volume + Supabase  
+✅ Download URLs are always permanent backend UUIDs — never Claude file IDs

@@ -8,8 +8,10 @@ persistence strategy:
     1. In-memory cache       — instant reads during container lifetime
     2. Railway volume         — fast local disk, persists across restarts
                                $STORAGE_ROOT/generated/{file_id}_{filename}
-    3. Supabase Storage       — background upload, cross-deployment backup
+    3. Supabase Storage       — background upload + DB record insert,
+                               cross-deployment backup
                                bucket: "user-uploads" / {file_id}/{filename}
+                               table:  "generated_files" row per file
 
   READ PATH (get_file):
     1. In-memory cache        — O(1) dict lookup
@@ -134,15 +136,20 @@ def _read_from_volume(file_id: str) -> Optional[FileEntry]:
 
 # ── Supabase Storage Helpers ─────────────────────────────────────────────────
 
-def _get_storage_client():
-    """Get Supabase storage client."""
+def _get_supabase_client():
+    """Get the Supabase client (db + storage)."""
     try:
         from db.supabase_client import get_supabase
-        db = get_supabase()
-        return db.storage
+        return get_supabase()
     except Exception as e:
-        logger.warning("Could not get Supabase storage client: %s", e)
+        logger.warning("Could not get Supabase client: %s", e)
         return None
+
+
+def _get_storage_client():
+    """Get Supabase storage client."""
+    db = _get_supabase_client()
+    return db.storage if db else None
 
 
 def _ensure_bucket():
@@ -183,8 +190,39 @@ def _ensure_bucket():
                 return False
 
 
+def _insert_supabase_db_record(entry: FileEntry, storage_path: str):
+    """
+    Insert a row into the `generated_files` table so there is a permanent,
+    queryable Supabase DB record for every skill-generated file.
+
+    Runs in a background thread — non-blocking.
+    """
+    try:
+        db = _get_supabase_client()
+        if not db:
+            return
+
+        record = {
+            "file_id":      entry.file_id,
+            "filename":     entry.filename,
+            "file_type":    entry.file_type,
+            "size_kb":      entry.size_kb,
+            "tool_name":    entry.tool_name,
+            "storage_path": storage_path,   # bucket path: {file_id}/{filename}
+        }
+
+        db.table("generated_files").upsert(record, on_conflict="file_id").execute()
+        logger.info("✓ Supabase DB record created: generated_files[%s]", entry.file_id)
+    except Exception as e:
+        # DB record is best-effort — file is already safe on Railway volume
+        logger.warning("Could not insert generated_files DB record for %s: %s", entry.file_id, e)
+
+
 def _upload_to_supabase(entry: FileEntry):
-    """Upload file bytes to Supabase Storage. Runs in a background thread."""
+    """
+    Upload file bytes to Supabase Storage AND insert a DB record.
+    Runs in a background thread — non-blocking.
+    """
     try:
         if not _ensure_bucket():
             logger.warning("Skipping Supabase upload — bucket not available")
@@ -218,6 +256,10 @@ def _upload_to_supabase(entry: FileEntry):
             "✓ Persisted to Supabase Storage: %s (%s, %.1f KB)",
             storage_path, entry.file_type, entry.size_kb,
         )
+
+        # Insert DB record now that the file is safely in Storage
+        _insert_supabase_db_record(entry, storage_path)
+
     except Exception as e:
         err = str(e)
         if "duplicate" in err.lower() or "already exists" in err.lower() or "409" in err:
@@ -284,9 +326,14 @@ def store_file(
     """
     Store file bytes with 3-tier persistence.
 
+    Always generates a permanent backend UUID as the file_id — never
+    re-uses Claude's ephemeral file_id so that download URLs served
+    to clients are always Railway/Supabase-backed and never expire.
+
     1. In-memory cache      (immediate — hot reads)
     2. Railway volume       (synchronous — fast, persistent on disk)
     3. Supabase Storage     (background thread — cross-deployment backup)
+       + DB record in `generated_files` table
     """
     if not file_id:
         file_id = str(uuid.uuid4())
@@ -307,14 +354,14 @@ def store_file(
     # 1. Memory cache (instant)
     _file_cache[file_id] = entry
     logger.info(
-        "Storing: %s (%s, %.1f KB) → memory + Railway volume + Supabase",
-        filename, file_type, entry.size_kb,
+        "Storing: %s (%s, %.1f KB) [id=%s] → memory + Railway volume + Supabase",
+        filename, file_type, entry.size_kb, file_id,
     )
 
-    # 2. Railway volume (synchronous — we want this done before returning)
+    # 2. Railway volume (synchronous — done before returning so file is safe)
     _write_to_volume(entry)
 
-    # 3. Supabase Storage (background — don't block the response)
+    # 3. Supabase Storage + DB record (background — don't block the response)
     threading.Thread(target=_upload_to_supabase, args=(entry,), daemon=True).start()
 
     # 4. Prune stale memory entries
