@@ -3958,12 +3958,23 @@ def _invoke_skill(tool_input: Dict, api_key: str) -> Dict:
             extra_context=tool_input.get("extra_context",""),
         )
 
+        # Strip any Claude ephemeral file_xxx URLs from the skill text before
+        # returning it as the tool result.  Claude will see the cleaned text and
+        # will NOT repeat the bad URL in its final response.  The correct
+        # /files/{uuid}/download URL is provided in base_response["download_url"]
+        # once the file has been stored.
+        skill_text = result.get("text", "")
+        if skill_text and result.get("files"):
+            skill_text = re_mod.sub(r'/files/file_[A-Za-z0-9_-]+/download', '', skill_text)
+            skill_text = re_mod.sub(r'\bfile_[A-Za-z0-9]{20,}\b', '', skill_text)
+            skill_text = re_mod.sub(r'\n{3,}', '\n\n', skill_text).strip()
+
         base_response = {
             "success":        True,
             "tool":           "invoke_skill",
             "skill":          result.get("skill", skill_slug),
             "skill_name":     result.get("skill_name",""),
-            "text":           result.get("text",""),
+            "text":           skill_text,
             "execution_time": result.get("execution_time", 0),
             "usage":          result.get("usage", {}),
         }
@@ -3979,18 +3990,18 @@ def _invoke_skill(tool_input: Dict, api_key: str) -> Dict:
                     fname = dl.get("filename", "")
                     # FIX: download_files() returns "content" key, not "data"
                     data = dl.get("content", b"") or dl.get("data", b"")
-                    claude_file_id = dl.get("file_id", "")
                     if data and fname:
                         # Determine file type from extension
                         ext = fname.rsplit(".", 1)[-1].lower() if "." in fname else "bin"
-                        # Use the Claude file_id so the download endpoint can
-                        # fall back to Claude's Files API if in-memory store is lost
+                        # Do NOT pass claude_file_id — let store_file generate a
+                        # permanent backend UUID. The download_url in the tool result
+                        # will use this UUID, so neither the text response nor the
+                        # frontend ever sees Claude's ephemeral file_xxx ID.
                         entry = store_file(
                             data=data,
                             filename=fname,
                             file_type=ext,
                             tool_name=f"invoke_skill:{skill_slug}",
-                            file_id=claude_file_id or None,
                         )
                         # Add download info to the response
                         base_response["file_id"] = entry.file_id

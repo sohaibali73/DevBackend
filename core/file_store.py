@@ -153,7 +153,19 @@ def _get_storage_client():
 
 
 def _ensure_bucket():
-    """Ensure the Supabase bucket exists (creates if needed). Thread-safe."""
+    """
+    Ensure the Supabase bucket exists. Thread-safe.
+
+    The Supabase Python SDK's get_bucket() can return 400 even when the bucket
+    exists (e.g. due to RLS or API version differences). create_bucket() returns
+    413 when the bucket already exists on some Supabase plan tiers.
+
+    Strategy:
+      1. Try get_bucket() — success → verified.
+      2. On error: try create_bucket() — success OR already-exists error → verified.
+      3. On ANY unexpected error from create_bucket: mark verified anyway and try
+         the upload directly; Supabase will 404 if the bucket is truly missing.
+    """
     global _bucket_verified
     if _bucket_verified:
         return True
@@ -182,12 +194,28 @@ def _ensure_bucket():
                 return True
             except Exception as create_err:
                 err = str(create_err).lower()
-                if "already exists" in err or "duplicate" in err or "409" in err:
+                # 409/duplicate/already exists → bucket is there, proceed
+                # 413 "Payload too large" → Supabase returns this when bucket
+                #     already exists on certain plan/version combos (confirmed
+                #     via SQL: bucket exists with file_size_limit=null)
+                if (
+                    "already exists" in err
+                    or "duplicate"    in err
+                    or "409"          in err
+                    or "413"          in err
+                    or "payload too large" in err
+                ):
                     _bucket_verified = True
-                    logger.info("✓ Bucket '%s' already exists", _BUCKET_NAME)
+                    logger.info("✓ Bucket '%s' already exists (confirmed)", _BUCKET_NAME)
                     return True
-                logger.error("✗ Failed to create bucket '%s': %s", _BUCKET_NAME, create_err)
-                return False
+                # Unknown error — mark verified and attempt upload anyway;
+                # the upload itself will surface a meaningful 404 if missing.
+                logger.warning(
+                    "⚠ Bucket check inconclusive for '%s': %s — attempting upload anyway",
+                    _BUCKET_NAME, create_err,
+                )
+                _bucket_verified = True
+                return True
 
 
 def _insert_supabase_db_record(entry: FileEntry, storage_path: str):
