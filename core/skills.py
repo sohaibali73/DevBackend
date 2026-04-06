@@ -257,10 +257,34 @@ _register(SkillDefinition(
     tags=["document", "docx", "word", "report", "financial", "writing", "potomac", "fact-sheet", "memo"],
 ))
 
-# Backward-compat alias
-SKILL_REGISTRY["potomac-document-generator"] = SKILL_REGISTRY["potomac-docx-skill"]
+# ── 3. Potomac DOCX Document Generator ─────────────────────────────────────
+_register(SkillDefinition(
+    skill_id="skill_01Jhf6196usgAdPmnZQGedXM",
+    name="Potomac DOCX Document Generator",
+    slug="potomac-document-generator",
+    description=(
+        "Create professional Potomac-branded Word documents (.docx files) for any "
+        "business purpose. Potomac is a tactical fund manager — documents include "
+        "fund fact sheets, market commentaries, performance reports, risk reports, "
+        "trade rationale, investment policy statements, DDQs, advisor onboarding "
+        "guides, research write-ups, legal agreements, technical docs, SOPs, "
+        "invoices, marketing materials, internal memos, client proposals, and "
+        "general-purpose documents. Use whenever the user requests any Word "
+        "document for Potomac, regardless of type."
+    ),
+    category=SkillCategory.DOCUMENT,
+    system_prompt=(
+        "You are a professional Potomac-branded document generator. Create "
+        "well-structured, institutional-grade Word documents with proper formatting, "
+        "data tables, charts descriptions, and clear prose. Potomac is a tactical "
+        "fund manager. Follow financial industry standards for document structure. "
+        "Output content in well-formatted markdown that can be converted to .docx."
+    ),
+    max_tokens=16384,
+    tags=["document", "docx", "word", "report", "financial", "writing", "potomac", "fact-sheet", "memo"],
+))
 
-# ── 3. Potomac PPTX Skill ─────────────────────────────────────────────────
+# ── 4. Potomac PPTX Skill ─────────────────────────────────────────────────
 _register(SkillDefinition(
     skill_id="skill_01R8PDacb1KDHZLR68VsEQ3h",
     name="Potomac PPTX Skill",
@@ -285,11 +309,32 @@ _register(SkillDefinition(
     tags=["presentation", "powerpoint", "pptx", "slides", "potomac", "brand"],
 ))
 
-# Backward-compat aliases
-SKILL_REGISTRY["potomac-pptx-skill"] = SKILL_REGISTRY["potomac-pptx"]
-SKILL_REGISTRY["potomac-powerpoint-generator"] = SKILL_REGISTRY["potomac-pptx"]
+# ── 5. Potomac PowerPoint Generator ────────────────────────────────────────
+_register(SkillDefinition(
+    skill_id="skill_01R8PDacb1KDHZLR68VsEQ3h",
+    name="Potomac PowerPoint Generator",
+    slug="potomac-powerpoint-generator",
+    description=(
+        "Enhanced PPTX skill with strict Potomac brand compliance. Inherits all "
+        "capabilities from the base PPTX skill (markitdown extraction, template "
+        "editing, pptxgenjs generation, visual QA) and adds zero-tolerance brand "
+        "enforcement, AI-powered template selection, and Potomac-specific design "
+        "guidelines. Use for all Potomac presentations requiring perfect brand "
+        "adherence with professional quality assurance."
+    ),
+    category=SkillCategory.PRESENTATION,
+    system_prompt=(
+        "You are an expert Potomac presentation designer. Create compelling, "
+        "brand-compliant slide content with Potomac yellow (#FEC00F) and dark "
+        "color scheme. Include clear hierarchies, data visualizations, and "
+        "concise bullet points. Output structured JSON for slide assembly. "
+        "Every slide must adhere to strict Potomac brand guidelines."
+    ),
+    max_tokens=16384,
+    tags=["presentation", "powerpoint", "pptx", "slides", "potomac", "brand"],
+))
 
-# ── 4. AI Elements (Vercel AI SDK) ─────────────────────────────────────────
+# ── 6. AI Elements (Vercel AI SDK) ─────────────────────────────────────────
 _register(SkillDefinition(
     skill_id="skill_01ACJvCz8aYdVA91GAqaq2Wx",
     name="AI Elements",
@@ -311,8 +356,27 @@ _register(SkillDefinition(
     tags=["ui", "react", "components", "charts", "vercel", "generative-ui", "ai-elements"],
 ))
 
-# Backward-compat alias
-SKILL_REGISTRY["vercel-ai-elements"] = SKILL_REGISTRY["ai-elements"]
+# ── 7. Vercel AI Elements ──────────────────────────────────────────────────
+_register(SkillDefinition(
+    skill_id="skill_01ACJvCz8aYdVA91GAqaq2Wx",
+    name="Vercel AI Elements",
+    slug="vercel-ai-elements",
+    description=(
+        "Create new AI chat interface components for the ai-elements library "
+        "following established composable patterns, shadcn/ui integration, and "
+        "Vercel AI SDK conventions. Use when creating new components in "
+        "packages/elements/src or when the user asks to add a new component to ai-elements."
+    ),
+    category=SkillCategory.UI,
+    system_prompt=(
+        "You are a React/UI expert specializing in Vercel AI SDK components. "
+        "Generate clean, TypeScript-compatible React components using Tailwind CSS, "
+        "Recharts for data visualization, and modern React patterns. "
+        "Components must be self-contained and export as default."
+    ),
+    max_tokens=4096,
+    tags=["ui", "react", "components", "charts", "vercel", "generative-ui", "ai-elements"],
+))
 
 # ── 5. Backtest Expert ─────────────────────────────────────────────────────
 _register(SkillDefinition(
