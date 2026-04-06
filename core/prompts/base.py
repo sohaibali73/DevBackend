@@ -307,7 +307,7 @@ Available card types and when to use them:
   currency         - Exchange rate or currency conversion
 
 Card envelope format (MUST be valid JSON on ONE line):
-{"card":"stock","data":{"ticker":"AAPL","company":"Apple Inc.","price":189.30,"change":2.45,"changePct":1.31,"open":187.20,"prevClose":186.85,"high":190.10,"low":186.50,"volume":"52.3M","marketCap":"$2.94T","summary":"Apple is trading near a 52-week high."}}
+{"type":"data-card_stock","data":{"ticker":"AAPL","company":"Apple Inc.","price":189.30,"change":2.45,"changePct":1.31,"open":187.20,"prevClose":186.85,"high":190.10,"low":186.50,"volume":"52.3M","marketCap":"$2.94T","summary":"Apple is trading near a 52-week high."}}
 
 Rules:
 - Only emit ONE card per response

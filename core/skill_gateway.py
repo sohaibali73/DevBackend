@@ -361,6 +361,7 @@ class SkillGateway:
                                     "file_type": entry.file_type,
                                     "size_kb": entry.size_kb,
                                     "tool_name": f"skill:{skill.slug}",
+                                    "created_at": int(time.time())
                                 }
                             }) + "\n"
                             logger.info(
