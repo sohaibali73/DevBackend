@@ -350,6 +350,78 @@ except Exception as e:
     logger.error(f"✗ Failed to load volume_debug router: {e}")
     logger.debug(traceback.format_exc())
 
+# ── New v4 feature routers ────────────────────────────────────────────────────
+
+try:
+    from api.routes import dashboard
+    app.include_router(dashboard.router)
+    routers_loaded.append("dashboard")
+    logger.info("✓ Loaded dashboard router (Stats & activity feed)")
+except Exception as e:
+    routers_failed.append(("dashboard", str(e)))
+    logger.error(f"✗ Failed to load dashboard router: {e}")
+    logger.debug(traceback.format_exc())
+
+try:
+    from api.routes import knowledge_base
+    app.include_router(knowledge_base.router)
+    routers_loaded.append("knowledge_base")
+    logger.info("✓ Loaded knowledge_base router (/knowledge-base/* alias)")
+except Exception as e:
+    routers_failed.append(("knowledge_base", str(e)))
+    logger.error(f"✗ Failed to load knowledge_base router: {e}")
+    logger.debug(traceback.format_exc())
+
+try:
+    from api.routes import settings
+    app.include_router(settings.router)
+    routers_loaded.append("settings")
+    logger.info("✓ Loaded settings router (Profile, password, appearance, notifications)")
+except Exception as e:
+    routers_failed.append(("settings", str(e)))
+    logger.error(f"✗ Failed to load settings router: {e}")
+    logger.debug(traceback.format_exc())
+
+try:
+    from api.routes import reverse_engineer
+    app.include_router(reverse_engineer.router)
+    routers_loaded.append("reverse_engineer")
+    logger.info("✓ Loaded reverse_engineer router (Chart image & text analysis)")
+except Exception as e:
+    routers_failed.append(("reverse_engineer", str(e)))
+    logger.error(f"✗ Failed to load reverse_engineer router: {e}")
+    logger.debug(traceback.format_exc())
+
+try:
+    from api.routes import research
+    app.include_router(research.router)
+    routers_loaded.append("research")
+    logger.info("✓ Loaded research router (Company info, strategy analysis, peer comparison)")
+except Exception as e:
+    routers_failed.append(("research", str(e)))
+    logger.error(f"✗ Failed to load research router: {e}")
+    logger.debug(traceback.format_exc())
+
+try:
+    from api.routes import websocket_router
+    app.include_router(websocket_router.router)
+    routers_loaded.append("websocket_router")
+    logger.info("✓ Loaded websocket_router (Real-time progress & notifications via WS)")
+except Exception as e:
+    routers_failed.append(("websocket_router", str(e)))
+    logger.error(f"✗ Failed to load websocket_router: {e}")
+    logger.debug(traceback.format_exc())
+
+try:
+    from api.routes import training_courses
+    app.include_router(training_courses.router)
+    routers_loaded.append("training_courses")
+    logger.info("✓ Loaded training_courses router (Courses, lessons, quizzes, progress)")
+except Exception as e:
+    routers_failed.append(("training_courses", str(e)))
+    logger.error(f"✗ Failed to load training_courses router: {e}")
+    logger.debug(traceback.format_exc())
+
 # Start background task cleanup loop on app startup
 @app.on_event("startup")
 async def startup_task_manager():

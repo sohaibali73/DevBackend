@@ -992,3 +992,166 @@ async def set_default_preset(
     }).eq("id", preset_id).execute()
 
     return result.data[0]
+
+
+# =============================================================================
+# ── Generation aliases (frontend-facing endpoints) ────────────────────────────
+# =============================================================================
+
+@router.get("/generation/{generation_id}")
+async def get_generation(
+    generation_id: str,
+    user_id: str = Depends(get_current_user_id),
+):
+    """Retrieve a specific AFL generation (alias for /afl/codes/{id})."""
+    db = get_supabase()
+
+    # Check afl_history first (newer schema)
+    try:
+        result = db.table("afl_history").select("*").eq("id", generation_id).eq("user_id", user_id).limit(1).execute()
+        if result.data:
+            rec = result.data[0]
+            return {
+                "id": str(rec["id"]),
+                "request": rec.get("strategy_description", ""),
+                "afl_code": rec.get("generated_code", ""),
+                "code": rec.get("generated_code", ""),
+                "strategy_type": rec.get("strategy_type", "standalone"),
+                "timestamp": rec.get("timestamp", rec.get("created_at", "")),
+                "backtest_settings": {},
+            }
+    except Exception:
+        pass
+
+    # Fall back to afl_codes
+    result = db.table("afl_codes").select("*").eq("id", generation_id).eq("user_id", user_id).limit(1).execute()
+    if not result.data:
+        raise HTTPException(status_code=404, detail="Generation not found")
+
+    rec = result.data[0]
+    return {
+        "id": str(rec["id"]),
+        "request": rec.get("description", "") or rec.get("name", ""),
+        "afl_code": rec.get("code", ""),
+        "code": rec.get("code", ""),
+        "strategy_type": rec.get("strategy_type", "standalone"),
+        "timestamp": rec.get("created_at", ""),
+        "backtest_settings": {},
+    }
+
+
+@router.delete("/generation/{generation_id}")
+async def delete_generation(
+    generation_id: str,
+    user_id: str = Depends(get_current_user_id),
+):
+    """Delete a generation (checks both afl_history and afl_codes)."""
+    db = get_supabase()
+
+    deleted = False
+
+    # Try afl_history first
+    try:
+        entry = db.table("afl_history").select("user_id").eq("id", generation_id).limit(1).execute()
+        if entry.data and entry.data[0]["user_id"] == user_id:
+            db.table("afl_history").delete().eq("id", generation_id).execute()
+            deleted = True
+    except Exception:
+        pass
+
+    # Try afl_codes
+    if not deleted:
+        try:
+            entry = db.table("afl_codes").select("user_id").eq("id", generation_id).limit(1).execute()
+            if entry.data and entry.data[0]["user_id"] == user_id:
+                db.table("afl_codes").delete().eq("id", generation_id).execute()
+                deleted = True
+        except Exception:
+            pass
+
+    if not deleted:
+        raise HTTPException(status_code=404, detail="Generation not found")
+
+    return {"success": True, "message": "Generation deleted successfully"}
+
+
+# =============================================================================
+# ── Feedback ──────────────────────────────────────────────────────────────────
+# =============================================================================
+
+class FeedbackRequest(BaseModel):
+    generation_id: str
+    feedback: str   # "positive" | "negative"
+    comment: Optional[str] = None
+
+
+@router.post("/feedback")
+async def submit_afl_feedback(
+    request: FeedbackRequest,
+    user_id: str = Depends(get_current_user_id),
+):
+    """Submit thumbs-up/thumbs-down feedback on a generated AFL code."""
+    db = get_supabase()
+
+    if request.feedback not in ("positive", "negative"):
+        raise HTTPException(status_code=400, detail="feedback must be 'positive' or 'negative'")
+
+    # Save feedback record
+    try:
+        db.table("afl_feedback").insert({
+            "generation_id": request.generation_id,
+            "user_id": user_id,
+            "feedback": request.feedback,
+            "comment": request.comment,
+            "created_at": datetime.utcnow().isoformat(),
+        }).execute()
+    except Exception as e:
+        logger.warning(f"afl_feedback table may not exist yet: {e}")
+
+    # Also annotate the source record
+    for table in ("afl_history", "afl_codes"):
+        try:
+            db.table(table).update({"feedback": request.feedback}).eq(
+                "id", request.generation_id
+            ).eq("user_id", user_id).execute()
+        except Exception:
+            pass
+
+    return {"success": True, "message": "Thank you for your feedback!"}
+
+
+# =============================================================================
+# ── Format Code ───────────────────────────────────────────────────────────────
+# =============================================================================
+
+class FormatRequest(BaseModel):
+    code: str
+
+
+@router.post("/format")
+async def format_afl_code(request: FormatRequest):
+    """Format / pretty-print AFL code."""
+    formatted = _format_afl(request.code)
+    return {"success": True, "formatted_code": formatted}
+
+
+def _format_afl(code: str) -> str:
+    """Basic AFL code formatter — normalises indentation around braces."""
+    lines = code.split("\n")
+    result = []
+    indent = 0
+
+    for raw in lines:
+        line = raw.strip()
+
+        # Decrease indent before closing brace lines
+        if line.startswith("}"):
+            indent = max(0, indent - 1)
+
+        result.append("    " * indent + line)
+
+        # Increase indent after opening brace lines
+        if line.endswith("{"):
+            indent += 1
+
+    return "\n".join(result)

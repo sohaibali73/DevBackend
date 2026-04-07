@@ -1554,3 +1554,212 @@ async def list_tts_voices():
             "count": 4,
             "note": "edge-tts not installed, showing defaults",
         }
+
+
+# ---------------------------------------------------------------------------
+# Tool Results — Generative UI persistence
+# ---------------------------------------------------------------------------
+
+from pydantic import BaseModel as _PydanticBase
+from typing import Any as _Any, Optional as _Opt
+
+
+class _ToolResultItem(_PydanticBase):
+    message_id: str
+    tool_call_id: str
+    tool_name: str
+    input: dict = {}
+    output: dict = {}
+    state: str = "completed"
+    error_text: _Opt[str] = None
+
+
+class _ToolResultsPayload(_PydanticBase):
+    tool_results: list[_ToolResultItem]
+
+
+class _ToolResultUpdate(_PydanticBase):
+    output: _Opt[dict] = None
+    state: _Opt[str] = None
+    error_text: _Opt[str] = None
+
+
+@router.post("/conversations/{conversation_id}/tool-results")
+async def save_tool_results(
+    conversation_id: str,
+    payload: _ToolResultsPayload,
+    user_id: str = Depends(get_current_user_id),
+):
+    """
+    Persist tool results to the database after streaming completes.
+
+    Called by the frontend's onFinish handler so that Generative UI cards
+    (documents, charts, presentations, etc.) survive page reloads and work
+    across devices.
+    """
+    db = get_supabase()
+
+    # Verify conversation ownership
+    conv = (
+        db.table("conversations")
+        .select("id, user_id")
+        .eq("id", conversation_id)
+        .execute()
+    )
+    if not conv.data:
+        raise HTTPException(status_code=404, detail="Conversation not found")
+    if conv.data[0]["user_id"] != user_id:
+        raise HTTPException(status_code=403, detail="Access denied")
+
+    saved = 0
+    errors = []
+
+    for tr in payload.tool_results:
+        try:
+            db.table("tool_results").upsert(
+                {
+                    "user_id": user_id,
+                    "conversation_id": conversation_id,
+                    "message_id": tr.message_id,
+                    "tool_call_id": tr.tool_call_id,
+                    "tool_name": tr.tool_name,
+                    "input": tr.input,
+                    "output": tr.output,
+                    "state": tr.state,
+                    "error_text": tr.error_text,
+                },
+                on_conflict="tool_call_id",
+            ).execute()
+            saved += 1
+        except Exception as e:
+            errors.append({"tool_call_id": tr.tool_call_id, "error": str(e)})
+
+    return {"success": True, "saved_count": saved, "errors": errors}
+
+
+@router.get("/conversations/{conversation_id}/tool-results")
+async def get_tool_results(
+    conversation_id: str,
+    user_id: str = Depends(get_current_user_id),
+):
+    """
+    Fetch all persisted tool results for a conversation.
+
+    Used on page load to rehydrate Generative UI cards without re-running
+    expensive tools.
+    """
+    db = get_supabase()
+
+    # Verify conversation ownership
+    conv = (
+        db.table("conversations")
+        .select("id, user_id")
+        .eq("id", conversation_id)
+        .execute()
+    )
+    if not conv.data:
+        raise HTTPException(status_code=404, detail="Conversation not found")
+    if conv.data[0]["user_id"] != user_id:
+        raise HTTPException(status_code=403, detail="Access denied")
+
+    try:
+        result = (
+            db.table("tool_results")
+            .select("id, message_id, tool_call_id, tool_name, input, output, state, error_text, created_at")
+            .eq("conversation_id", conversation_id)
+            .eq("user_id", user_id)
+            .order("created_at")
+            .execute()
+        )
+        return result.data or []
+    except Exception as e:
+        # Graceful degradation if table doesn't exist yet
+        return []
+
+
+@router.patch("/conversations/{conversation_id}/tool-results/{tool_call_id}")
+async def update_tool_result(
+    conversation_id: str,
+    tool_call_id: str,
+    update: _ToolResultUpdate,
+    user_id: str = Depends(get_current_user_id),
+):
+    """Update a specific tool result (e.g. after user edits a document)."""
+    db = get_supabase()
+
+    # Verify conversation ownership
+    conv = (
+        db.table("conversations")
+        .select("id, user_id")
+        .eq("id", conversation_id)
+        .execute()
+    )
+    if not conv.data:
+        raise HTTPException(status_code=404, detail="Conversation not found")
+    if conv.data[0]["user_id"] != user_id:
+        raise HTTPException(status_code=403, detail="Access denied")
+
+    update_fields = {k: v for k, v in update.dict().items() if v is not None}
+    if not update_fields:
+        raise HTTPException(status_code=400, detail="No fields to update")
+
+    try:
+        result = (
+            db.table("tool_results")
+            .update(update_fields)
+            .eq("tool_call_id", tool_call_id)
+            .eq("conversation_id", conversation_id)
+            .eq("user_id", user_id)
+            .execute()
+        )
+        if not result.data:
+            raise HTTPException(status_code=404, detail="Tool result not found")
+        return {"success": True}
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Update failed: {str(e)}")
+
+
+# ---------------------------------------------------------------------------
+# Upload file attachment for chat
+# ---------------------------------------------------------------------------
+
+@router.post("/upload-attachment")
+async def upload_chat_attachment(
+    file: UploadFile = File(...),
+    conversation_id: str = Form(...),
+    user_id: str = Depends(get_current_user_id),
+):
+    """Upload a file attachment to link with a chat conversation."""
+    from fastapi import Form as _Form, UploadFile as _UploadFile
+    import uuid as _uuid
+
+    db = get_supabase()
+
+    content = await file.read()
+    if len(content) > 50 * 1024 * 1024:
+        raise HTTPException(status_code=413, detail="File too large — maximum 50 MB")
+
+    file_id = str(_uuid.uuid4())
+
+    try:
+        db.table("attachments").insert({
+            "id": file_id,
+            "conversation_id": conversation_id,
+            "user_id": user_id,
+            "filename": file.filename,
+            "size": len(content),
+            "mime_type": file.content_type,
+            "created_at": datetime.now().isoformat(),
+        }).execute()
+    except Exception as e:
+        # attachments table may not exist — non-fatal
+        pass
+
+    return {
+        "attachment_id": file_id,
+        "filename": file.filename,
+        "size": len(content),
+        "url": f"/files/{file_id}",
+    }
