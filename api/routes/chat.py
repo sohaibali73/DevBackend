@@ -8,7 +8,7 @@ import traceback
 from typing import Optional, Dict, List
 from datetime import datetime
 
-from fastapi import APIRouter, HTTPException, Depends, Request
+from fastapi import APIRouter, HTTPException, Depends, Request, File, Form, UploadFile
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 import anthropic
@@ -1732,7 +1732,6 @@ async def upload_chat_attachment(
     user_id: str = Depends(get_current_user_id),
 ):
     """Upload a file attachment to link with a chat conversation."""
-    from fastapi import Form as _Form, UploadFile as _UploadFile
     import uuid as _uuid
 
     db = get_supabase()
