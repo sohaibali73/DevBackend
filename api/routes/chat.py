@@ -939,11 +939,37 @@ async def chat_agent(
                                         tool_name=tool_name,
                                     )
 
-                                # CRITICAL FIX: Build tool_result with proper structure
+                                # CRITICAL FIX: Build tool_result with proper structure.
+                                # Strip download URLs from what Claude sees to prevent it
+                                # from repeating relative /files/... URLs in its response
+                                # text (which would show broken "Open external link?"
+                                # dialogs in the Streamdown renderer).
+                                # The frontend already receives the download URL via the
+                                # encode_file_download event emitted above.
+                                claude_result = result
+                                if isinstance(result_data, dict) and result_data.get("download_url"):
+                                    _STRIP_URL_FIELDS = {
+                                        "download_url", "document_id",
+                                        "presentation_id", "file_id",
+                                    }
+                                    clean_for_claude = {
+                                        k: v for k, v in result_data.items()
+                                        if k not in _STRIP_URL_FIELDS
+                                    }
+                                    # Inform Claude the file is ready without giving it
+                                    # the raw URL (the UI renders a download card automatically).
+                                    clean_for_claude["file_ready"] = True
+                                    clean_for_claude["note"] = (
+                                        "The file has been prepared and a download card will "
+                                        "appear in the chat UI automatically. Do NOT include "
+                                        "any download URL or file path in your response."
+                                    )
+                                    claude_result = json.dumps(clean_for_claude)
+
                                 tool_results_for_next_call.append({
                                     "type": "tool_result",
                                     "tool_use_id": tool_call_id,
-                                    "content": result,
+                                    "content": claude_result,
                                 })
 
                                 assistant_content_blocks.append({
