@@ -513,7 +513,15 @@ async def get_conversation_messages(
     conversation_id: str,
     user_id: str = Depends(get_current_user_id),
 ):
-    """Get all messages for a conversation. Verifies ownership."""
+    """Get all messages for a conversation. Verifies ownership.
+
+    Returns messages enriched with:
+    - ``parts``  — AI SDK v4 parts array (from the dedicated column, falling
+                   back to metadata.parts for older messages)
+    - ``persisted_tool_results`` — rows from the tool_results table linked
+                                   to this message, enabling Generative UI
+                                   card rehydration without re-running tools
+    """
     db = get_supabase()
 
     # Verify the conversation belongs to this user
@@ -528,13 +536,35 @@ async def get_conversation_messages(
     if conv.data[0]["user_id"] != user_id:
         raise HTTPException(status_code=403, detail="Access denied")
 
+    # Fetch messages (include the new top-level parts column)
     result = (
         db.table("messages")
-        .select("id, conversation_id, role, content, created_at, metadata, tool_calls, tool_results")
+        .select("id, conversation_id, role, content, parts, created_at, metadata, tool_calls, tool_results")
         .eq("conversation_id", conversation_id)
         .order("created_at")
         .execute()
     )
+
+    # Fetch all tool_results for this conversation from the dedicated table.
+    # These contain the rich structured output needed to rehydrate Generative UI
+    # cards (file download cards, stock charts, research panels, etc.)
+    try:
+        tr_result = (
+            db.table("tool_results")
+            .select("id, message_id, tool_call_id, tool_name, input, output, state, error_text, created_at")
+            .eq("conversation_id", conversation_id)
+            .order("created_at")
+            .execute()
+        )
+        # Build lookup: message_id → [tool_result, ...]
+        tool_results_by_msg: dict = {}
+        for tr in (tr_result.data or []):
+            mid = tr.get("message_id")
+            if mid:
+                tool_results_by_msg.setdefault(mid, []).append(tr)
+    except Exception as _tr_fetch_err:
+        # tool_results table may not exist yet on older deployments — degrade gracefully
+        tool_results_by_msg = {}
 
     # Transform messages to match frontend Message type
     messages = []
@@ -546,13 +576,25 @@ async def get_conversation_messages(
             "content": m["content"],
             "created_at": m["created_at"],
         }
+
+        # ── parts: use dedicated column first, fall back to metadata.parts ──
+        if m.get("parts"):
+            msg["parts"] = m["parts"]
+        elif m.get("metadata") and m["metadata"].get("parts"):
+            msg["parts"] = m["metadata"]["parts"]
+
+        # ── legacy metadata fields ────────────────────────────────────────────
         if m.get("metadata"):
             msg["metadata"] = m["metadata"]
-            # Extract artifacts from metadata for convenience
             if m["metadata"].get("artifacts"):
                 msg["artifacts"] = m["metadata"]["artifacts"]
             if m["metadata"].get("tools_used"):
                 msg["tools_used"] = m["metadata"]["tools_used"]
+
+        # ── persisted tool results for Generative UI rehydration ─────────────
+        if m["id"] in tool_results_by_msg:
+            msg["persisted_tool_results"] = tool_results_by_msg[m["id"]]
+
         messages.append(msg)
 
     return messages
@@ -667,12 +709,14 @@ async def chat_agent(
         conversation_id=data.conversation_id,
     )
 
-    # Persist user message
+    # Persist user message — include top-level parts column for AI SDK rehydration
+    _user_parts = [{"type": "text", "text": data.content}]
     db.table("messages").insert({
         "conversation_id": conversation_id,
         "role": "user",
         "content": data.content,
-        "metadata": {"parts": [{"type": "text", "text": data.content}]},
+        "parts": _user_parts,
+        "metadata": {"parts": _user_parts},
     }).execute()
 
     history_result = db.table("messages").select("role, content").eq(
@@ -913,6 +957,26 @@ async def chat_agent(
                                     "skill_name": result_data.get("skill_name", "") if tool_name == "invoke_skill" else "",
                                 })
 
+                                # ── Persist tool result to dedicated table ────────────────
+                                # Saves the rich structured output immediately so Generative
+                                # UI cards can be rehydrated when the user revisits the
+                                # conversation. message_id is backfilled below after the
+                                # assistant message row is created.
+                                try:
+                                    _tr_state = "error" if isinstance(result_data, dict) and result_data.get("error") else "completed"
+                                    db.table("tool_results").insert({
+                                        "user_id": user_id,
+                                        "conversation_id": conversation_id,
+                                        "tool_call_id": tool_call_id,
+                                        "tool_name": tool_name,
+                                        "input": tool_input,
+                                        "output": result_data,
+                                        "state": _tr_state,
+                                        "error_text": result_data.get("error") if _tr_state == "error" else None,
+                                    }).execute()
+                                except Exception as _tr_err:
+                                    print(f"[chat/agent] ⚠ tool_results insert failed (non-fatal): {_tr_err}")
+
                                 yield encoder.encode_tool_result(tool_call_id, result)
 
                                 # Emit a file_download event so the frontend can render
@@ -1034,12 +1098,14 @@ async def chat_agent(
 
             if accumulated_content or tools_used:
                 try:
-                    db.table("messages").insert({
+                    _msg_insert = db.table("messages").insert({
                         "conversation_id": conversation_id,
                         "role": "assistant",
                         "content": accumulated_content or "(Tool results returned)",
+                        # ── NEW: top-level parts column for fast AI SDK rehydration ──
+                        "parts": all_parts,
                         "metadata": {
-                            "parts": all_parts,
+                            "parts": all_parts,        # kept for backwards-compat
                             "artifacts": artifacts,
                             "has_artifacts": len(artifacts) > 0,
                             "tools_used": tools_used,
@@ -1049,6 +1115,25 @@ async def chat_agent(
                         },
                     }).execute()
                     print(f"[chat/agent] ✓ Saved assistant message to DB for conv {conversation_id}")
+
+                    # ── Backfill message_id into tool_results rows ────────────────
+                    # The tool_results rows were inserted during streaming without a
+                    # message_id because the message didn't exist yet. Now that the
+                    # message is saved we link them so the history endpoint can return
+                    # Generative UI data keyed by message.
+                    if tools_used and _msg_insert.data:
+                        _saved_msg_id = _msg_insert.data[0]["id"]
+                        _tool_call_ids = [t["toolCallId"] for t in tools_used]
+                        try:
+                            db.table("tool_results").update({
+                                "message_id": _saved_msg_id
+                            }).eq("conversation_id", conversation_id).in_(
+                                "tool_call_id", _tool_call_ids
+                            ).execute()
+                            print(f"[chat/agent] ✓ Linked {len(_tool_call_ids)} tool_results → message {_saved_msg_id}")
+                        except Exception as _link_err:
+                            print(f"[chat/agent] ⚠ tool_results message_id backfill failed (non-fatal): {_link_err}")
+
                 except Exception as db_err:
                     import traceback as _tb
                     print(f"[chat/agent] ✗ FAILED to save assistant message: {db_err}")
@@ -1146,12 +1231,14 @@ async def _chat_generic_endpoint(
         conversation_id=data.conversation_id,
     )
 
-    # Persist user message
+    # Persist user message — include top-level parts column for AI SDK rehydration
+    _generic_user_parts = [{"type": "text", "text": data.content}]
     db.table("messages").insert({
         "conversation_id": conversation_id,
         "role": "user",
         "content": data.content,
-        "metadata": {"parts": [{"type": "text", "text": data.content}]},
+        "parts": _generic_user_parts,
+        "metadata": {"parts": _generic_user_parts},
     }).execute()
 
     # Get history
@@ -1280,13 +1367,19 @@ async def _chat_generic_endpoint(
                         }),
                     })
 
-            # Persist assistant message
+            # Persist assistant message — include top-level parts column
             if accumulated_content or tools_used:
+                _generic_asst_parts = _build_tool_parts(tools_used) + (
+                    [{"type": "text", "text": accumulated_content}]
+                    if accumulated_content else []
+                )
                 db.table("messages").insert({
                     "conversation_id": conversation_id,
                     "role": "assistant",
                     "content": accumulated_content or "(Tool results returned)",
+                    "parts": _generic_asst_parts,
                     "metadata": {
+                        "parts": _generic_asst_parts,   # kept for backwards-compat
                         "tools_used": tools_used,
                         "usage": total_usage,
                         "model": model,
