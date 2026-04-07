@@ -8,7 +8,7 @@ import traceback
 from typing import Optional, Dict, List
 from datetime import datetime
 
-from fastapi import APIRouter, HTTPException, Depends, Request
+from fastapi import APIRouter, HTTPException, Depends, Request, UploadFile, File, Form
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 import anthropic
