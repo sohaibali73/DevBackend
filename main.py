@@ -340,6 +340,16 @@ except Exception as e:
     logger.error(f"✗ Failed to load agent_teams_v2 router: {e}")
     logger.debug(traceback.format_exc())
 
+try:
+    from api.routes import volume_debug
+    app.include_router(volume_debug.router)
+    routers_loaded.append("volume_debug")
+    logger.info("✓ Loaded volume_debug router (Railway volume CRUD — secured by VOLUME_DEBUG_KEY)")
+except Exception as e:
+    routers_failed.append(("volume_debug", str(e)))
+    logger.error(f"✗ Failed to load volume_debug router: {e}")
+    logger.debug(traceback.format_exc())
+
 # Start background task cleanup loop on app startup
 @app.on_event("startup")
 async def startup_task_manager():
