@@ -183,6 +183,68 @@ def _is_react_code(code: str) -> bool:
 
 
 # ---------------------------------------------------------------------------
+# Helpers for React code pre-processing
+# ---------------------------------------------------------------------------
+
+def _strip_react_imports(code: str) -> str:
+    """
+    Remove React / ReactDOM import statements from user code.
+
+    The wrapper already provides:
+      React, useState, useEffect, useRef, useCallback, useMemo,
+      useReducer, useContext  (from 'react')
+      createRoot               (from 'react-dom/client')
+
+    Keeping duplicate imports causes Babel to throw
+    "Identifier 'React' has already been declared".
+    """
+    patterns = [
+        # import React, { useState, ... } from 'react'
+        r"import\s+React\s*,?\s*(?:\{[^}]*\})?\s*from\s+['\"]react['\"][ \t]*;?[ \t]*\n?",
+        # import { useState, useEffect, ... } from 'react'
+        r"import\s*\{[^}]*\}\s*from\s+['\"]react['\"][ \t]*;?[ \t]*\n?",
+        # import * as React from 'react'
+        r"import\s*\*\s*as\s+\w+\s+from\s+['\"]react['\"][ \t]*;?[ \t]*\n?",
+        # import ReactDOM from 'react-dom'
+        r"import\s+\w+\s+from\s+['\"]react-dom['\"][ \t]*;?[ \t]*\n?",
+        # import { createRoot } from 'react-dom/client'  OR  react-dom/server
+        r"import\s*\{[^}]*\}\s*from\s+['\"]react-dom(?:/client|/server)?['\"][ \t]*;?[ \t]*\n?",
+    ]
+    for p in patterns:
+        code = re.sub(p, "", code, flags=re.MULTILINE)
+    return code
+
+
+def _extract_default_export(code: str):
+    """
+    Strip the 'export default' prefix from function / class declarations
+    so the symbol stays in scope for the mount helper.
+
+    Returns (modified_code, component_name | None).
+    """
+    # export default function ComponentName(...)
+    m = re.search(r"\bexport\s+default\s+(function)\s+(\w+)", code)
+    if m:
+        new_code = code[: m.start()] + m.group(1) + " " + m.group(2) + code[m.end() :]
+        return new_code, m.group(2)
+
+    # export default class ComponentName
+    m = re.search(r"\bexport\s+default\s+(class)\s+(\w+)", code)
+    if m:
+        new_code = code[: m.start()] + m.group(1) + " " + m.group(2) + code[m.end() :]
+        return new_code, m.group(2)
+
+    # export default ComponentName; (standalone reference on its own line)
+    m = re.search(r"^\s*export\s+default\s+(\w+)\s*;?\s*$", code, re.MULTILINE)
+    if m:
+        name = m.group(1)
+        new_code = (code[: m.start()] + code[m.end() :]).strip()
+        return new_code, name
+
+    return code, None
+
+
+# ---------------------------------------------------------------------------
 # Fix 3a — Client-side React render wrapper
 # ---------------------------------------------------------------------------
 def _wrap_for_client_render(jsx_code: str) -> str:
@@ -193,11 +255,38 @@ def _wrap_for_client_render(jsx_code: str) -> str:
       - ESM importmap → esm.sh CDN for React + approved packages
       - Babel standalone for in-browser JSX transpilation
       - Tailwind CSS CDN for styling
-      - Auto-detects and mounts: App → Component → Default
+      - Strips duplicate React/ReactDOM imports from user code
+      - Strips 'export default' so component stays in scope for mount
 
     No Node.js execution is needed — the frontend simply iframes this HTML.
     """
     import_map_json = json.dumps({"imports": _ESM_IMPORT_MAP}, indent=2)
+
+    # Pre-process user code ------------------------------------------------
+    # 1. Remove any React / ReactDOM imports (wrapper provides them)
+    clean_code = _strip_react_imports(jsx_code)
+    # 2. Remove 'export default' and discover the component name
+    clean_code, component_name = _extract_default_export(clean_code)
+
+    # Build mount call -------------------------------------------------------
+    if component_name:
+        # We know the exact name — use it directly (most reliable)
+        mount_call = f"root.render(React.createElement({component_name}));"
+    else:
+        # Fallback: try common names
+        mount_call = """
+      var _found = false;
+      var _names = ['App','Component','Default','Dashboard','Page','View','Widget'];
+      for (var _i = 0; _i < _names.length; _i++) {
+        try {
+          var _C = eval(_names[_i]);
+          if (typeof _C === 'function') { root.render(React.createElement(_C)); _found = true; break; }
+        } catch(e) {}
+      }
+      if (!_found) {
+        document.getElementById('root').innerHTML =
+          '<div id=\\"sandbox-error\\">No component found. Export a function named App, Component, or Default.</div>';
+      }"""
 
     return f"""<!DOCTYPE html>
 <html lang="en">
@@ -223,39 +312,23 @@ def _wrap_for_client_render(jsx_code: str) -> str:
 <body>
   <div id="root"></div>
   <script type="text/babel" data-type="module" data-presets="react">
-    import React, {{ useState, useEffect, useRef, useCallback, useMemo, useReducer, useContext }} from 'react';
+    import React, {{ useState, useEffect, useRef, useCallback, useMemo, useReducer, useContext, createContext, forwardRef, memo }} from 'react';
     import {{ createRoot }} from 'react-dom/client';
 
     // ---- User code ----
-    {jsx_code}
+    {clean_code}
     // ---- End user code ----
 
-    // Auto-detect and mount the exported component
     (function mountApp() {{
       const root = createRoot(document.getElementById('root'));
-      if (typeof App !== 'undefined') {{ root.render(React.createElement(App)); return; }}
-      if (typeof Component !== 'undefined') {{ root.render(React.createElement(Component)); return; }}
-      if (typeof Default !== 'undefined') {{ root.render(React.createElement(Default)); return; }}
-      // Try to find any capitalised function / class
-      const candidates = [typeof Dashboard, typeof Page, typeof View, typeof Widget]
-        .map((t, i) => [['Dashboard','Page','View','Widget'][i], t])
-        .filter(([,t]) => t !== 'undefined');
-      if (candidates.length) {{
-        const [name] = candidates[0];
-        const C = eval(name);
-        root.render(React.createElement(C));
-        return;
-      }}
-      document.getElementById('root').innerHTML =
-        '<div id="sandbox-error">No component found. Export a component named App, Component, or Default.</div>';
+      {mount_call}
     }})();
   </script>
   <script>
     window.addEventListener('error', function(e) {{
-      const el = document.getElementById('sandbox-error') || document.createElement('div');
-      el.id = 'sandbox-error';
-      el.textContent = 'Runtime error: ' + e.message;
-      document.body.appendChild(el);
+      var el = document.getElementById('sandbox-error');
+      if (!el) {{ el = document.createElement('div'); el.id = 'sandbox-error'; document.body.appendChild(el); }}
+      el.textContent = 'Runtime error: ' + (e.message || String(e));
     }});
   </script>
 </body>
