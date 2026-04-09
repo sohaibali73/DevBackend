@@ -8,12 +8,17 @@ Fix 5b — session_id added to execute request/response
 Fix 5c — New artifact retrieval & session management routes
 Fix 5d — Package status route + install route that actually works
 Fix 5e — Dedicated POST /sandbox/react/execute shorthand
+Fix 6a — file_ids: inject user-uploaded files into sandbox execution
+Fix 6b — POST /sandbox/upload: upload files for sandbox use (images, xlsx, csv, etc.)
 """
 
 import logging
+import mimetypes
 from typing import Optional, List
-from fastapi import APIRouter, HTTPException, Response
+from fastapi import APIRouter, HTTPException, Response, UploadFile, File, Depends
 from pydantic import BaseModel
+
+from api.dependencies import get_current_user_id
 
 logger = logging.getLogger(__name__)
 
@@ -30,6 +35,7 @@ class SandboxExecuteRequest(BaseModel):
     timeout: int = 30
     context: Optional[dict] = None
     session_id: Optional[str] = None          # Fix 5b — persist namespace across calls
+    file_ids: Optional[List[str]] = None      # Fix 6a — uploaded file IDs to inject into sandbox
 
 
 class ArtifactResponse(BaseModel):            # Fix 5a
@@ -69,6 +75,15 @@ class LLMSandboxExecuteRequest(BaseModel):
 class LLMSandboxStatusResponse(BaseModel):
     available: bool
     languages: list
+
+
+class SandboxUploadResponse(BaseModel):       # Fix 6b
+    file_id: str
+    filename: str
+    content_type: str
+    size_bytes: int
+    download_url: str
+    message: str
 
 
 class PackageInstallRequest(BaseModel):
@@ -127,6 +142,114 @@ def _result_to_response(result, request_language: str) -> SandboxExecuteResponse
 
 
 # ---------------------------------------------------------------------------
+# Fix 6b — Dedicated sandbox file upload endpoint
+# ---------------------------------------------------------------------------
+
+# Allowed MIME types for sandbox file uploads
+_SANDBOX_UPLOAD_ALLOWED = {
+    # Images — embed in HTML/React artifacts or use with Pillow
+    "image/png", "image/jpeg", "image/gif", "image/webp", "image/bmp",
+    # Spreadsheets — openpyxl / pandas
+    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    "application/vnd.ms-excel",
+    # CSV / plain text / markdown
+    "text/csv", "text/plain", "text/markdown",
+    # JSON / XML
+    "application/json", "application/xml", "text/xml",
+    # Documents
+    "application/pdf",
+    "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+}
+
+_SANDBOX_UPLOAD_MAX_BYTES = 50 * 1024 * 1024   # 50 MB
+
+
+@router.post("/upload", response_model=SandboxUploadResponse)
+async def upload_sandbox_file(
+    file: UploadFile = File(...),
+    user_id: str = Depends(get_current_user_id),
+):
+    """
+    Upload a file for use in sandbox code execution (Fix 6b).
+
+    Returns a `file_id` you can pass to `/sandbox/execute` via `file_ids`.
+    Supports: images (PNG, JPEG, GIF, WebP), Excel (XLSX, XLS), CSV, JSON,
+    plain text, PDF, DOCX, PPTX — up to 50 MB.
+
+    In Python sandbox code the file is available as:
+        _files["myfile.xlsx"]   → absolute path  (use with openpyxl, pandas, etc.)
+        _images["photo.png"]    → base64 string  (use in HTML <img> tags)
+
+    Example — Excel manipulation:
+        import openpyxl
+        wb = openpyxl.load_workbook(_files["data.xlsx"])
+        ws = wb.active
+        ws["A1"] = "Updated by sandbox"
+        wb.save("modified.xlsx")      # auto-returned as downloadable artifact
+
+    Example — image embed in React:
+        display(HTML(f'<img src="data:image/png;base64,{_images["chart.png"]}"/>'))
+    """
+    content = await file.read()
+
+    if len(content) > _SANDBOX_UPLOAD_MAX_BYTES:
+        raise HTTPException(
+            status_code=413,
+            detail="File too large for sandbox. Maximum 50 MB.",
+        )
+
+    original_filename = file.filename or "upload"
+    content_type = (
+        file.content_type
+        or mimetypes.guess_type(original_filename)[0]
+        or "application/octet-stream"
+    )
+
+    if content_type not in _SANDBOX_UPLOAD_ALLOWED:
+        raise HTTPException(
+            status_code=415,
+            detail=(
+                f"File type '{content_type}' is not supported for sandbox upload. "
+                "Allowed: images (png/jpeg/gif/webp), xlsx, xls, csv, txt, json, "
+                "xml, pdf, docx, pptx."
+            ),
+        )
+
+    ext = original_filename.rsplit(".", 1)[-1].lower() if "." in original_filename else "bin"
+
+    try:
+        from core.file_store import store_file
+        entry = store_file(
+            data=content,
+            filename=original_filename,
+            file_type=ext,
+            tool_name="sandbox_upload",
+        )
+    except Exception as e:
+        logger.error("Sandbox file upload failed: %s", e, exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Storage error: {e}")
+
+    logger.info(
+        "Sandbox file uploaded: %s (%s, %.1f KB) [id=%s] by user %s",
+        original_filename, content_type, len(content) / 1024, entry.file_id, user_id,
+    )
+
+    return SandboxUploadResponse(
+        file_id=entry.file_id,
+        filename=entry.filename,
+        content_type=content_type,
+        size_bytes=len(content),
+        download_url=f"/files/{entry.file_id}/download",
+        message=(
+            f"Ready. Pass file_id to /sandbox/execute via the file_ids field. "
+            f"In Python: _files['{original_filename}'] → path, "
+            f"_images['{original_filename}'] → base64 (images only)."
+        ),
+    )
+
+
+# ---------------------------------------------------------------------------
 # Core execution routes
 # ---------------------------------------------------------------------------
 
@@ -136,7 +259,17 @@ async def execute_sandbox(request: SandboxExecuteRequest):
     Execute Python, JavaScript, or React code in a sandboxed environment.
 
     Pass `session_id` to carry variable state across multiple calls (Python only).
-    The response includes `artifacts` for rich outputs (images, HTML, React components).
+
+    Pass `file_ids` (Fix 6a) to inject uploaded files into the sandbox:
+      - Upload a file first via POST /sandbox/upload (or POST /upload/direct)
+      - Include the returned file_id(s) in this request's file_ids list
+      - In Python code:
+            _files["data.xlsx"]  → absolute path to the file in sandbox workspace
+            _images["chart.png"] → base64 string ready for <img src="data:..."/>
+
+    The response includes `artifacts` for rich outputs (images, HTML, React, files).
+    Any files written by code to the sandbox dir are auto-collected as downloadable
+    artifacts (xlsx, csv, png, pdf, etc.).
     """
     try:
         from core.sandbox import get_sandbox_manager
@@ -152,11 +285,30 @@ async def execute_sandbox(request: SandboxExecuteRequest):
                 ),
             )
 
+        # Fix 6a — resolve file_ids → inject as _sandbox_files in execution context
+        context = dict(request.context or {})
+        if request.file_ids:
+            try:
+                from core.sandbox.file_injector import resolve_sandbox_files
+                sandbox_files = resolve_sandbox_files(request.file_ids)
+                if sandbox_files:
+                    context["_sandbox_files"] = sandbox_files
+                    logger.info(
+                        "Injecting %d file(s) into sandbox: %s",
+                        len(sandbox_files), list(sandbox_files.keys()),
+                    )
+                else:
+                    logger.warning(
+                        "file_ids provided but none resolved: %s", request.file_ids
+                    )
+            except Exception as fe:
+                logger.warning("Could not resolve sandbox file_ids: %s", fe)
+
         result = await manager.execute(
             language=request.language,
             code=request.code,
             timeout=request.timeout,
-            context=request.context,
+            context=context if context else None,
             session_id=request.session_id,
         )
 
@@ -188,6 +340,7 @@ async def execute_react_sandbox(request: SandboxExecuteRequest):
         timeout=request.timeout,
         context=request.context,
         session_id=request.session_id,
+        file_ids=request.file_ids,
     )
     return await execute_sandbox(request)
 

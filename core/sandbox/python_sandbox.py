@@ -608,16 +608,34 @@ def _make_sandboxed_open(sandbox_dir: Path):
     return _sandboxed_open
 
 
-def _collect_file_artifacts(sandbox_dir: Path) -> List[DisplayArtifact]:
+def _collect_file_artifacts(
+    sandbox_dir: Path,
+    injected_mtimes: Optional[Dict[str, float]] = None,
+) -> List[DisplayArtifact]:
     """
     Walk sandbox_dir after execution; convert files the user's code wrote into
     downloadable FileArtifacts (stored as base64 in the DB, served via API).
+
+    injected_mtimes: mapping of absolute path → mtime at injection time.
+    Files that are in injected_mtimes AND whose mtime has not changed are
+    skipped (they are unmodified input files, not outputs).
     """
+    _skip: Dict[str, float] = injected_mtimes or {}
     artifacts: List[DisplayArtifact] = []
     try:
         for fp in sorted(Path(str(sandbox_dir)).rglob("*")):
             if not fp.is_file():
                 continue
+            # Skip injected input files that were NOT modified by user code
+            fp_str = str(fp)
+            if fp_str in _skip:
+                try:
+                    current_mtime = fp.stat().st_mtime
+                    if abs(current_mtime - _skip[fp_str]) < 0.5:
+                        logger.debug("Skipping unmodified injected file: %s", fp.name)
+                        continue
+                except OSError:
+                    pass  # file deleted — nothing to skip
             size = fp.stat().st_size
             if size == 0 or size > _MAX_FILE_ARTIFACT_BYTES:
                 continue
@@ -917,12 +935,43 @@ class PythonSandbox(BaseSandbox):
         exec_globals["JSON"] = JSON
         exec_globals["__sandbox_dir__"] = str(sandbox_dir)  # let code discover its workspace
 
+        # ---- Fix 6a: Inject uploaded files from _sandbox_files context key ----
+        # sandbox_files: Dict[str, bytes]  (filename → raw bytes)
+        # Written to sandbox_dir so the sandboxed open() can access them.
+        # _files  = {"report.xlsx": "/tmp/sbx_xxx/report.xlsx"}   — all types
+        # _images = {"chart.png":   "<base64>"}                   — images only
+        #
+        # Track injection mtimes so _collect_file_artifacts can skip input files
+        # that were NOT modified by the code (avoids returning noisy unmodified inputs).
+        _injected_files: Dict[str, str] = {}
+        _injected_images: Dict[str, str] = {}
+        _injected_mtimes: Dict[str, float] = {}  # path → mtime right after write
+        if context and "_sandbox_files" in context:
+            for _fname, _fdata in (context.get("_sandbox_files") or {}).items():
+                try:
+                    _dest = sandbox_dir / _fname
+                    _dest.write_bytes(_fdata)
+                    _injected_mtimes[str(_dest)] = _dest.stat().st_mtime
+                    _injected_files[_fname] = str(_dest)
+                    _ext_lower = _fname.rsplit(".", 1)[-1].lower() if "." in _fname else ""
+                    if _ext_lower in ("png", "jpg", "jpeg", "gif", "webp", "bmp"):
+                        _injected_images[_fname] = base64.b64encode(_fdata).decode("utf-8")
+                    logger.info("Injected sandbox file: %s → %s", _fname, _dest)
+                except Exception as _inj_err:
+                    logger.warning("Could not inject sandbox file %s: %s", _fname, _inj_err)
+
         # ---- Local vars ----
         local_vars: Dict[str, Any] = {}
         if persisted_namespace:
             _inject_persisted_namespace(persisted_namespace, local_vars)
         if context:
-            local_vars.update(context)
+            # Inject user context variables, skip internal _sandbox_* transport keys
+            for _k, _v in context.items():
+                if not _k.startswith("_sandbox_"):
+                    local_vars[_k] = _v
+        # Always expose _files and _images so code can reference them unconditionally
+        local_vars["_files"] = _injected_files
+        local_vars["_images"] = _injected_images
 
         # ---- Patch plotly.io.show to capture figures as HTML artifacts ----
         _plotly_show_orig = None
@@ -976,8 +1025,9 @@ class PythonSandbox(BaseSandbox):
             except ImportError:
                 pass
 
-            # Collect files written to sandbox_dir as downloadable artifacts
-            file_artifacts = _collect_file_artifacts(sandbox_dir)
+            # Collect files written to sandbox_dir as downloadable artifacts.
+            # Skip injected input files that were NOT modified by the code.
+            file_artifacts = _collect_file_artifacts(sandbox_dir, _injected_mtimes)
             captured_artifacts.extend(file_artifacts)
 
             stdout_str = captured_output.getvalue()
