@@ -444,20 +444,58 @@ TOOL_DEFINITIONS = [
         "name": "web_search",
         "max_uses": 5
     },
-    # Custom: Code Execution
+    # Custom: Python Code Execution
     {
         "name": "execute_python",
-        "description": "Execute Python code for calculations, data analysis, or generating AFL formulas. The code runs in a sandboxed environment with access to common libraries like math, statistics, numpy, pandas. Use this for complex calculations, backtesting logic, or data processing.",
+        "description": "Execute Python code for calculations, data analysis, or generating AFL formulas. The code runs in a sandboxed environment with access to common libraries like math, statistics, numpy, pandas, matplotlib, seaborn, plotly, yfinance, requests, and more. Use this for complex calculations, backtesting logic, data processing, or generating charts. Charts created with plt.show() are automatically captured as image artifacts. Use display(HTML(...)) or display(SVG(...)) for rich HTML/SVG output.",
         "input_schema": {
             "type": "object",
             "properties": {
                 "code": {
                     "type": "string",
-                    "description": "Python code to execute. Must be safe and computational (no file I/O, network, or system calls)."
+                    "description": "Python code to execute. No file I/O or system calls. Use print() for output. Use plt.show() for charts."
                 },
                 "description": {
                     "type": "string",
                     "description": "Brief description of what the code does"
+                }
+            },
+            "required": ["code"]
+        }
+    },
+    # Custom: React/JSX Component Execution
+    {
+        "name": "execute_react",
+        "description": (
+            "Build an interactive React/JSX component or UI and render it as a live iframe in the chat. "
+            "Use this when the user asks for interactive UI, dashboards, data visualizations, forms, games, "
+            "animations, or any visual component. "
+            "The component runs in the browser with full React 18 support.\n\n"
+            "AVAILABLE CDN PACKAGES (import directly, no install needed):\n"
+            "- UI: react, react-dom, lucide-react, @radix-ui/react-icons, react-icons, framer-motion\n"
+            "- Charts: recharts, chart.js, d3\n"
+            "- Styling: Tailwind CSS classes work out of the box (CDN loaded)\n"
+            "- Utilities: clsx, tailwind-merge, class-variance-authority, lodash, mathjs, uuid, zod\n"
+            "- State: zustand, jotai, immer\n"
+            "- Forms: react-hook-form\n"
+            "- Date: date-fns, dayjs\n"
+            "- HTTP: axios\n\n"
+            "RULES:\n"
+            "- Export the main component as 'App', 'Component', or 'Default'\n"
+            "- All React hooks (useState, useEffect, useRef, etc.) are pre-imported\n"
+            "- Use Tailwind classes for styling (no CSS imports needed)\n"
+            "- Do NOT import from 'react' directly — React and hooks are pre-imported"
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "code": {
+                    "type": "string",
+                    "description": "JSX/React code. Export a component named App, Component, or Default. Tailwind and CDN packages available."
+                },
+                "description": {
+                    "type": "string",
+                    "description": "Brief description of the component"
                 }
             },
             "required": ["code"]
@@ -1491,38 +1529,115 @@ TOOL_DEFINITIONS = [
 # TOOL HANDLERS
 # =============================================================================
 
-def execute_python(code: str, description: str = "") -> Dict[str, Any]:
+def execute_react(code: str, description: str = "") -> Dict[str, Any]:
     """
-    Execute Python code in a sandboxed environment.
+    Wrap React/JSX code using the ReactSandbox.
 
-    The sandbox globals dict (_SANDBOX_GLOBALS) is built ONCE at module load —
-    no per-call import overhead.  _DANGEROUS_KEYWORDS are pre-lowercased frozenset
-    entries, so only one .lower() is needed (on the submitted code, not per keyword).
+    Returns a self-contained HTML page (CDN Babel + esm.sh importmap + Tailwind)
+    that the frontend renders in an iframe.  No Node.js subprocess is spawned —
+    this is synchronous and fast.
+
+    Supported CDN packages (no install needed):
+      react, react-dom, lucide-react, recharts, chart.js, d3, framer-motion,
+      zustand, lodash, zod, date-fns, clsx, tailwind-merge, react-hook-form,
+      @headlessui/react, @heroicons/react, mathjs, uuid, axios, immer, and more.
+
+    Tailwind CSS utility classes work out of the box.
+
+    The component is auto-mounted if it is named App, Component, or Default.
     """
-    code_lower = code.lower()
-    for keyword in _DANGEROUS_KEYWORDS:
-        if keyword in code_lower:
-            # Allow safe io.StringIO / csv patterns even when "open(" appears
-            if keyword == "open(" and ("io.stringio" in code_lower or "csv" in code_lower):
-                continue
+    try:
+        import uuid as _uuid
+        from core.sandbox.node_sandbox import ReactSandbox, _wrap_for_client_render
+
+        # Validate for dangerous patterns (sync)
+        sandbox = ReactSandbox()
+        validation = sandbox.validate(code)
+        if not validation["safe"]:
             return {
                 "success": False,
-                "error":   f"Unsafe operation detected: {keyword}",
-                "output":  None,
+                "error": f"Unsafe code: {'; '.join(validation['issues'])}",
+                "language": "react",
             }
 
-    try:
-        local_vars: Dict = {}
-        exec(code, _SANDBOX_GLOBALS, local_vars)
-        output = local_vars.get("result", local_vars.get("output", None))
+        # Generate the self-contained HTML page (fully synchronous)
+        html = _wrap_for_client_render(code)
+        artifact_id = str(_uuid.uuid4())
+
         return {
-            "success": True,
-            "output": str(output) if output is not None else "Code executed successfully",
-            # Truncate long variable repr values to keep the JSON payload small
-            "variables": {k: str(v)[:200] for k, v in local_vars.items() if not k.startswith("_")},
+            "success":      True,
+            "output":       "React component compiled successfully",
+            "display_type": "react",
+            "language":     "react",
+            "artifacts": [
+                {
+                    "artifact_id":  artifact_id,
+                    "type":         "text/html",
+                    "display_type": "react",
+                    "data":         html,
+                    "encoding":     "utf-8",
+                    "metadata":     {"renderer": "client", "framework": "react18"},
+                }
+            ],
         }
+
     except Exception as e:
-        return {"success": False, "error": str(e), "traceback": traceback.format_exc()[:500]}
+        return {
+            "success":   False,
+            "error":     str(e),
+            "traceback": traceback.format_exc()[:500],
+            "language":  "react",
+        }
+
+
+def execute_python(code: str, description: str = "") -> Dict[str, Any]:
+    """
+    Execute Python code in the unified PythonSandbox.
+
+    Delegates to PythonSandbox._execute_sync() which provides:
+      - AST-based security validation (replaces bypassable keyword blocklist)
+      - Thread-safe stdout capture via patched print()
+      - matplotlib figure capture → base64 PNG artifacts
+      - display() / HTML() / SVG() Jupyter-like helpers
+      - Shared _SANDBOX_GLOBALS (package installs are immediately visible)
+    """
+    try:
+        from core.sandbox.python_sandbox import PythonSandbox
+
+        # Use __new__ to skip __init__ (which schedules an async task).
+        # _execute_sync is fully synchronous and safe to call directly.
+        sandbox = object.__new__(PythonSandbox)
+        result, _namespace = sandbox._execute_sync(code, context=None, persisted_namespace={})
+
+        out: Dict[str, Any] = {
+            "success": result.success,
+            "output": result.output,
+            "variables": result.variables,
+        }
+        if not result.success:
+            out["error"] = result.error
+            out["traceback"] = result.output  # _execute_sync puts tb in output on failure
+        if result.artifacts:
+            out["artifacts"] = [
+                {
+                    "artifact_id": a.artifact_id,
+                    "type": a.type,
+                    "display_type": a.display_type,
+                    "data": a.data,
+                    "encoding": a.encoding,
+                    "metadata": a.metadata,
+                }
+                for a in result.artifacts
+            ]
+            out["display_type"] = result.display_type
+        return out
+
+    except Exception as e:
+        return {
+            "success": False,
+            "error": str(e),
+            "traceback": traceback.format_exc()[:500],
+        }
 
 
 def search_knowledge_base(
@@ -3674,6 +3789,7 @@ def search_flights(
 _STATIC_DISPATCH: Dict[str, Any] = {
     # Each entry: tool_name → lambda tool_input: handler(...)
     "execute_python":         lambda ti: execute_python(code=ti.get("code",""), description=ti.get("description","")),
+    "execute_react":          lambda ti: execute_react(code=ti.get("code",""), description=ti.get("description","")),
     "get_stock_data":         lambda ti: get_stock_data(symbol=ti.get("symbol",""), period=ti.get("period","1mo"), info_type=ti.get("info_type","price")),
     "validate_afl":           lambda ti: validate_afl(code=ti.get("code","")),
     "sanity_check_afl":       lambda ti: sanity_check_afl(code=ti.get("code",""), auto_fix=ti.get("auto_fix",True)),

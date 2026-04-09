@@ -15,6 +15,7 @@ import base64
 import io as _io
 import json
 import math
+import random
 import re as re_mod
 import statistics
 import csv
@@ -60,16 +61,28 @@ _SANDBOX_GLOBALS: Dict[str, Any] = {
         "str": str, "sum": sum, "tuple": tuple, "zip": zip,
         "print": print,          # overridden per-execution (Fix 2a)
         "True": True, "False": False, "None": None,
-        "isinstance": isinstance, "type": type, "hasattr": hasattr,
-        "getattr": getattr, "callable": callable,
+        "isinstance": isinstance, "issubclass": issubclass,
+        "type": type, "hasattr": hasattr,
+        "getattr": getattr, "setattr": setattr, "delattr": delattr,
+        "callable": callable, "repr": repr, "hash": hash, "id": id,
+        "iter": iter, "next": next,
+        "dir": dir, "vars": vars,
+        "chr": chr, "ord": ord, "bin": bin, "hex": hex, "oct": oct,
+        "object": object, "super": super,
+        "property": property, "staticmethod": staticmethod, "classmethod": classmethod,
         "ValueError": ValueError, "TypeError": TypeError,
         "KeyError": KeyError, "IndexError": IndexError,
         "AttributeError": AttributeError, "RuntimeError": RuntimeError,
-        "StopIteration": StopIteration, "Exception": Exception,
+        "NameError": NameError, "StopIteration": StopIteration,
+        "Exception": Exception, "BaseException": BaseException,
         "NotImplementedError": NotImplementedError,
         "OverflowError": OverflowError, "ZeroDivisionError": ZeroDivisionError,
+        "ImportError": ImportError, "ModuleNotFoundError": ModuleNotFoundError,
+        "AssertionError": AssertionError, "LookupError": LookupError,
+        "ArithmeticError": ArithmeticError,
         "__import__": __import__,   # needed for `import pandas` etc in exec
     },
+    "random": random,
     "math": math,
     "statistics": statistics,
     "csv": csv,
