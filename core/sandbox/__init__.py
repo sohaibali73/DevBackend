@@ -23,6 +23,7 @@ Usage:
 
 from core.sandbox.base import BaseSandbox, SandboxResult, SandboxLanguage
 from core.sandbox.manager import SandboxManager
+from core.sandbox.package_manager import get_package_manager
 
 # Singleton manager — initialized once per process
 _manager: "SandboxManager | None" = None
@@ -83,4 +84,5 @@ __all__ = [
     "SandboxManager",
     "get_sandbox_manager",
     "get_llm_sandbox_manager",
+    "get_package_manager",
 ]

@@ -46,6 +46,26 @@ class LLMSandboxStatusResponse(BaseModel):
     languages: list
 
 
+class PackageInstallRequest(BaseModel):
+    language: str
+    packages: list[str]
+    user_id: Optional[str] = None
+
+
+class PackageInstallResponse(BaseModel):
+    success: bool
+    message: str
+    packages: list
+    logs: list[str]
+
+
+class PackageListResponse(BaseModel):
+    language: str
+    preinstalled: list
+    cached: list
+    user_installed: list
+
+
 @router.post("/execute", response_model=SandboxExecuteResponse)
 async def execute_sandbox(request: SandboxExecuteRequest):
     """Execute code in a sandboxed environment."""
@@ -186,3 +206,92 @@ async def get_llm_sandbox_status():
             available=False,
             languages=[],
         )
+
+
+@router.post("/packages/install", response_model=PackageInstallResponse)
+async def install_sandbox_packages(request: PackageInstallRequest):
+    """Install packages into the sandbox environment."""
+    try:
+        from core.sandbox.package_manager import get_package_manager
+        
+        manager = get_package_manager()
+        
+        result = await manager.install_packages(
+            language=request.language,
+            packages=request.packages,
+            user_id=request.user_id
+        )
+        
+        return PackageInstallResponse(
+            success=result.success,
+            message=result.message,
+            packages=[{
+                "name": pkg.name,
+                "version": pkg.version,
+                "status": pkg.status.value,
+                "language": pkg.language,
+                "install_time_ms": pkg.install_time_ms,
+                "size_kb": pkg.size_kb
+            } for pkg in result.packages],
+            logs=result.logs
+        )
+    except Exception as e:
+        logger.error(f"Package installation error: {e}", exc_info=True)
+        return PackageInstallResponse(
+            success=False,
+            message=f"Installation failed: {str(e)}",
+            packages=[],
+            logs=[f"Error: {str(e)}"]
+        )
+
+
+@router.get("/packages/{language}/all", response_model=PackageListResponse)
+async def list_all_packages(language: str, user_id: Optional[str] = None):
+    """List all available packages including preinstalled, cached, and user installed."""
+    try:
+        from core.sandbox.package_manager import get_package_manager
+        
+        manager = get_package_manager()
+        packages = manager.list_all_packages(language, user_id)
+        
+        return PackageListResponse(
+            language=language,
+            preinstalled=[{
+                "name": pkg.name,
+                "status": pkg.status.value
+            } for pkg in packages["preinstalled"]],
+            cached=[{
+                "name": pkg.name,
+                "version": pkg.version,
+                "status": pkg.status.value
+            } for pkg in packages["cached"]],
+            user_installed=[{
+                "name": pkg.name,
+                "version": pkg.version,
+                "status": pkg.status.value
+            } for pkg in packages["user_installed"]]
+        )
+    except Exception as e:
+        logger.error(f"Error listing packages: {e}", exc_info=True)
+        return PackageListResponse(
+            language=language,
+            preinstalled=[],
+            cached=[],
+            user_installed=[]
+        )
+
+
+@router.post("/packages/cache/clear")
+async def clear_package_cache():
+    """Clear the package cache."""
+    try:
+        from core.sandbox.package_manager import get_package_manager
+        
+        manager = get_package_manager()
+        manager.clear_cache()
+        
+        return {"success": True, "message": "Package cache cleared successfully"}
+    except Exception as e:
+        logger.error(f"Error clearing package cache: {e}", exc_info=True)
+        return {"success": False, "error": str(e)}
+
