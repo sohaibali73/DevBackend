@@ -166,6 +166,288 @@ function buildContent(sections) {
   for (const item of (sections || [])) {
     switch (item.type) {
 
+      // ── Callout ─────────────────────────────────────────────────────────
+      case 'callout': {
+        const bg = item.style === 'dark'   ? '333333'
+                 : item.style === 'light'  ? 'F9F9F9'
+                 :                          'FEF3CD'; // yellow default
+        const accent = item.style === 'dark' ? DARK_GRAY : YELLOW;
+        const textColor = item.style === 'dark' ? WHITE : DARK_GRAY;
+        const title = item.title || '';
+        const body = item.body || '';
+        const icon = item.icon || '';
+
+        const children = [];
+        if (icon || title) {
+          children.push(new Paragraph({
+            children: [
+              icon ? new TextRun({ text: icon + '  ', font: 'Quicksand', size: 24, color: accent }) : null,
+              new TextRun({ text: title, font: 'Rajdhani', size: 24, bold: true, color: textColor, allCaps: true }),
+            ].filter(Boolean),
+            spacing: { after: 120 },
+          }));
+        }
+        children.push(new Paragraph({
+          children: [new TextRun({ text: body, font: 'Quicksand', size: 22, color: textColor })],
+        }));
+
+        out.push(new Table({
+          width: { size: 9360, type: WidthType.DXA },
+          rows: [
+            new TableRow({
+              children: [
+                new TableCell({
+                  borders: {
+                    top: BDR, bottom: BDR, left: { style: BorderStyle.SINGLE, size: 18, color: accent }, right: BDR,
+                  },
+                  shading: { fill: bg, type: ShadingType.CLEAR },
+                  margins: { top: 160, bottom: 160, left: 240, right: 240 },
+                  children,
+                }),
+              ],
+            }),
+          ],
+        }));
+        out.push(new Paragraph({ spacing: { after: 240 } }));
+        break;
+      }
+
+      // ── KPI Row ─────────────────────────────────────────────────────────
+      case 'kpi_row': {
+        const metrics = item.metrics || [];
+        if (metrics.length === 0) break;
+
+        const kpiCells = metrics.map((m) => {
+          const isPositive = m.positive === true;
+          const isNegative = m.positive === false;
+          const deltaColor = isPositive ? '2D7D46' : isNegative ? 'C0392B' : DARK_GRAY;
+          const children = [];
+
+          children.push(new Paragraph({
+            alignment: AlignmentType.CENTER,
+            children: [
+              new TextRun({
+                text: String(m.value || ''),
+                font: 'Rajdhani', size: 48, bold: true, color: DARK_GRAY,
+              }),
+            ],
+          }));
+
+          children.push(new Paragraph({
+            alignment: AlignmentType.CENTER,
+            children: [
+              new TextRun({
+                text: String(m.label || ''),
+                font: 'Quicksand', size: 20, color: '666666',
+              }),
+            ],
+            spacing: { after: 40 },
+          }));
+
+          if (m.delta) {
+            children.push(new Paragraph({
+              alignment: AlignmentType.CENTER,
+              children: [
+                new TextRun({
+                  text: isPositive ? `↑ ${m.delta}` : isNegative ? `↓ ${m.delta}` : m.delta,
+                  font: 'Quicksand', size: 18, bold: true, color: deltaColor,
+                }),
+              ],
+            }));
+          }
+
+          return new TableCell({
+            borders: BDRS,
+            shading: { fill: WHITE, type: ShadingType.CLEAR },
+            margins: { top: 160, bottom: 160, left: 80, right: 80 },
+            children,
+          });
+        });
+
+        out.push(new Table({
+          width: { size: 9360, type: WidthType.DXA },
+          rows: [new TableRow({ children: kpiCells })],
+        }));
+        out.push(new Paragraph({ spacing: { after: 240 } }));
+        break;
+      }
+
+      // ── Quote Block ─────────────────────────────────────────────────────
+      case 'quote_block': {
+        const quote = item.quote || '';
+        const attribution = item.attribution || '';
+        const bg = item.background === 'none' ? WHITE : 'F9F9F9';
+
+        out.push(new Table({
+          width: { size: 9360, type: WidthType.DXA },
+          rows: [
+            new TableRow({
+              children: [
+                new TableCell({
+                  borders: {
+                    top: BDR, bottom: BDR, left: { style: BorderStyle.SINGLE, size: 18, color: YELLOW }, right: BDR,
+                  },
+                  shading: { fill: bg, type: ShadingType.CLEAR },
+                  margins: { top: 200, bottom: 200, left: 240, right: 240 },
+                  children: [
+                    new Paragraph({
+                      children: [new TextRun({ text: quote, font: 'Quicksand', size: 26, italics: true, color: DARK_GRAY })],
+                      spacing: { after: 120 },
+                    }),
+                    attribution ? new Paragraph({
+                      children: [new TextRun({ text: attribution, font: 'Quicksand', size: 20, color: '666666' })],
+                    }) : null,
+                  ].filter(Boolean),
+                }),
+              ],
+            }),
+          ],
+        }));
+        out.push(new Paragraph({ spacing: { after: 240 } }));
+        break;
+      }
+
+      // ── Highlight Table ─────────────────────────────────────────────────
+      case 'highlight_table': {
+        const headers = item.headers || [];
+        const rows = item.rows || [];
+        const colCount = Math.max(headers.length, rows[0] ? rows[0].length : 0);
+        if (colCount === 0) break;
+
+        const totalW = 9360;
+        const colWidths = (item.col_widths && item.col_widths.length === colCount)
+                        ? item.col_widths
+                        : Array(colCount).fill(Math.floor(totalW / colCount));
+        const autoColor = item.auto_color_cols || [];
+        const alignments = item.col_alignment || Array(colCount).fill('left');
+        const isSummaryRow = item.summary_row === true;
+
+        const hdrRow = new TableRow({
+          children: headers.map((h, i) => new TableCell({
+            borders : BDRS,
+            width   : { size: colWidths[i] || 1000, type: WidthType.DXA },
+            shading : { fill: YELLOW, type: ShadingType.CLEAR },
+            margins : MRGN,
+            children: [new Paragraph({
+              alignment: alignments[i] === 'right' ? AlignmentType.RIGHT
+                       : alignments[i] === 'center' ? AlignmentType.CENTER
+                       :                              AlignmentType.LEFT,
+              children: [new TextRun({ text: String(h), font: 'Quicksand', size: 20, bold: true, color: DARK_GRAY })]
+            })]
+          }))
+        });
+
+        const dataRows = rows.map((row, ri) => {
+          const isLastRow = isSummaryRow && ri === rows.length - 1;
+          return new TableRow({
+            children: row.map((cell, ci) => {
+              const cellVal = String(cell == null ? '' : cell);
+              const autoGreen = autoColor.includes(ci) && cellVal.startsWith('+');
+              const autoRed   = autoColor.includes(ci) && (cellVal.startsWith('-') || cellVal.startsWith('−'));
+              const fill = isLastRow ? 'EEEEEE'
+                           : autoGreen ? 'E9F5EC'
+                           : autoRed   ? 'FDECEA'
+                           : ri % 2 === 0 ? WHITE : 'F9F9F9';
+              return new TableCell({
+                borders : BDRS,
+                width   : { size: colWidths[ci] || 1000, type: WidthType.DXA },
+                shading : { fill, type: ShadingType.CLEAR },
+                margins : MRGN,
+                children: [new Paragraph({
+                  alignment: alignments[ci] === 'right' ? AlignmentType.RIGHT
+                           : alignments[ci] === 'center' ? AlignmentType.CENTER
+                           :                              AlignmentType.LEFT,
+                  children: [new TextRun({
+                    text: cellVal,
+                    font: 'Quicksand', size: isLastRow ? 20 : 20,
+                    bold: isLastRow,
+                    color: DARK_GRAY
+                  })]
+                })]
+              });
+            })
+          });
+        });
+
+        out.push(new Table({ width: { size: totalW, type: WidthType.DXA }, rows: [hdrRow, ...dataRows] }));
+        if (item.caption) {
+          out.push(new Paragraph({
+            spacing : { after: 240, before: 60 },
+            children : [new TextRun({
+              text    : item.caption,
+              font    : 'Quicksand',
+              size    : 18,
+              italics : true,
+              color   : '666666',
+            })],
+          }));
+        } else {
+          out.push(new Paragraph({ spacing: { after: 240 } }));
+        }
+        break;
+      }
+
+      // ── Two Column ──────────────────────────────────────────────────────
+      case 'two_column': {
+        const left = item.left || {};
+        const right = item.right || {};
+        const showDivider = item.divider === true;
+
+        const colWidth = Math.floor(9360 / 2);
+        const leftChildren = [];
+        const rightChildren = [];
+
+        if (left.heading) leftChildren.push(new Paragraph({
+          heading: HeadingLevel.HEADING_3,
+          children: [new TextRun(left.heading || '')]
+        }));
+        if (left.body) leftChildren.push(new Paragraph({
+          spacing: { after: 200 },
+          children: [new TextRun({ text: left.body || '', font: 'Quicksand', size: 22, color: DARK_GRAY })]
+        }));
+
+        if (right.heading) rightChildren.push(new Paragraph({
+          heading: HeadingLevel.HEADING_3,
+          children: [new TextRun(right.heading || '')]
+        }));
+        if (right.body) rightChildren.push(new Paragraph({
+          spacing: { after: 200 },
+          children: [new TextRun({ text: right.body || '', font: 'Quicksand', size: 22, color: DARK_GRAY })]
+        }));
+
+        out.push(new Table({
+          width: { size: 9360, type: WidthType.DXA },
+          rows: [new TableRow({
+            children: [
+              new TableCell({
+                borders: {
+                  top: { style: BorderStyle.NONE },
+                  bottom: { style: BorderStyle.NONE },
+                  left: { style: BorderStyle.NONE },
+                  right: showDivider ? { style: BorderStyle.SINGLE, size: 3, color: YELLOW } : { style: BorderStyle.NONE },
+                },
+                width: { size: colWidth, type: WidthType.DXA },
+                margins: { top: 40, bottom: 40, left: 0, right: showDivider ? 200 : 0 },
+                children: leftChildren,
+              }),
+              new TableCell({
+                borders: {
+                  top: { style: BorderStyle.NONE },
+                  bottom: { style: BorderStyle.NONE },
+                  left: { style: BorderStyle.NONE },
+                  right: { style: BorderStyle.NONE },
+                },
+                width: { size: colWidth, type: WidthType.DXA },
+                margins: { top: 40, bottom: 40, left: showDivider ? 200 : 0, right: 0 },
+                children: rightChildren,
+              }),
+            ],
+          })],
+        }));
+        out.push(new Paragraph({ spacing: { after: 240 } }));
+        break;
+      }
+
       // ── Heading ─────────────────────────────────────────────────────────
       case 'heading': {
         const lvl = item.level === 2 ? HeadingLevel.HEADING_2

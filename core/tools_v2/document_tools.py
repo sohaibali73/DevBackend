@@ -90,20 +90,26 @@ GENERATE_DOCX_TOOL_DEF: Dict[str, Any] = {
                 "description": "Color of the underline beneath the header logo.",
             },
             "footer_text": {"type": "string", "description": "Custom footer left text."},
-            "sections": {
-                "type": "array",
-                "description": (
-                    "Ordered content blocks. Each has a 'type' field:\n"
-                    "  heading    → level (1/2/3), text\n"
-                    "  paragraph  → text  OR  runs:[{text,bold,italics,color}]\n"
-                    "  bullets    → items:[str, ...]\n"
-                    "  numbered   → items:[str, ...]\n"
-                    "  table      → headers:[str], rows:[[str]], col_widths:[int] (opt)\n"
-                    "  image      → file_id (upload) or data (base64), width, height, align, caption\n"
-                    "  divider    → (yellow horizontal rule)\n"
-                    "  spacer     → size (twips)\n"
-                    "  page_break → (no extra fields)"
-                ),
+        "sections": {
+            "type": "array",
+            "description": (
+                "Ordered content blocks. Each has a 'type' field:\n"
+                "\n"
+                "  heading      → level (1/2/3), text\n"
+                "  paragraph    → text  OR  runs:[{text,bold,italics,color,hyperlink}]\n"
+                "  bullets      → items:[str, ...]\n"
+                "  numbered     → items:[str, ...]\n"
+                "  table        → headers:[str], rows:[[str]], col_widths:[int], col_alignment, caption, summary_row\n"
+                "  highlight_table → Auto-color table (green/red by +/- sign). Same fields as table + auto_color_cols\n"
+                "  image        → file_id (upload) or data (base64), width, height, align, caption\n"
+                "  callout      → style (yellow/dark/light), icon, title, body\n"
+                "  kpi_row      → metrics:[{value,label,delta,positive}]\n"
+                "  quote_block  → quote, attribution, background\n"
+                "  two_column   → left:{heading,body}, right:{heading,body}, divider\n"
+                "  divider      → (yellow horizontal rule)\n"
+                "  spacer       → size (twips)\n"
+                "  page_break   → (no extra fields)\n"
+            ),
                 "items": {
                     "type": "object",
                     "properties": {
