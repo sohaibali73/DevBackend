@@ -566,6 +566,29 @@ function buildContent(sections) {
       // The Python layer resolves file_id → base64 before invoking Node,
       // so this case only needs to handle the inline `data` field.
       // ── Chart/Plot Injection from sandbox artifacts ────────────────────────
+      // ── Table of Contents ───────────────────────────────────────────────
+      case 'toc': {
+        const depth = item.depth || 2;
+        const title = item.title || 'TABLE OF CONTENTS';
+
+        out.push(new Paragraph({
+          heading: HeadingLevel.HEADING_2,
+          children: [new TextRun(title)],
+        }));
+
+        // TOC field code with depth limit (1 = H1 only, 2 = H1+H2, 3 = H1+H2+H3)
+        const tocField = `TOC \\o "${depth}-${depth}" \\h \\z \\u`;
+        out.push(new Paragraph({
+          spacing: { after: 360 },
+          children: [
+            new TextRun({ text: 'Generating table of contents...', italics: true, color: '666666' }),
+            // Word will populate this on first open
+          ],
+        }));
+        break;
+      }
+
+      // ── Chart ───────────────────────────────────────────────────────────
       case 'chart': {
         // Same logic as image, just an alias for chart artifacts from sandbox
         if (!item.data) break;

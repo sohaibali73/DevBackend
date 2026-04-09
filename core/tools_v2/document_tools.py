@@ -123,6 +123,7 @@ GENERATE_DOCX_TOOL_DEF: Dict[str, Any] = {
                 "  quote_block  → quote, attribution, background\n"
                 "  two_column   → left:{heading,body}, right:{heading,body}, divider\n"
                 "  table_from_xlsx → Import table directly from uploaded xlsx file_id\n"
+                "  include_pdf    → Inject pages from uploaded PDF file as high res images\n"
                 "  divider      → (yellow horizontal rule)\n"
                 "  spacer       → size (twips)\n"
                 "  page_break   → (no extra fields)\n"
@@ -221,6 +222,20 @@ def handle_generate_docx(
                 except Exception as e:
                     logger.warning("Failed to resolve table_from_xlsx: %s", e)
                     resolved_sections.append({"type": "paragraph", "text": f"[Table import failed: {str(e)}]"})
+            elif section.get("type") == "include_pdf":
+                try:
+                    from core.tools_v2.pdf_injector import pdf_pages_to_sections
+                    pdf_sections = pdf_pages_to_sections(
+                        file_id=section.get("file_id", ""),
+                        pages=section.get("pages"),
+                        zoom=section.get("zoom", 2.0),
+                        caption=section.get("caption"),
+                        align=section.get("align", "center"),
+                    )
+                    resolved_sections.extend(pdf_sections)
+                except Exception as e:
+                    logger.warning("Failed to resolve include_pdf: %s", e)
+                    resolved_sections.append({"type": "paragraph", "text": f"[PDF import failed: {str(e)}]"})
             else:
                 resolved_sections.append(section)
         spec["sections"] = resolved_sections
