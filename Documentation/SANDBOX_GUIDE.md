@@ -1,7 +1,7 @@
 # Sandbox System — Complete Guide
 
 > **Audience:** Backend developers + Next.js frontend developers building Generative UI chatbot apps.  
-> **Last updated:** After the complete backend upgrade (persistence, React sandbox, AST validation, real package installs).
+> **Last updated:** v3 — auto-install, file downloads, plotly capture, relaxed security (os/sys/shutil safe proxies).
 
 ---
 
@@ -14,6 +14,7 @@
 5. [Rendering Artifacts on the Frontend](#5-rendering-artifacts-on-the-frontend)
 6. [Session Management Across Turns](#6-session-management-across-turns)
 7. [Supabase — What to Paste](#7-supabase--what-to-paste)
+8. [What's New in v3](#8-whats-new-in-v3)
 
 ---
 
@@ -57,7 +58,7 @@
 
 | `language` | How it runs | What comes back |
 |---|---|---|
-| `python` | `exec()` in restricted globals | `output` (stdout) + optional `artifacts` (images, HTML) |
+| `python` | `exec()` in restricted globals | `output` (stdout) + optional `artifacts` (images, HTML, plotly charts, files) |
 | `javascript` | Node.js subprocess | `output` (stdout / console.log) |
 | `react` | Inline HTML wrap — **no subprocess** | `artifacts[0].data` = full HTML page (iframe it) |
 
@@ -401,6 +402,122 @@ GET  /sandbox/llm/status     — check Docker availability
 
 ---
 
+### 3.15 Download a File Artifact ⭐ NEW
+
+```
+GET /sandbox/download/{artifact_id}
+GET /sandbox/download/{artifact_id}?filename=my_report.xlsx
+```
+
+Downloads any artifact as a **file attachment** — the browser will trigger a Save-As dialog. This endpoint is the complement to `/artifacts/{artifact_id}/raw` (which returns the file **inline**).
+
+**When is this used?**  
+When Python code calls `open('report.csv', 'w')`, `df.to_excel('output.xlsx')`, `df.to_csv('data.csv')`, `pptx.save('deck.pptx')`, etc., the written file is automatically captured as a `FileArtifact` and stored in the DB. This endpoint lets users download those files directly.
+
+**Path params:**
+
+| Param | Description |
+|---|---|
+| `artifact_id` | The `artifact_id` from the artifacts array in the execute response |
+
+**Query params:**
+
+| Param | Type | Description |
+|---|---|---|
+| `filename` | string (optional) | Override the filename for the download. If omitted, uses the stored filename from `metadata.filename` |
+
+**Response headers:**
+
+```
+Content-Type: text/csv
+Content-Disposition: attachment; filename="output.csv"
+Content-Length: 1234
+Cache-Control: no-cache
+```
+
+**Response body:** Raw file bytes (binary for xlsx/pptx/pdf, UTF-8 for csv/txt/json).
+
+**Full round-trip example:**
+
+1. **Execute code that generates a file:**
+```http
+POST /sandbox/execute
+Content-Type: application/json
+
+{
+  "code": "import pandas as pd\ndf = pd.DataFrame({'name': ['Alice','Bob'], 'score': [95, 87]})\ndf.to_csv('scores.csv', index=False)",
+  "language": "python"
+}
+```
+
+2. **Response contains the file artifact:**
+```json
+{
+  "success": true,
+  "output": "Code executed successfully",
+  "display_type": "file",
+  "artifacts": [
+    {
+      "artifact_id": "a1b2c3d4-...",
+      "type": "text/csv",
+      "display_type": "file",
+      "data": "name,score\nAlice,95\nBob,87\n",
+      "encoding": "utf-8",
+      "metadata": {
+        "filename": "scores.csv",
+        "size_bytes": 28,
+        "extension": ".csv",
+        "downloadable": true
+      }
+    }
+  ]
+}
+```
+
+3. **Let the user download it:**
+```
+GET /sandbox/download/a1b2c3d4-...
+→ Downloads "scores.csv" with Content-Disposition: attachment
+```
+
+**Supported file types and their MIME types:**
+
+| Extension | MIME Type | Notes |
+|---|---|---|
+| `.csv` | `text/csv` | UTF-8 text |
+| `.tsv` | `text/tab-separated-values` | UTF-8 text |
+| `.txt` / `.log` / `.md` | `text/plain` / `text/markdown` | UTF-8 text |
+| `.json` | `application/json` | UTF-8 text |
+| `.xml` / `.yaml` / `.toml` | `application/xml` / `application/x-yaml` / `application/toml` | UTF-8 text |
+| `.py` / `.js` | `text/x-python` / `application/javascript` | UTF-8 text |
+| `.xlsx` | `application/vnd.openxmlformats-officedocument.spreadsheetml.sheet` | Binary |
+| `.xls` | `application/vnd.ms-excel` | Binary |
+| `.pptx` | `application/vnd.openxmlformats-officedocument.presentationml.presentation` | Binary |
+| `.docx` | `application/vnd.openxmlformats-officedocument.wordprocessingml.document` | Binary |
+| `.pdf` | `application/pdf` | Binary |
+| `.png` / `.jpg` / `.gif` / `.bmp` | `image/*` | Binary |
+| `.svg` | `image/svg+xml` | UTF-8 text |
+| `.zip` / `.gz` / `.tar` | `application/zip` / `application/gzip` / `application/x-tar` | Binary |
+| `.parquet` / `.pkl` / `.feather` | `application/octet-stream` | Binary |
+| `.mp3` / `.wav` / `.mp4` | `audio/*` / `video/*` | Binary |
+
+**Limits:** Max file size is **50 MB** per file. Files larger than this are silently skipped.
+
+---
+
+### 3.16 View Raw Artifact (Inline) — Updated
+
+```
+GET /sandbox/artifacts/{artifact_id}/raw
+```
+
+Returns the artifact with the correct `Content-Type` but as **inline** content (browser renders/displays it rather than downloading). For plotly HTML, this renders the chart. For images, the browser displays them directly.
+
+Use **`/download/{artifact_id}`** when you want a Save-As dialog.
+Use **`/artifacts/{artifact_id}/raw`** when you want to display in `<img>`, `<iframe>`, or `<embed>`.
+
+---
+
 ## 4. Wiring in a Next.js Generative UI Chatbot
 
 ### 4.1 How session_id flows through the conversation
@@ -558,17 +675,19 @@ export function Chat({ conversationId }: { conversationId: string }) {
 
 ### 4.4 Artifact Renderer (`components/ArtifactRenderer.tsx`)
 
-This is the core component that inspects `display_type` and renders accordingly.
+This is the core component that inspects `display_type` and renders accordingly.  
+**Updated for v3** — adds `"plotly"` and `"file"` display types.
 
 ```tsx
 'use client';
 
-import Image from 'next/image';
+const BACKEND_URL = process.env.NEXT_PUBLIC_BACKEND_URL ?? 'http://localhost:8000';
 
 interface Artifact {
   artifact_id: string;
   type: string;
-  display_type: 'react' | 'html' | 'image' | 'json' | 'text';
+  /** "react" | "html" | "plotly" | "image" | "json" | "file" | "text" */
+  display_type: string;
   data: string;
   encoding: string;
   metadata?: Record<string, unknown>;
@@ -581,6 +700,8 @@ interface SandboxResult {
   language: string;
   display_type: string;
   execution_time_ms: number;
+  execution_id: string;
+  session_id: string;
   artifacts: Artifact[];
   variables?: Record<string, string>;
 }
@@ -589,7 +710,7 @@ export function ArtifactRenderer({ result }: { result: SandboxResult }) {
   if (!result.success) {
     return (
       <div className="bg-red-50 border border-red-200 rounded-lg p-4 font-mono text-sm text-red-800">
-        <p className="font-semibold mb-1">Error</p>
+        <p className="font-semibold mb-1">Execution Error</p>
         <pre className="whitespace-pre-wrap">{result.error}</pre>
       </div>
     );
@@ -597,7 +718,7 @@ export function ArtifactRenderer({ result }: { result: SandboxResult }) {
 
   return (
     <div className="space-y-3">
-      {/* Text output */}
+      {/* Text output (stdout) */}
       {result.output && result.output !== 'Code executed successfully' && (
         <div className="bg-gray-900 text-green-400 rounded-lg p-4 font-mono text-sm">
           <pre className="whitespace-pre-wrap overflow-x-auto">{result.output}</pre>
@@ -609,9 +730,11 @@ export function ArtifactRenderer({ result }: { result: SandboxResult }) {
         <ArtifactItem key={artifact.artifact_id} artifact={artifact} />
       ))}
 
-      {/* Meta footer */}
-      <div className="text-xs text-gray-400">
-        {result.language} · {result.execution_time_ms.toFixed(0)}ms
+      {/* Execution footer */}
+      <div className="text-xs text-gray-400 flex gap-3">
+        <span>{result.language}</span>
+        <span>{result.execution_time_ms.toFixed(0)}ms</span>
+        <span className="font-mono opacity-50">{result.execution_id?.slice(0, 8)}</span>
       </div>
     </div>
   );
@@ -619,9 +742,10 @@ export function ArtifactRenderer({ result }: { result: SandboxResult }) {
 
 function ArtifactItem({ artifact }: { artifact: Artifact }) {
   switch (artifact.display_type) {
+
+    // ── Interactive React components ──────────────────────────────────────
     case 'react':
     case 'html':
-      // Self-contained HTML page — safe to iframe with sandbox attribute
       return (
         <div className="rounded-lg overflow-hidden border border-gray-200 shadow-sm">
           <iframe
@@ -631,19 +755,50 @@ function ArtifactItem({ artifact }: { artifact: Artifact }) {
             sandbox="allow-scripts allow-same-origin"
             title="Sandbox output"
             onLoad={(e) => {
-              // Auto-resize iframe to content height
               const iframe = e.currentTarget;
               try {
-                const height = iframe.contentDocument?.body?.scrollHeight;
-                if (height) iframe.style.height = `${height + 32}px`;
+                const h = iframe.contentDocument?.documentElement?.scrollHeight;
+                if (h) iframe.style.height = `${h + 16}px`;
               } catch {}
             }}
           />
         </div>
       );
 
+    // ── Plotly interactive charts ⭐ NEW ───────────────────────────────────
+    // display_type="plotly" means artifact.data is a full self-contained
+    // Plotly HTML string (include_plotlyjs="cdn"). Iframe it like React.
+    case 'plotly':
+      return (
+        <div className="rounded-lg overflow-hidden border border-gray-200 shadow-sm bg-white">
+          <iframe
+            srcDoc={artifact.data}
+            className="w-full"
+            style={{ minHeight: '450px', height: 'auto' }}
+            sandbox="allow-scripts allow-same-origin"
+            title="Plotly chart"
+            onLoad={(e) => {
+              const iframe = e.currentTarget;
+              try {
+                const h = iframe.contentDocument?.documentElement?.scrollHeight;
+                if (h && h > 100) iframe.style.height = `${h + 16}px`;
+              } catch {}
+            }}
+          />
+        </div>
+      );
+
+    // ── Static images (matplotlib, pillow, SVG) ───────────────────────────
     case 'image':
-      // base64 PNG/SVG from matplotlib, pillow, etc.
+      if (artifact.type === 'image/svg+xml') {
+        // SVG stored as utf-8 string
+        return (
+          <div
+            className="rounded-lg overflow-hidden border border-gray-200 p-4 bg-white"
+            dangerouslySetInnerHTML={{ __html: artifact.data }}
+          />
+        );
+      }
       return (
         <div className="rounded-lg overflow-hidden border border-gray-200">
           <img
@@ -654,22 +809,109 @@ function ArtifactItem({ artifact }: { artifact: Artifact }) {
         </div>
       );
 
+    // ── Downloadable files ⭐ NEW ──────────────────────────────────────────
+    // display_type="file" means code wrote a file (CSV, xlsx, pptx, pdf…)
+    // The artifact.data already contains the content, but for the best UX
+    // link to the /sandbox/download/ endpoint which sets the right headers.
+    case 'file': {
+      const meta = (artifact.metadata ?? {}) as Record<string, unknown>;
+      const filename = (meta.filename as string) ?? `file${artifact.metadata?.extension ?? ''}`;
+      const sizeBytes = meta.size_bytes as number | undefined;
+      const sizeLabel = sizeBytes
+        ? sizeBytes > 1_000_000
+          ? `${(sizeBytes / 1_000_000).toFixed(1)} MB`
+          : sizeBytes > 1_000
+          ? `${(sizeBytes / 1_000).toFixed(1)} KB`
+          : `${sizeBytes} B`
+        : '';
+
+      const downloadUrl = `${BACKEND_URL}/sandbox/download/${artifact.artifact_id}`;
+
+      return (
+        <div className="flex items-center gap-3 p-3 border border-gray-200 rounded-lg bg-gray-50">
+          {/* File icon */}
+          <div className="text-2xl">
+            {artifact.type.includes('spreadsheet') || artifact.type.includes('excel')
+              ? '📊'
+              : artifact.type.includes('presentation')
+              ? '📑'
+              : artifact.type.includes('pdf')
+              ? '📄'
+              : artifact.type.includes('zip') || artifact.type.includes('gzip')
+              ? '🗜️'
+              : artifact.type.startsWith('image/')
+              ? '🖼️'
+              : artifact.type.startsWith('audio/')
+              ? '🎵'
+              : artifact.type.startsWith('video/')
+              ? '🎬'
+              : '📁'}
+          </div>
+
+          {/* Filename + size */}
+          <div className="flex-1 min-w-0">
+            <p className="font-medium text-sm truncate">{filename}</p>
+            <p className="text-xs text-gray-500">{artifact.type} {sizeLabel ? `· ${sizeLabel}` : ''}</p>
+          </div>
+
+          {/* Download button */}
+          <a
+            href={downloadUrl}
+            download={filename}
+            className="shrink-0 px-3 py-1.5 text-sm font-medium text-white bg-blue-600 hover:bg-blue-700 rounded-md transition-colors"
+          >
+            ⬇ Download
+          </a>
+
+          {/* Preview button for text files */}
+          {(artifact.encoding === 'utf-8' && artifact.type !== 'application/octet-stream') && (
+            <button
+              onClick={() => {
+                const win = window.open('', '_blank');
+                if (win) {
+                  win.document.write(
+                    `<pre style="font-family:monospace;padding:16px;white-space:pre-wrap">${
+                      artifact.data.replace(/</g, '&lt;')
+                    }</pre>`
+                  );
+                }
+              }}
+              className="shrink-0 px-3 py-1.5 text-sm font-medium text-gray-600 bg-gray-100 hover:bg-gray-200 rounded-md transition-colors"
+            >
+              👁 Preview
+            </button>
+          )}
+        </div>
+      );
+    }
+
+    // ── JSON structured data ───────────────────────────────────────────────
     case 'json':
       return (
         <div className="bg-gray-100 rounded-lg p-4 font-mono text-sm overflow-x-auto">
-          <pre>{JSON.stringify(JSON.parse(artifact.data), null, 2)}</pre>
+          <pre>{(() => { try { return JSON.stringify(JSON.parse(artifact.data), null, 2); } catch { return artifact.data; } })()}</pre>
         </div>
       );
 
+    // ── Plain text ─────────────────────────────────────────────────────────
     case 'text':
     default:
       return (
         <div className="bg-gray-50 border rounded-lg p-4 text-sm">
-          <pre className="whitespace-pre-wrap">{artifact.data}</pre>
+          <pre className="whitespace-pre-wrap font-mono">{artifact.data}</pre>
         </div>
       );
   }
 }
+```
+
+### 4.4b Environment variable needed for download links
+
+Add to `.env.local` so the `ArtifactRenderer` can build download URLs:
+
+```bash
+# Public backend URL (accessible from the browser)
+NEXT_PUBLIC_BACKEND_URL=https://your-app.railway.app
 ```
 
 ---
@@ -698,29 +940,82 @@ ANTHROPIC_API_KEY=sk-ant-...
 | `display_type` | What it is | How to render |
 |---|---|---|
 | `"text"` | Plain stdout | `<pre>` inside a dark code block |
-| `"image"` | PNG/SVG from matplotlib | `<img src="data:image/png;base64,..." />` |
+| `"image"` | PNG/SVG from matplotlib/pillow | `<img src="data:image/png;base64,..." />` |
 | `"html"` | HTML fragment from `display(HTML(...))` | `<iframe srcDoc={...} sandbox="allow-scripts" />` |
 | `"react"` | Complete React app (CDN Babel) | `<iframe srcDoc={...} sandbox="allow-scripts allow-same-origin" />` |
+| `"plotly"` ⭐ NEW | Interactive Plotly chart (self-contained HTML) | `<iframe srcDoc={...} sandbox="allow-scripts allow-same-origin" />` |
 | `"json"` | Structured data | `<pre>{JSON.stringify(data, null, 2)}</pre>` |
+| `"file"` ⭐ NEW | File written by code (CSV, Excel, PPTX, PDF, etc.) | Download button → `GET /sandbox/download/{artifact_id}` |
+
+### Artifact `encoding` field
+
+| `encoding` | Content of `data` field | How to use |
+|---|---|---|
+| `"utf-8"` | Raw string (HTML, CSV, JSON, SVG…) | Use directly in `srcDoc`, `href`, `innerHTML` |
+| `"base64"` | Base64-encoded binary | Decode with `atob()` or pass to `<img src="data:...;base64,...">` |
 
 ### Python helpers available in every execution
 
 ```python
-# Capture a matplotlib figure
+# ── Matplotlib ──────────────────────────────────────────────
 plt.plot([1, 2, 3], [4, 5, 6])
-plt.show()                          # → image artifact, PNG
+plt.show()                          # → image artifact (PNG, base64)
+# (any uncalled plt figures are auto-captured at the end of execution)
 
-# Emit rich HTML
+# ── Plotly ⭐ ─────────────────────────────────────────────────
+import plotly.express as px
+fig = px.bar(x=["A","B","C"], y=[10, 20, 15], title="My Chart")
+fig.show()                          # → plotly artifact (self-contained HTML, cdn)
+# OR:
+display(fig)                        # → same plotly artifact
+# (any plotly.Figure left in local vars is also auto-captured)
+
+# ── HTML ─────────────────────────────────────────────────────
 display(HTML("<table><tr><td>Hello</td></tr></table>"))  # → html artifact
 
-# Emit SVG
-display(SVG("<svg>...</svg>"))       # → image artifact
+# ── SVG ──────────────────────────────────────────────────────
+display(SVG("<svg viewBox='0 0 100 100'><circle cx='50' cy='50' r='40'/></svg>"))
 
-# Emit JSON
-display(JSON({"key": "value"}))     # → json artifact
+# ── JSON ─────────────────────────────────────────────────────
+display(JSON({"key": "value", "list": [1, 2, 3]}))
 
-# Regular print still works
-print("hello")                      # → captured in output field
+# ── Files ⭐ ──────────────────────────────────────────────────
+import pandas as pd
+df = pd.DataFrame({"x": [1,2,3], "y": [4,5,6]})
+df.to_csv("output.csv", index=False)      # → file artifact, download via /sandbox/download/
+df.to_excel("output.xlsx", index=False)   # → file artifact
+# Python pptx, docx, etc. work too:
+from pptx import Presentation
+prs = Presentation()
+slide = prs.slides.add_slide(prs.slide_layouts[5])
+prs.save("deck.pptx")                     # → file artifact
+
+# ── Regular print ────────────────────────────────────────────
+print("hello")                            # → captured in output field
+```
+
+### os / sys / shutil — now allowed ⭐ NEW
+
+The sandbox provides **safe proxies** for `os`, `sys`, and `shutil`. These intercept the real modules and restrict dangerous operations:
+
+```python
+import os
+print(os.getcwd())          # → /tmp/sbx_<exec_id>/   (sandbox temp dir)
+os.makedirs("subdir")       # OK — creates inside sandbox dir
+os.listdir(".")             # OK — lists sandbox dir
+
+import sys
+print(sys.version)          # OK — version metadata only
+# sys.exit(), sys.path manipulation → restricted
+
+import shutil
+shutil.copy("a.csv", "b.csv")    # OK — sandboxed to temp dir
+shutil.make_archive("files", "zip")  # OK — creates zip in temp dir → downloadable!
+
+import pathlib              # real module — safe for path manipulation
+from pathlib import Path
+p = Path("output.csv")
+p.write_text("a,b\n1,2\n")  # writes to CWD (sandbox dir) → downloadable
 ```
 
 ### React sandbox example (AI generates this JSX)
@@ -966,6 +1261,62 @@ const aiMessages = messages.map((m) => {
 
 ---
 
+## 8. What's New in v3
+
+### 8.1 Auto-install missing packages
+
+If the AI asks for `import plotly.express as px` and plotly isn't installed on the server, the sandbox now **automatically runs `pip install plotly -q`** in the background and retries the import. This works for any package on the approved list.
+
+- First run: may add a few seconds (pip install)
+- Subsequent runs: uses the already-installed version
+
+The approved list includes: plotly, seaborn, statsmodels, networkx, scikit-learn, and 60+ other packages.
+
+### 8.2 Plotly interactive charts
+
+```python
+import plotly.express as px
+fig = px.line(x=[1,2,3,4], y=[10,15,13,18], title="My Line Chart")
+fig.show()   # → captured as display_type="plotly" artifact
+```
+
+The artifact is a **self-contained HTML page** with Plotly loaded from CDN — no external dependencies. Iframe it the same way as React components.
+
+Also auto-captures any `plotly.graph_objects.Figure` left in local variables without `.show()` being called.
+
+### 8.3 File downloads
+
+Any file written by code is captured and made downloadable:
+
+```python
+# All of these create downloadable file artifacts:
+df.to_csv("report.csv")
+df.to_excel("report.xlsx")
+prs.save("slides.pptx")
+with open("summary.txt", "w") as f:
+    f.write("Hello!")
+import shutil; shutil.make_archive("all_files", "zip")
+```
+
+New endpoint: **`GET /sandbox/download/{artifact_id}`** — triggers browser Save-As.
+
+### 8.4 Relaxed security
+
+| Module | Before | Now |
+|---|---|---|
+| `import os` | ❌ Blocked | ✅ Safe proxy — no `system()`, `fork()`, `popen()` |
+| `import sys` | ❌ Blocked | ✅ Safe proxy — version/platform info only |
+| `import shutil` | ❌ Blocked | ✅ Safe proxy — file ops sandboxed to temp dir |
+| `import pathlib` | ❌ Blocked | ✅ Real module |
+| `import glob` | ❌ Blocked | ✅ Real module |
+| `import inspect` | ❌ Blocked | ✅ Real module |
+| `open(...)` write mode | ❌ Blocked | ✅ Forces writes into sandbox temp dir |
+| `open(...)` read mode | ❌ Blocked | ✅ Allowed (libraries need to read data files) |
+
+Still blocked: `subprocess`, `socket`, `ctypes`, `multiprocessing`, `signal`, `eval`, `compile`, `exec`.
+
+---
+
 ## Quick Test Checklist
 
 After deploying, verify everything works end-to-end:
@@ -992,4 +1343,19 @@ curl -X POST https://your-backend.railway.app/sandbox/react/execute \
   -H "Content-Type: application/json" \
   -d '{"code":"export default function App() { return <h1 className=\"text-blue-500\">Hello!</h1> }"}'
 # → {"success":true,"display_type":"react","artifacts":[{"type":"text/html",...}]}
+
+# 5. Plotly chart (NEW)
+curl -X POST https://your-backend.railway.app/sandbox/execute \
+  -H "Content-Type: application/json" \
+  -d '{"code":"import plotly.express as px\nfig=px.bar(x=[\"A\",\"B\"],[1,2])\nfig.show()","language":"python"}'
+# → {"success":true,"display_type":"plotly","artifacts":[{"display_type":"plotly","type":"text/html",...}]}
+
+# 6. CSV file download (NEW)
+curl -X POST https://your-backend.railway.app/sandbox/execute \
+  -H "Content-Type: application/json" \
+  -d '{"code":"import pandas as pd\npd.DataFrame({\"x\":[1,2,3]}).to_csv(\"out.csv\",index=False)","language":"python"}'
+# → {"success":true,"display_type":"file","artifacts":[{"display_type":"file","metadata":{"filename":"out.csv",...}}]}
+
+# Then download it:
+curl -L https://your-backend.railway.app/sandbox/download/<artifact_id> -o out.csv
 ```
