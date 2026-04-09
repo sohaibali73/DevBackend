@@ -89,6 +89,22 @@ GENERATE_DOCX_TOOL_DEF: Dict[str, Any] = {
                 "type": "string", "enum": ["yellow", "dark"], "default": "yellow",
                 "description": "Color of the underline beneath the header logo.",
             },
+            "template": {
+                "type": "string",
+                "enum": [
+                    "fund_fact_sheet",
+                    "market_commentary",
+                    "performance_report",
+                    "client_letter",
+                    "research_report",
+                    "proposal",
+                    "trade_rationale",
+                    "meeting_minutes",
+                    "onboarding_packet",
+                    "quarterly_review"
+                ],
+                "description": "Named document template. When provided, pre-populates document structure.",
+            },
             "footer_text": {"type": "string", "description": "Custom footer left text."},
         "sections": {
             "type": "array",
@@ -161,19 +177,30 @@ def handle_generate_docx(
         if not isinstance(sections, list):
             return json.dumps({"status": "error", "error": "'sections' must be an array"})
 
-        spec: Dict[str, Any] = {
-            "title":              title,
-            "sections":           sections,
-            "filename":           _safe_filename(tool_input.get("filename") or f"{title}.docx", ".docx"),
-            "subtitle":           tool_input.get("subtitle", ""),
-            "date":               tool_input.get("date", ""),
-            "author":             tool_input.get("author", ""),
-            "logo_variant":       tool_input.get("logo_variant", "standard"),
-            "header_line_color":  tool_input.get("header_line_color", "yellow"),
-            "footer_text":        tool_input.get("footer_text", ""),
-            "include_disclosure": tool_input.get("include_disclosure", True),
-            "disclosure_text":    tool_input.get("disclosure_text", ""),
-        }
+        # Apply template if specified
+        from core.tools_v2.docx_templates import DOCX_TEMPLATES, deep_merge
+        template_key = tool_input.get("template")
+
+        if template_key and template_key in DOCX_TEMPLATES:
+            base_spec = DOCX_TEMPLATES[template_key]
+            spec = deep_merge(base_spec, tool_input)
+            # Ensure title/sections are preserved
+            spec["title"] = title
+            spec["sections"] = sections if sections else base_spec.get("sections", [])
+        else:
+            spec: Dict[str, Any] = {
+                "title":              title,
+                "sections":           sections,
+                "filename":           _safe_filename(tool_input.get("filename") or f"{title}.docx", ".docx"),
+                "subtitle":           tool_input.get("subtitle", ""),
+                "date":               tool_input.get("date", ""),
+                "author":             tool_input.get("author", ""),
+                "logo_variant":       tool_input.get("logo_variant", "standard"),
+                "header_line_color":  tool_input.get("header_line_color", "yellow"),
+                "footer_text":        tool_input.get("footer_text", ""),
+                "include_disclosure": tool_input.get("include_disclosure", True),
+                "disclosure_text":    tool_input.get("disclosure_text", ""),
+            }
 
         logger.info("generate_docx: title=%r  sections=%d", spec["title"], len(sections))
 
