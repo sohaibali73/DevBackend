@@ -38,12 +38,18 @@ from typing import Any, Dict, Optional
 logger = logging.getLogger(__name__)
 
 # ── Paths ─────────────────────────────────────────────────────────────────────
-_SANDBOX_HOME  = Path(os.environ.get("SANDBOX_DATA_DIR", Path.home() / ".sandbox"))
+_SANDBOX_HOME   = Path(os.environ.get("SANDBOX_DATA_DIR", Path.home() / ".sandbox"))
 _DOCX_CACHE_DIR = _SANDBOX_HOME / "docx_cache"
 
-# Assets live at ClaudeSkills/potomac-docx/assets/ relative to project root
-_THIS_DIR   = Path(__file__).parent                           # core/sandbox/
-_ASSETS_DIR = _THIS_DIR.parent.parent / "ClaudeSkills" / "potomac-docx" / "assets"
+# Assets: prefer persistent Railway volume, fall back to repo copy.
+# The Dockerfile copies ClaudeSkills/ into the image so the repo path always
+# works; the volume copy (populated on startup by main.py) survives redeploys
+# even if the image filesystem is replaced.
+_THIS_DIR         = Path(__file__).parent                           # core/sandbox/
+_REPO_ASSETS_DIR  = _THIS_DIR.parent.parent / "ClaudeSkills" / "potomac-docx" / "assets"
+_STORAGE_ROOT     = Path(os.environ.get("STORAGE_ROOT", "/data"))
+_VOLUME_ASSETS_DIR = _STORAGE_ROOT / "docx_assets"
+_ASSETS_DIR       = _VOLUME_ASSETS_DIR if _VOLUME_ASSETS_DIR.exists() else _REPO_ASSETS_DIR
 
 _LOGO_FILES = [
     "Potomac_Logo_clean.png",
@@ -274,6 +280,49 @@ function buildContent(sections) {
         break;
       }
 
+      // ── Embedded image (base64 data resolved by Python before Node runs) ──
+      // The Python layer resolves file_id → base64 before invoking Node,
+      // so this case only needs to handle the inline `data` field.
+      case 'image': {
+        if (!item.data) break;   // no data = silently skip
+        try {
+          const imgBuf = Buffer.from(item.data, 'base64');
+          const width  = item.width  || 400;
+          const height = item.height || Math.round(width * 0.75);  // 4:3 default
+          const fmt    = (item.format || 'png').toLowerCase();
+          // docx ImageRun type must be one of: png, jpg, jpeg, gif, bmp, svg
+          const validFmt = ['png','jpg','jpeg','gif','bmp','svg'].includes(fmt) ? fmt : 'png';
+          const imgRun = new ImageRun({
+            data           : imgBuf,
+            transformation : { width, height },
+            type           : validFmt,
+          });
+          out.push(new Paragraph({
+            alignment : item.align === 'center' ? AlignmentType.CENTER
+                       : item.align === 'right' ? AlignmentType.RIGHT
+                       :                          AlignmentType.LEFT,
+            children  : [imgRun],
+            spacing   : { after: item.caption ? 60 : 240 },
+          }));
+          // Optional caption below the image
+          if (item.caption) {
+            out.push(new Paragraph({
+              spacing  : { after: 240 },
+              children : [new TextRun({
+                text    : item.caption,
+                font    : 'Quicksand',
+                size    : 18,
+                italics : true,
+                color   : '666666',
+              })],
+            }));
+          }
+        } catch (imgErr) {
+          process.stderr.write('WARN: image section failed: ' + imgErr.message + '\n');
+        }
+        break;
+      }
+
       default:
         // Unknown type — silently skip
         break;
@@ -435,6 +484,76 @@ def _ensure_docx_modules() -> Optional[Path]:
 
 
 # =============================================================================
+# Image section resolver — converts file_id → inline base64
+# =============================================================================
+
+def _resolve_image_sections(spec: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Walk all sections and resolve ``{"type": "image", "file_id": "<uuid>"}``
+    items to ``{"type": "image", "data": "<base64>", "format": "<ext>"}`` so
+    that ``document_builder.js`` can embed them directly.
+
+    Sections that already have a ``data`` field are left untouched.
+    Sections with an unknown / unavailable ``file_id`` are silently skipped
+    (the image case in JS will skip items without ``data``).
+
+    Also handles sections from user-uploaded files retrieved via the upload
+    route — these may use ``/upload/files/{file_id}/download`` IDs which map
+    to the same ``file_store`` lookup path.
+
+    Returns a **copy** of *spec* with the resolved sections.
+    """
+    import base64
+    import copy
+
+    spec = copy.deepcopy(spec)
+    sections = spec.get("sections", [])
+    if not sections:
+        return spec
+
+    needs_resolve = any(
+        s.get("type") == "image" and "file_id" in s and "data" not in s
+        for s in sections
+    )
+    if not needs_resolve:
+        return spec
+
+    try:
+        from core.file_store import get_file
+    except ImportError:
+        logger.warning("file_store unavailable — image sections with file_id will be skipped")
+        return spec
+
+    for section in sections:
+        if section.get("type") != "image":
+            continue
+        if "data" in section:
+            continue  # already has inline base64 — no lookup needed
+        file_id = section.get("file_id", "").strip()
+        if not file_id:
+            continue
+
+        try:
+            entry = get_file(file_id)
+            if entry and entry.data:
+                section["data"]   = base64.b64encode(entry.data).decode("ascii")
+                section["format"] = entry.file_type or (
+                    entry.filename.rsplit(".", 1)[-1].lower() if "." in entry.filename else "png"
+                )
+                logger.info(
+                    "Resolved image file_id %s → %s (%.1f KB)",
+                    file_id, entry.filename, entry.size_kb,
+                )
+            else:
+                logger.warning("Image file_id %s not found in file_store — section will be skipped", file_id)
+        except Exception as exc:
+            logger.warning("Could not resolve image file_id %s: %s", file_id, exc)
+
+    spec["sections"] = sections
+    return spec
+
+
+# =============================================================================
 # DocxSandbox
 # =============================================================================
 
@@ -474,6 +593,9 @@ class DocxSandbox:
         temp_dir : Optional[Path] = None
 
         try:
+            # ── 0. Resolve image file_id → base64 before touching temp dir ─
+            spec = _resolve_image_sections(spec)
+
             # ── 1. npm cache ───────────────────────────────────────────────
             modules_path = _ensure_docx_modules()
             if modules_path is None:

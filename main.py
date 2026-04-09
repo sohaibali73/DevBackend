@@ -434,6 +434,41 @@ async def startup_task_manager():
     except Exception as e:
         logger.error(f"✗ Failed to start task manager: {e}")
 
+
+@app.on_event("startup")
+async def startup_copy_docx_assets():
+    """
+    Copy Potomac logo assets to the Railway persistent volume on startup.
+
+    This ensures logos survive a container restart/redeploy even if the image
+    filesystem is ephemeral.  The primary path (Dockerfile COPY) is always
+    available; this gives an extra durable copy on the mounted volume.
+
+    Source  : ClaudeSkills/potomac-docx/assets/*.png (baked into image)
+    Dest    : $STORAGE_ROOT/docx_assets/*.png         (Railway volume)
+    """
+    import shutil as _shutil
+    from pathlib import Path as _Path
+
+    src = _Path(__file__).parent / "ClaudeSkills" / "potomac-docx" / "assets"
+    storage_root = os.getenv("STORAGE_ROOT", "/data")
+    dst = _Path(storage_root) / "docx_assets"
+
+    if not src.exists():
+        logger.warning("startup_copy_docx_assets: source assets not found at %s", src)
+        return
+
+    try:
+        dst.mkdir(parents=True, exist_ok=True)
+        copied = 0
+        for png in src.glob("*.png"):
+            target = dst / png.name
+            _shutil.copy2(png, target)
+            copied += 1
+        logger.info("✓ Copied %d Potomac logo assets → %s", copied, dst)
+    except Exception as e:
+        logger.warning("startup_copy_docx_assets: could not copy assets: %s", e)
+
 # Log summary
 logger.info(f"Router loading complete: {len(routers_loaded)} loaded, {len(routers_failed)} failed")
 if routers_failed:

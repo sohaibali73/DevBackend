@@ -67,6 +67,11 @@ COPY db/ ./db/
 COPY core/ ./core/
 COPY api/ ./api/
 
+# ── Potomac skill assets (logos, templates) ───────────────────────────────────
+# ClaudeSkills/ contains the Potomac brand assets (logos, helpers.js, examples)
+# used by DocxSandbox and PptxSandbox for branded document generation.
+COPY ClaudeSkills/ ./ClaudeSkills/
+
 COPY main.py .
 
 # =============================================================================

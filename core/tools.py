@@ -1288,7 +1288,7 @@ TOOL_DEFINITIONS = [
     # ── Server-side Document Generation (no Claude Skills container) ──────────
     # generate_docx runs entirely on the Railway server via Node.js + docx npm.
     # Zero API cost; logos mounted from ClaudeSkills/potomac-docx/assets/.
-    # Use this FIRST for Potomac Word documents — invoke_skill as fallback only.
+    # Image sections accept file_id from user uploads — resolved to base64 before Node runs.
     {
         "name": "generate_docx",
         "description": (
@@ -1303,11 +1303,13 @@ TOOL_DEFINITIONS = [
             "- Potomac logo on every page header (standard, black, or white variant)\n"
             "- H1/H2/H3 headings (Rajdhani ALL CAPS), body text (Quicksand)\n"
             "- Bullet lists, numbered lists, multi-column tables (zebra-striped, yellow headers)\n"
+            "- User-uploaded images embedded via file_id (PNG, JPG, GIF supported)\n"
             "- Dividers, spacers, page breaks\n"
             "- Standard Potomac disclosure block (auto-appended unless disabled)\n"
             "- Page-number footer\n\n"
             "IMPORTANT: Populate `sections` with ALL the document content. "
-            "Be thorough — the AI writes the content; the tool formats and saves it."
+            "Be thorough — the AI writes the content; the tool formats and saves it. "
+            "For images the user has uploaded, use type='image' with file_id from the upload."
         ),
         "input_schema": {
             "type": "object",
@@ -1348,6 +1350,8 @@ TOOL_DEFINITIONS = [
                         "  bullets    → items:[str, ...]\n"
                         "  numbered   → items:[str, ...]\n"
                         "  table      → headers:[str], rows:[[str]], col_widths:[int] (optional)\n"
+                        "  image      → file_id (from user upload), width (px), height (px, auto if omitted),\n"
+                        "               align ('left'|'center'|'right'), caption (optional text below image)\n"
                         "  divider    → (no extra fields, draws yellow horizontal rule)\n"
                         "  spacer     → size (twips, default 240)\n"
                         "  page_break → (no extra fields)"
@@ -1365,6 +1369,11 @@ TOOL_DEFINITIONS = [
                             "col_widths": {"type": "array", "items": {"type": "integer"}},
                             "size":       {"type": "integer"},
                             "color":      {"type": "string"},
+                            "file_id":    {"type": "string", "description": "File UUID from user upload (for type='image')"},
+                            "width":      {"type": "integer", "description": "Image width in pixels (for type='image', default 400)"},
+                            "height":     {"type": "integer", "description": "Image height in pixels (for type='image', auto-calculated from width if omitted)"},
+                            "align":      {"type": "string", "enum": ["left", "center", "right"], "description": "Image alignment (for type='image')"},
+                            "caption":    {"type": "string", "description": "Caption text below the image (for type='image')"},
                         },
                         "required": ["type"],
                     },

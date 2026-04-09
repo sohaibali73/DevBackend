@@ -134,6 +134,7 @@ GENERATE_DOCX_TOOL_DEF: Dict[str, Any] = {
                                 "bullets",
                                 "numbered",
                                 "table",
+                                "image",
                                 "divider",
                                 "spacer",
                                 "page_break",
@@ -145,6 +146,7 @@ GENERATE_DOCX_TOOL_DEF: Dict[str, Any] = {
                                 "  bullets     — unordered bullet list\n"
                                 "  numbered    — ordered numbered list\n"
                                 "  table       — data table with yellow header row\n"
+                                "  image       — embedded image from user upload (use file_id) or inline base64\n"
                                 "  divider     — horizontal yellow rule\n"
                                 "  spacer      — blank vertical space\n"
                                 "  page_break  — force a new page"
