@@ -436,6 +436,66 @@ async def delete_session(session_id: str):
 
 
 # ---------------------------------------------------------------------------
+# File download endpoint
+# ---------------------------------------------------------------------------
+
+@router.get("/download/{artifact_id}")
+async def download_artifact(artifact_id: str, filename: Optional[str] = None):
+    """
+    Download an artifact as a file attachment.
+
+    Sets `Content-Disposition: attachment` so the browser triggers a save-as
+    dialog. Use this for CSV, Excel, PPTX, PDF, and any other file written
+    by sandbox code.
+
+    The `filename` query param overrides the stored filename if provided.
+    """
+    try:
+        from core.sandbox.db import get_artifact
+        import base64 as _b64
+        import json as _json
+
+        artifact = await get_artifact(artifact_id)
+        if not artifact:
+            raise HTTPException(status_code=404, detail="Artifact not found")
+
+        mime_type = artifact["type"]
+        encoding = artifact.get("encoding", "utf-8")
+        data = artifact["data"]
+
+        # Resolve filename: query param → stored metadata → fallback
+        meta = artifact.get("metadata", {})
+        if isinstance(meta, str):
+            try:
+                meta = _json.loads(meta)
+            except Exception:
+                meta = {}
+
+        dl_filename = (
+            filename
+            or meta.get("filename")
+            or f"artifact.{mime_type.split('/')[-1]}"
+        )
+
+        raw_bytes = _b64.b64decode(data) if encoding == "base64" else data.encode("utf-8")
+
+        return Response(
+            content=raw_bytes,
+            media_type=mime_type,
+            headers={
+                "Content-Disposition": f'attachment; filename="{dl_filename}"',
+                "Content-Length": str(len(raw_bytes)),
+                "Cache-Control": "no-cache",
+            },
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error("Error downloading artifact %s: %s", artifact_id, e, exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# ---------------------------------------------------------------------------
 # LLM Sandbox (Docker) routes — unchanged logic, updated response model
 # ---------------------------------------------------------------------------
 

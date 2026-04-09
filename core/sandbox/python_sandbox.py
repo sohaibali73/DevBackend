@@ -24,6 +24,11 @@ import asyncio
 import traceback
 import logging
 import uuid
+import os as _os_real
+import sys as _sys_real
+import types as _types_mod
+import tempfile as _tempfile_mod
+from pathlib import Path
 from contextlib import contextmanager
 from datetime import datetime, timedelta
 from typing import Dict, Any, Optional, List, Tuple
@@ -36,15 +41,25 @@ logger = logging.getLogger(__name__)
 # AST-based safety: forbidden imports and calls
 # ---------------------------------------------------------------------------
 _FORBIDDEN_IMPORTS = frozenset({
-    "os", "sys", "subprocess", "shutil", "pty", "tty",
+    # Process execution / spawning
+    "subprocess", "pty", "tty",
+    # Low-level C/system access
     "fcntl", "termios", "ctypes", "signal", "resource", "mmap",
-    "multiprocessing", "socket", "pathlib", "glob", "importlib",
-    "builtins", "__builtin__", "code", "codeop", "codecs",
-    "inspect", "gc", "weakref", "dis",
+    # Process management
+    "multiprocessing",
+    # Raw network
+    "socket",
+    # Import bypass
+    "importlib",
+    # Python internals (allow inspect, codecs, weakref — they're harmless)
+    "builtins", "__builtin__", "code", "codeop",
+    # Memory / bytecode
+    "gc", "dis",
 })
 
 _FORBIDDEN_CALLS = frozenset({
-    "eval", "compile", "open", "exec",
+    # "open" REMOVED — sandboxed version provided per-execution
+    "eval", "compile", "exec",
 })
 
 # ---------------------------------------------------------------------------
@@ -269,7 +284,21 @@ def _make_display_helpers(artifacts: List[DisplayArtifact]):
     """Build display() and HTML() functions bound to this execution's artifact list."""
 
     def display(obj, **kwargs):
-        """Render obj as a rich artifact (HTML, PNG, SVG, JSON, or text)."""
+        """Render obj as a rich artifact (plotly, HTML, PNG, SVG, JSON, or text)."""
+        # Plotly figures (have to_html + data + layout)
+        if hasattr(obj, "to_html") and hasattr(obj, "data") and hasattr(obj, "layout"):
+            try:
+                html_content = obj.to_html(include_plotlyjs="cdn", full_html=False)
+                artifacts.append(DisplayArtifact(
+                    type="text/html",
+                    data=html_content,
+                    encoding="utf-8",
+                    display_type="plotly",
+                    metadata={"format": "plotly-html"},
+                ))
+                return
+            except Exception:
+                pass
         if hasattr(obj, "_repr_html_"):
             artifacts.append(DisplayArtifact(
                 type="text/html",
@@ -338,6 +367,294 @@ def _make_display_helpers(artifacts: List[DisplayArtifact]):
         return _JSON(data)
 
     return display, HTML, SVG, JSON
+
+
+# ---------------------------------------------------------------------------
+# Fix: File MIME types for downloadable artifacts
+# ---------------------------------------------------------------------------
+_MAX_FILE_ARTIFACT_BYTES = 50 * 1_000_000   # 50 MB
+
+_FILE_MIME_TYPES: Dict[str, str] = {
+    ".csv":     "text/csv",
+    ".tsv":     "text/tab-separated-values",
+    ".txt":     "text/plain",
+    ".log":     "text/plain",
+    ".ini":     "text/plain",
+    ".md":      "text/markdown",
+    ".html":    "text/html",
+    ".htm":     "text/html",
+    ".py":      "text/x-python",
+    ".js":      "application/javascript",
+    ".json":    "application/json",
+    ".xml":     "application/xml",
+    ".yaml":    "application/x-yaml",
+    ".yml":     "application/x-yaml",
+    ".toml":    "application/toml",
+    ".svg":     "image/svg+xml",
+    ".png":     "image/png",
+    ".jpg":     "image/jpeg",
+    ".jpeg":    "image/jpeg",
+    ".gif":     "image/gif",
+    ".bmp":     "image/bmp",
+    ".pdf":     "application/pdf",
+    ".xlsx":    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    ".xls":     "application/vnd.ms-excel",
+    ".pptx":    "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+    ".docx":    "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    ".zip":     "application/zip",
+    ".gz":      "application/gzip",
+    ".tar":     "application/x-tar",
+    ".parquet": "application/octet-stream",
+    ".pkl":     "application/octet-stream",
+    ".pickle":  "application/octet-stream",
+    ".feather": "application/octet-stream",
+    ".mp3":     "audio/mpeg",
+    ".wav":     "audio/wav",
+    ".mp4":     "video/mp4",
+}
+
+# ---------------------------------------------------------------------------
+# Fix: Auto-install __import__ + safe os/sys/shutil proxies
+# ---------------------------------------------------------------------------
+
+def _make_sandbox_imports(sandbox_dir: Path, approved: List[str]):
+    """
+    Build a custom __import__ for sandbox exec() calls.
+
+    • os / sys / shutil → returns safe namespace proxies (no fork/system/exit etc.)
+    • pathlib / glob / inspect / codecs / weakref → real module (safe)
+    • Missing approved packages → auto-installs via pip, then imports
+    • Everything else → delegates to the real __import__
+    """
+    import subprocess as _sub
+    import importlib as _imp
+
+    # Normalise approved package names for loose matching
+    _approved: set = set()
+    for p in approved:
+        _approved.add(p.lower())
+        _approved.add(p.lower().replace("-", "_"))
+        _approved.add(p.lower().replace("_", "-"))
+
+    # Helper: resolve a relative path into sandbox_dir
+    def _rp(p) -> str:
+        s = str(p)
+        return s if _os_real.path.isabs(s) else _os_real.path.join(str(sandbox_dir), s)
+
+    # ---- Safe os proxy ----
+    _safe_os = _types_mod.SimpleNamespace(
+        path=_os_real.path,
+        sep=_os_real.sep,
+        linesep=_os_real.linesep,
+        curdir=_os_real.curdir,
+        pardir=_os_real.pardir,
+        extsep=_os_real.extsep,
+        altsep=_os_real.altsep,
+        devnull=_os_real.devnull,
+        name=_os_real.name,
+        environ={},                              # empty — don't leak secrets
+        getenv=lambda key, default=None: None,
+        getcwd=lambda: str(sandbox_dir),
+        urandom=_os_real.urandom,
+        listdir=lambda p=".": _os_real.listdir(_rp(p)),
+        makedirs=lambda p, mode=0o777, exist_ok=True: _os_real.makedirs(
+            _rp(p), mode=mode, exist_ok=exist_ok
+        ),
+        mkdir=lambda p, mode=0o777: _os_real.mkdir(_rp(p), mode),
+        remove=lambda p: _os_real.remove(_rp(p)),
+        unlink=lambda p: _os_real.remove(_rp(p)),
+        rename=lambda src, dst: _os_real.rename(_rp(src), _rp(dst)),
+        stat=lambda p: _os_real.stat(_rp(p)),
+        walk=lambda p=".", **kw: _os_real.walk(_rp(p), **kw),
+        SEEK_SET=0, SEEK_CUR=1, SEEK_END=2,
+    )
+
+    # ---- Safe sys proxy ----
+    _safe_sys = _types_mod.SimpleNamespace(
+        version=_sys_real.version,
+        version_info=_sys_real.version_info,
+        platform=_sys_real.platform,
+        maxsize=_sys_real.maxsize,
+        maxunicode=_sys_real.maxunicode,
+        byteorder=_sys_real.byteorder,
+        argv=[],
+        path=[str(sandbox_dir)],
+        float_info=_sys_real.float_info,
+        int_info=_sys_real.int_info,
+        builtin_module_names=(),
+        exc_info=_sys_real.exc_info,
+        getrecursionlimit=_sys_real.getrecursionlimit,
+        setrecursionlimit=lambda n: None,   # no-op
+        stdin=None,
+        stderr=_sys_real.stderr,
+        stdout=_sys_real.stdout,
+        modules={},
+        executable=_sys_real.executable,
+    )
+
+    # ---- Safe shutil proxy (operations sandboxed to sandbox_dir) ----
+    try:
+        import shutil as _real_shutil
+        _safe_shutil = _types_mod.SimpleNamespace(
+            copy=lambda src, dst: _real_shutil.copy(_rp(src), _rp(dst)),
+            copy2=lambda src, dst: _real_shutil.copy2(_rp(src), _rp(dst)),
+            move=lambda src, dst: _real_shutil.move(_rp(src), _rp(dst)),
+            rmtree=lambda p, **kw: _real_shutil.rmtree(_rp(p), **kw),
+            copytree=lambda src, dst, **kw: _real_shutil.copytree(_rp(src), _rp(dst), **kw),
+            make_archive=lambda base_name, fmt, root_dir=None, base_dir=None, **kw: (
+                _real_shutil.make_archive(
+                    _rp(base_name), fmt,
+                    root_dir=root_dir or str(sandbox_dir),
+                    base_dir=base_dir, **kw,
+                )
+            ),
+            unpack_archive=lambda fn, extract_dir=None, **kw: _real_shutil.unpack_archive(
+                _rp(fn), extract_dir=extract_dir or str(sandbox_dir), **kw
+            ),
+            which=_real_shutil.which,
+            get_terminal_size=_real_shutil.get_terminal_size,
+            disk_usage=lambda p=".": _real_shutil.disk_usage(_rp(p)),
+        )
+    except ImportError:
+        _safe_shutil = _types_mod.SimpleNamespace()
+
+    # Modules returned as safe proxies
+    _PROXY_MAP = {
+        "os":     _safe_os,
+        "sys":    _safe_sys,
+        "shutil": _safe_shutil,
+    }
+
+    def _custom_import(name, globals=None, locals=None, fromlist=(), level=0):
+        top = name.split(".")[0].lower()
+
+        # Return safe proxy
+        if top in _PROXY_MAP:
+            # Special case: from os.path import X — return the real os.path (safe)
+            if name == "os.path" and fromlist:
+                return _os_real.path
+            return _PROXY_MAP[top]
+
+        # Normal import
+        try:
+            return __import__(name, globals, locals, fromlist, level)
+        except ImportError as orig_err:
+            pkg = top.replace("-", "_")
+            if pkg in _approved or pkg.replace("_", "-") in _approved:
+                logger.info("Auto-installing missing package: '%s'", pkg)
+                try:
+                    proc = _sub.run(
+                        [_sys_real.executable, "-m", "pip", "install", pkg, "-q"],
+                        timeout=120,
+                        capture_output=True,
+                    )
+                    if proc.returncode != 0:
+                        _sub.run(
+                            [_sys_real.executable, "-m", "pip", "install",
+                             pkg.replace("_", "-"), "-q"],
+                            timeout=120,
+                            capture_output=True,
+                        )
+                    _imp.invalidate_caches()
+                    return __import__(name, globals, locals, fromlist, level)
+                except Exception as install_err:
+                    logger.warning("Auto-install of '%s' failed: %s", pkg, install_err)
+            raise orig_err
+
+    return _custom_import
+
+
+def _make_sandboxed_open(sandbox_dir: Path):
+    """
+    Return an open() replacement.
+
+    Write / append / exclusive-create modes → path is always inside sandbox_dir.
+    Read modes → prefer sandbox_dir for relative paths, fall through otherwise
+                 (libraries need to read their own data files from site-packages).
+    """
+    import builtins as _builtins
+    _real_open = _builtins.open
+
+    def _sandboxed_open(
+        file, mode="r", buffering=-1, encoding=None,
+        errors=None, newline=None, closefd=True, opener=None,
+    ):
+        kw: Dict[str, Any] = {}
+        if encoding is not None:
+            kw["encoding"] = encoding
+        if errors is not None:
+            kw["errors"] = errors
+        if newline is not None:
+            kw["newline"] = newline
+
+        if isinstance(file, (str, bytes)):
+            file_str = file.decode() if isinstance(file, bytes) else file
+            # Write / append / exclusive → force into sandbox_dir
+            if any(c in mode for c in "wax"):
+                if not _os_real.path.isabs(file_str):
+                    file_str = _os_real.path.join(str(sandbox_dir), file_str)
+                parent = _os_real.path.dirname(file_str)
+                if parent:
+                    _os_real.makedirs(parent, exist_ok=True)
+                return _real_open(file_str, mode, buffering, **kw)
+            # Read → prefer sandbox_dir for relative paths
+            if not _os_real.path.isabs(file_str):
+                sandbox_path = _os_real.path.join(str(sandbox_dir), file_str)
+                if _os_real.path.exists(sandbox_path):
+                    return _real_open(sandbox_path, mode, buffering, **kw)
+
+        return _real_open(file, mode, buffering, **kw)
+
+    return _sandboxed_open
+
+
+def _collect_file_artifacts(sandbox_dir: Path) -> List[DisplayArtifact]:
+    """
+    Walk sandbox_dir after execution; convert files the user's code wrote into
+    downloadable FileArtifacts (stored as base64 in the DB, served via API).
+    """
+    artifacts: List[DisplayArtifact] = []
+    try:
+        for fp in sorted(Path(str(sandbox_dir)).rglob("*")):
+            if not fp.is_file():
+                continue
+            size = fp.stat().st_size
+            if size == 0 or size > _MAX_FILE_ARTIFACT_BYTES:
+                continue
+            ext = fp.suffix.lower()
+            mime = _FILE_MIME_TYPES.get(ext, "application/octet-stream")
+            filename = fp.name
+            try:
+                is_text = mime.startswith("text/") or mime in (
+                    "application/json", "application/xml",
+                    "application/x-yaml", "application/toml",
+                    "text/x-python", "application/javascript",
+                )
+                if is_text:
+                    data = fp.read_text(encoding="utf-8", errors="replace")
+                    encoding = "utf-8"
+                else:
+                    data = base64.b64encode(fp.read_bytes()).decode("ascii")
+                    encoding = "base64"
+            except Exception as e:
+                logger.debug("Cannot read sandbox file %s: %s", filename, e)
+                continue
+
+            artifacts.append(DisplayArtifact(
+                type=mime,
+                data=data,
+                encoding=encoding,
+                display_type="file",
+                metadata={
+                    "filename": filename,
+                    "size_bytes": size,
+                    "extension": ext,
+                    "downloadable": True,
+                },
+            ))
+    except Exception as e:
+        logger.debug("File artifact collection error: %s", e)
+    return artifacts
 
 
 # ---------------------------------------------------------------------------
@@ -469,7 +786,7 @@ class PythonSandbox(BaseSandbox):
         try:
             result, new_namespace = await asyncio.wait_for(
                 asyncio.to_thread(
-                    self._execute_sync, code, context, persisted_namespace
+                    self._execute_sync, code, context, persisted_namespace, execution_id
                 ),
                 timeout=timeout,
             )
@@ -549,12 +866,24 @@ class PythonSandbox(BaseSandbox):
         code: str,
         context: Optional[Dict] = None,
         persisted_namespace: Optional[Dict] = None,
+        execution_id: Optional[str] = None,
     ) -> Tuple[SandboxResult, Dict[str, Any]]:
         """
         Synchronous execution (runs in a thread via asyncio.to_thread).
         Returns (SandboxResult, serializable_namespace_for_db).
+
+        • Creates a per-execution temp directory for file I/O.
+        • Auto-installs missing approved packages via pip.
+        • Captures plotly fig.show() + matplotlib plt.show() as artifacts.
+        • Converts files written by the code into downloadable FileArtifacts.
         """
-        # ---- Set up per-execution captures ----
+        import shutil as _shutil
+
+        # ---- Per-execution sandbox directory for file I/O ----
+        exec_id = execution_id or str(uuid.uuid4())
+        sandbox_dir = Path(_tempfile_mod.mkdtemp(prefix=f"sbx_{exec_id[:8]}_"))
+
+        # ---- Captures ----
         captured_output = _io.StringIO()
         captured_artifacts: List[DisplayArtifact] = []
 
@@ -570,64 +899,109 @@ class PythonSandbox(BaseSandbox):
         # Fix 2e — Jupyter-style helpers
         display, HTML, SVG, JSON = _make_display_helpers(captured_artifacts)
 
+        # Auto-install __import__ + sandboxed open()
+        custom_import = _make_sandbox_imports(sandbox_dir, PRE_APPROVED_PACKAGES)
+        sandboxed_open = _make_sandboxed_open(sandbox_dir)
+
         # Build per-execution globals (shallow copy of shared globals)
         exec_globals = dict(_SANDBOX_GLOBALS)
         exec_globals["__builtins__"] = dict(_SANDBOX_GLOBALS["__builtins__"])
         exec_globals["__builtins__"]["print"] = _sandbox_print
+        exec_globals["__builtins__"]["__import__"] = custom_import
+        exec_globals["__builtins__"]["open"] = sandboxed_open
         if plt_wrapper is not None:
             exec_globals["plt"] = plt_wrapper
         exec_globals["display"] = display
         exec_globals["HTML"] = HTML
         exec_globals["SVG"] = SVG
         exec_globals["JSON"] = JSON
+        exec_globals["__sandbox_dir__"] = str(sandbox_dir)  # let code discover its workspace
 
-        # ---- Set up local vars ----
+        # ---- Local vars ----
         local_vars: Dict[str, Any] = {}
-
-        # Fix 2d — inject persisted namespace
         if persisted_namespace:
             _inject_persisted_namespace(persisted_namespace, local_vars)
-
-        # Inject caller context on top
         if context:
             local_vars.update(context)
+
+        # ---- Patch plotly.io.show to capture figures as HTML artifacts ----
+        _plotly_show_orig = None
+        try:
+            import plotly.io as _pio
+            _plotly_show_orig = _pio.show
+
+            def _plotly_show_patch(fig, *args, **kwargs):
+                try:
+                    html = _pio.to_html(fig, include_plotlyjs="cdn", full_html=False)
+                    captured_artifacts.append(DisplayArtifact(
+                        type="text/html", data=html, encoding="utf-8",
+                        display_type="plotly",
+                        metadata={"format": "plotly-html"},
+                    ))
+                except Exception:
+                    pass
+
+            _pio.show = _plotly_show_patch
+        except ImportError:
+            pass
 
         # ---- Execute ----
         try:
             exec(code, exec_globals, local_vars)  # noqa: S102
 
-            # Capture any remaining matplotlib figures (code that didn't call show())
+            # Capture any remaining matplotlib figures
             if plt_wrapper is not None and _plt_module is not None:
                 try:
-                    figs = _plt_module.get_fignums()
-                    if figs:
+                    if _plt_module.get_fignums():
                         plt_wrapper.show()
                 except Exception:
                     pass
 
+            # Auto-capture any plotly Figure objects in local_vars not yet captured
+            try:
+                import plotly.graph_objects as _pgo
+                if not any(a.display_type == "plotly" for a in captured_artifacts):
+                    for _v in list(local_vars.values()):
+                        if isinstance(_v, _pgo.Figure):
+                            try:
+                                import plotly.io as _pio2
+                                html = _pio2.to_html(_v, include_plotlyjs="cdn", full_html=False)
+                                captured_artifacts.append(DisplayArtifact(
+                                    type="text/html", data=html, encoding="utf-8",
+                                    display_type="plotly",
+                                    metadata={"format": "plotly-html"},
+                                ))
+                            except Exception:
+                                pass
+            except ImportError:
+                pass
+
+            # Collect files written to sandbox_dir as downloadable artifacts
+            file_artifacts = _collect_file_artifacts(sandbox_dir)
+            captured_artifacts.extend(file_artifacts)
+
             stdout_str = captured_output.getvalue()
-            # Primary output: stdout first, then result/output variable, then fallback
             if stdout_str.strip():
                 output_text = stdout_str
             else:
                 raw_out = local_vars.get("result", local_vars.get("output", None))
-                output_text = str(raw_out) if raw_out is not None else "Code executed successfully"
+                output_text = (
+                    str(raw_out) if raw_out is not None else "Code executed successfully"
+                )
 
-            # Determine display_type
-            display_type = "image" if any(
-                a.display_type == "image" for a in captured_artifacts
-            ) else ("html" if any(
-                a.display_type in ("html", "react") for a in captured_artifacts
-            ) else "text")
+            display_type = (
+                "image"  if any(a.display_type == "image"  for a in captured_artifacts) else
+                "plotly" if any(a.display_type == "plotly" for a in captured_artifacts) else
+                "html"   if any(a.display_type in ("html", "react") for a in captured_artifacts) else
+                "file"   if any(a.display_type == "file"   for a in captured_artifacts) else
+                "text"
+            )
 
-            # Serialize variables for API response (string preview)
             variables = {
                 k: str(v)[:200]
                 for k, v in local_vars.items()
                 if not k.startswith("_")
             }
-
-            # Serialize namespace for DB (only JSON-safe values)
             new_namespace = _serialize_namespace(local_vars)
 
             return SandboxResult(
@@ -647,6 +1021,20 @@ class PythonSandbox(BaseSandbox):
                 output=tb[:1000],
                 language="python",
             ), {}
+
+        finally:
+            # Restore plotly.io.show
+            if _plotly_show_orig is not None:
+                try:
+                    import plotly.io as _pio_restore
+                    _pio_restore.show = _plotly_show_orig
+                except Exception:
+                    pass
+            # Clean up temp directory (artifacts already captured in memory)
+            try:
+                _shutil.rmtree(str(sandbox_dir), ignore_errors=True)
+            except Exception:
+                pass
 
     # -------------------------------------------------------------------------
     # Fix 2c — AST-based validation
