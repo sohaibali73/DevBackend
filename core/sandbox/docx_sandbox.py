@@ -565,6 +565,47 @@ function buildContent(sections) {
       // ── Embedded image (base64 data resolved by Python before Node runs) ──
       // The Python layer resolves file_id → base64 before invoking Node,
       // so this case only needs to handle the inline `data` field.
+      // ── Chart/Plot Injection from sandbox artifacts ────────────────────────
+      case 'chart': {
+        // Same logic as image, just an alias for chart artifacts from sandbox
+        if (!item.data) break;
+        try {
+          const imgBuf = Buffer.from(item.data, 'base64');
+          const width  = item.width  || 560;
+          const height = item.height || Math.round(width * 0.6);
+          const fmt    = (item.format || 'png').toLowerCase();
+          const validFmt = ['png','jpg','jpeg','gif','bmp','svg'].includes(fmt) ? fmt : 'png';
+          const imgRun = new ImageRun({
+            data           : imgBuf,
+            transformation : { width, height },
+            type           : validFmt,
+          });
+          out.push(new Paragraph({
+            alignment : item.align === 'center' ? AlignmentType.CENTER
+                       : item.align === 'right' ? AlignmentType.RIGHT
+                       :                          AlignmentType.LEFT,
+            children  : [imgRun],
+            spacing   : { after: item.caption ? 60 : 240 },
+          }));
+          if (item.caption) {
+            out.push(new Paragraph({
+              spacing  : { after: 240 },
+              children : [new TextRun({
+                text    : item.caption,
+                font    : 'Quicksand',
+                size    : 18,
+                italics : true,
+                color   : '666666',
+              })],
+            }));
+          }
+        } catch (imgErr) {
+          process.stderr.write('WARN: chart section failed: ' + imgErr.message + '\n');
+        }
+        break;
+      }
+
+      // ── Image ─────────────────────────────────────────────────────────────
       case 'image': {
         if (!item.data) break;   // no data = silently skip
         try {
@@ -794,7 +835,7 @@ def _resolve_image_sections(spec: Dict[str, Any]) -> Dict[str, Any]:
         return spec
 
     needs_resolve = any(
-        s.get("type") == "image" and "file_id" in s and "data" not in s
+        (s.get("type") == "image" or s.get("type") == "chart") and "file_id" in s and "data" not in s
         for s in sections
     )
     if not needs_resolve:
@@ -807,7 +848,7 @@ def _resolve_image_sections(spec: Dict[str, Any]) -> Dict[str, Any]:
         return spec
 
     for section in sections:
-        if section.get("type") != "image":
+        if section.get("type") not in ("image", "chart"):
             continue
         if "data" in section:
             continue  # already has inline base64 — no lookup needed

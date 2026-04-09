@@ -122,6 +122,7 @@ GENERATE_DOCX_TOOL_DEF: Dict[str, Any] = {
                 "  kpi_row      → metrics:[{value,label,delta,positive}]\n"
                 "  quote_block  → quote, attribution, background\n"
                 "  two_column   → left:{heading,body}, right:{heading,body}, divider\n"
+                "  table_from_xlsx → Import table directly from uploaded xlsx file_id\n"
                 "  divider      → (yellow horizontal rule)\n"
                 "  spacer       → size (twips)\n"
                 "  page_break   → (no extra fields)\n"
@@ -201,6 +202,28 @@ def handle_generate_docx(
                 "include_disclosure": tool_input.get("include_disclosure", True),
                 "disclosure_text":    tool_input.get("disclosure_text", ""),
             }
+
+        # Resolve table_from_xlsx sections (import xlsx file_id → highlight_table)
+        resolved_sections = []
+        for section in spec["sections"]:
+            if section.get("type") == "table_from_xlsx":
+                try:
+                    from core.tools_v2.xlsx_table_importer import xlsx_to_table_section
+                    resolved = xlsx_to_table_section(
+                        file_id=section.get("file_id", ""),
+                        sheet=section.get("sheet", 0),
+                        range_str=section.get("range"),
+                        header_row=section.get("header_row", True),
+                        auto_color=section.get("auto_color", True),
+                        caption=section.get("caption"),
+                    )
+                    resolved_sections.append(resolved)
+                except Exception as e:
+                    logger.warning("Failed to resolve table_from_xlsx: %s", e)
+                    resolved_sections.append({"type": "paragraph", "text": f"[Table import failed: {str(e)}]"})
+            else:
+                resolved_sections.append(section)
+        spec["sections"] = resolved_sections
 
         logger.info("generate_docx: title=%r  sections=%d", spec["title"], len(sections))
 
