@@ -84,23 +84,34 @@ PRE_APPROVED_PACKAGES = [
 
 # ---------------------------------------------------------------------------
 # CDN import map for React client-side rendering (Fix 3a)
+#
+# IMPORTANT: React-dependent packages must use ?external=react,react-dom
+# so esm.sh does NOT bundle its own React copy. All `import 'react'` calls
+# from those packages are resolved by the browser via THIS importmap,
+# guaranteeing a single React instance (no React error #31).
 # ---------------------------------------------------------------------------
 _ESM_IMPORT_MAP: Dict[str, str] = {
+    # ── Core React (pinned to 18, single instance) ────────────────────────
     "react":                       "https://esm.sh/react@18",
-    "react-dom":                   "https://esm.sh/react-dom@18",
-    "react-dom/client":            "https://esm.sh/react-dom@18/client",
-    "react-dom/server":            "https://esm.sh/react-dom@18/server",
-    "lucide-react":                "https://esm.sh/lucide-react",
-    "@radix-ui/react-icons":       "https://esm.sh/@radix-ui/react-icons",
-    "react-icons":                 "https://esm.sh/react-icons",
-    "framer-motion":               "https://esm.sh/framer-motion",
-    "react-hook-form":             "https://esm.sh/react-hook-form",
-    "react-router-dom":            "https://esm.sh/react-router-dom",
+    "react-dom":                   "https://esm.sh/react-dom@18?external=react",
+    "react-dom/client":            "https://esm.sh/react-dom@18/client?external=react,react-dom",
+    "react-dom/server":            "https://esm.sh/react-dom@18/server?external=react,react-dom",
+
+    # ── React component libraries (external=react,react-dom) ─────────────
+    "lucide-react":                "https://esm.sh/lucide-react?external=react",
+    "@radix-ui/react-icons":       "https://esm.sh/@radix-ui/react-icons?external=react",
+    "react-icons":                 "https://esm.sh/react-icons?external=react",
+    "framer-motion":               "https://esm.sh/framer-motion?external=react,react-dom",
+    "react-hook-form":             "https://esm.sh/react-hook-form?external=react",
+    "react-router-dom":            "https://esm.sh/react-router-dom?external=react,react-dom",
+    "@headlessui/react":           "https://esm.sh/@headlessui/react?external=react,react-dom",
+    "@heroicons/react":            "https://esm.sh/@heroicons/react?external=react",
+    "recharts":                    "https://esm.sh/recharts?external=react,react-dom",
+
+    # ── Pure utility packages (no React dep, no external needed) ─────────
     "clsx":                        "https://esm.sh/clsx",
     "tailwind-merge":              "https://esm.sh/tailwind-merge",
     "class-variance-authority":    "https://esm.sh/class-variance-authority",
-    "@headlessui/react":           "https://esm.sh/@headlessui/react",
-    "@heroicons/react":            "https://esm.sh/@heroicons/react",
     "date-fns":                    "https://esm.sh/date-fns",
     "dayjs":                       "https://esm.sh/dayjs",
     "moment":                      "https://esm.sh/moment",
@@ -117,7 +128,6 @@ _ESM_IMPORT_MAP: Dict[str, str] = {
     "recoil":                      "https://esm.sh/recoil",
     "classnames":                  "https://esm.sh/classnames",
     "prop-types":                  "https://esm.sh/prop-types",
-    "recharts":                    "https://esm.sh/recharts",
     "chart.js":                    "https://esm.sh/chart.js",
     "d3":                          "https://esm.sh/d3",
 }
