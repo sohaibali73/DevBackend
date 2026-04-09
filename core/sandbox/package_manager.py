@@ -115,7 +115,7 @@ class SandboxPackageManager:
             "tzdata", "Unidecode", "urllib3", "websockets", "yfinance",
             "scikit-learn", "seaborn", "plotly", "networkx",
             "sympy", "fastapi", "flask", "sqlalchemy", "alembic",
-            "aiohttp", "pytest", "click",
+            "aiohttp", "pytest", "click", "faker",
         ],
         "javascript": [
             "react", "react-dom", "@mui/material", "axios", "lodash",

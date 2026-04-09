@@ -79,10 +79,11 @@ pydub
 sentence-transformers==2.2.2
 
 # =============================================================================
-# SANDBOX PERSISTENCE
+# SANDBOX PERSISTENCE & UTILITIES
 # =============================================================================
 
 aiosqlite                        # async SQLite driver for sandbox DB
+faker                            # fake data generation (Faker class in sandbox)
 
 # =============================================================================
 # LLM SANDBOX (isolated code execution)

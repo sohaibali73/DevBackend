@@ -122,7 +122,16 @@ _try_inject("requests", "requests")
 _try_inject("pydantic", "pydantic")
 _try_inject("rich", "rich")
 _try_inject("anthropic", "anthropic")
-_try_inject("tabulate", "tabulate")
+# tabulate — inject the function directly (not the module) so tabulate(data, headers=...) works
+try:
+    from tabulate import tabulate as _tabulate_fn
+    _SANDBOX_GLOBALS["tabulate"] = _tabulate_fn      # tabulate(rows, headers=...)
+    _SANDBOX_GLOBALS["tabulate_formats"] = [          # convenience: list of valid tablefmt strings
+        "plain", "simple", "github", "grid", "fancy_grid", "pipe",
+        "orgtbl", "rst", "mediawiki", "html", "latex", "tsv",
+    ]
+except ImportError:
+    pass
 _try_inject("tqdm", "tqdm")
 _try_inject("pyarrow", "pyarrow")
 _try_inject("edgartools", "edgartools")
@@ -141,6 +150,14 @@ _try_inject("tldextract", "tldextract")
 _try_inject("plotly", "plotly")
 _try_inject("networkx", "networkx")
 _try_inject("sklearn", "sklearn")
+
+# faker — inject Faker class directly so Faker() works without import
+try:
+    from faker import Faker as _Faker
+    _SANDBOX_GLOBALS["Faker"] = _Faker
+    _SANDBOX_GLOBALS["faker"] = __import__("faker")  # also expose the module
+except ImportError:
+    pass
 
 # Inject BeautifulSoup convenience alias
 try:
@@ -205,6 +222,7 @@ PRE_APPROVED_PACKAGES = [
     "contourpy", "cycler", "fonttools", "kiwisolver", "pyparsing",
     "cffi", "pycparser", "markdown-it-py", "mdurl", "setuptools", "pip",
     "plotly", "networkx", "flask", "fastapi", "sqlalchemy",
+    "faker",
 ]
 
 
