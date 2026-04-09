@@ -469,6 +469,38 @@ async def startup_copy_docx_assets():
     except Exception as e:
         logger.warning("startup_copy_docx_assets: could not copy assets: %s", e)
 
+
+@app.on_event("startup")
+async def startup_copy_pptx_assets():
+    """
+    Copy Potomac PPTX logo assets to the Railway persistent volume on startup.
+
+    Source  : ClaudeSkills/potomac-pptx/brand-assets/logos/*.png (baked into image)
+    Dest    : $STORAGE_ROOT/pptx_assets/*.png                     (Railway volume)
+    """
+    import shutil as _shutil
+    from pathlib import Path as _Path
+
+    src = _Path(__file__).parent / "ClaudeSkills" / "potomac-pptx" / "brand-assets" / "logos"
+    storage_root = os.getenv("STORAGE_ROOT", "/data")
+    dst = _Path(storage_root) / "pptx_assets"
+
+    if not src.exists():
+        logger.warning("startup_copy_pptx_assets: source logos not found at %s", src)
+        return
+
+    try:
+        dst.mkdir(parents=True, exist_ok=True)
+        copied = 0
+        for png in src.glob("*.png"):
+            target = dst / png.name
+            _shutil.copy2(png, target)
+            copied += 1
+        logger.info("✓ Copied %d Potomac PPTX logo assets → %s", copied, dst)
+    except Exception as e:
+        logger.warning("startup_copy_pptx_assets: could not copy assets: %s", e)
+
+
 # Log summary
 logger.info(f"Router loading complete: {len(routers_loaded)} loaded, {len(routers_failed)} failed")
 if routers_failed:

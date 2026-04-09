@@ -1391,6 +1391,138 @@ TOOL_DEFINITIONS = [
             "required": ["title", "sections"],
         },
     },
+    # ── Server-side PPTX generation ──────────────────────────────────────────
+    # generate_pptx runs on Railway via Node.js + pptxgenjs npm.
+    # Zero API cost; logos mounted from ClaudeSkills/potomac-pptx/brand-assets/logos/.
+    {
+        "name": "generate_pptx",
+        "description": (
+            "Generate a professional Potomac-branded PowerPoint presentation (.pptx) entirely "
+            "on the server — no Claude Skills container, no API cost, instant download. "
+            "Use for any Potomac slide deck: client pitches, market outlooks, quarterly reviews, "
+            "fund overviews, board presentations, proposal decks, or any presentation.\n\n"
+            "Slide types: title (standard/executive dark), content (bullets/text), two_column, "
+            "three_column, metrics (large KPI numbers), process (numbered step flow), quote, "
+            "section_divider, cta (closing + button), image (user upload via file_id).\n\n"
+            "IMPORTANT: Build a complete deck — title slide, content slides, and CTA closing. "
+            "For images the user has uploaded, use type='image' with file_id from the upload."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "filename": {"type": "string", "description": "Output filename e.g. 'Potomac_Q1_Outlook.pptx'."},
+                "title":    {"type": "string", "description": "Presentation title."},
+                "slides": {
+                    "type": "array",
+                    "description": (
+                        "Ordered slides. Each has a 'type' field:\n"
+                        "  title           → title, subtitle, tagline, style ('standard'|'executive')\n"
+                        "  content         → title, bullets:[str] OR text:str\n"
+                        "  two_column      → title, left_header, right_header, left_content, right_content\n"
+                        "  three_column    → title, column_headers:[h1,h2,h3], columns:[c1,c2,c3]\n"
+                        "  metrics         → title, metrics:[{value,label},...], context\n"
+                        "  process         → title, steps:[{title,description},...]\n"
+                        "  quote           → quote, attribution, context\n"
+                        "  section_divider → title, description\n"
+                        "  cta             → title, action_text, button_text, contact_info\n"
+                        "  image           → title(opt), file_id, format, width, height, align, caption"
+                    ),
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "type":           {"type": "string"},
+                            "title":          {"type": "string"},
+                            "subtitle":       {"type": "string"},
+                            "tagline":        {"type": "string"},
+                            "style":          {"type": "string", "enum": ["standard", "executive"]},
+                            "bullets":        {"type": "array", "items": {"type": "string"}},
+                            "text":           {"type": "string"},
+                            "left_header":    {"type": "string"},
+                            "right_header":   {"type": "string"},
+                            "left_content":   {"type": "string"},
+                            "right_content":  {"type": "string"},
+                            "columns":        {"type": "array", "items": {"type": "string"}},
+                            "column_headers": {"type": "array", "items": {"type": "string"}},
+                            "metrics":        {"type": "array", "items": {"type": "object"}},
+                            "context":        {"type": "string"},
+                            "steps":          {"type": "array", "items": {"type": "object"}},
+                            "quote":          {"type": "string"},
+                            "attribution":    {"type": "string"},
+                            "description":    {"type": "string"},
+                            "action_text":    {"type": "string"},
+                            "button_text":    {"type": "string"},
+                            "contact_info":   {"type": "string"},
+                            "file_id":        {"type": "string", "description": "File UUID from user upload (for type='image')"},
+                            "format":         {"type": "string", "enum": ["png", "jpg", "jpeg", "gif"]},
+                            "width":          {"type": "number"},
+                            "height":         {"type": "number"},
+                            "align":          {"type": "string", "enum": ["left", "center", "right"]},
+                            "caption":        {"type": "string"},
+                        },
+                        "required": ["type"],
+                    },
+                },
+            },
+            "required": ["title", "slides"],
+        },
+    },
+    # ── Server-side XLSX generation ──────────────────────────────────────────
+    # generate_xlsx runs entirely in Python via openpyxl — no Node.js subprocess.
+    # Zero API cost. Full Potomac brand styling applied automatically.
+    {
+        "name": "generate_xlsx",
+        "description": (
+            "Generate a professional Potomac-branded Excel workbook (.xlsx) entirely "
+            "on the server — no Claude Skills container, no API cost, instant download. "
+            "Use for any Potomac spreadsheet: performance reports, portfolio trackers, "
+            "risk dashboards, trade logs, fee schedules, budget models, data exports, "
+            "financial models, or any tabular data.\n\n"
+            "Capabilities: yellow (#FEC00F) column headers, zebra-striped rows, thin borders, "
+            "Calibri font, multiple sheets with colored tabs, number formats per column, "
+            "Excel formulas (e.g. '=SUM(B2:B9)'), frozen panes, landscape print layout, "
+            "optional auto-appended DISCLOSURES sheet.\n\n"
+            "IMPORTANT: Supply actual data values in 'rows'. Use formulas for calculated columns."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "filename": {"type": "string", "description": "Output filename e.g. 'Potomac_PortfolioTracker.xlsx'."},
+                "title":    {"type": "string", "description": "Workbook title shown in every sheet's title block (ALL CAPS recommended)."},
+                "subtitle": {"type": "string", "description": "Optional subtitle e.g. 'As of March 31, 2026'."},
+                "sheets": {
+                    "type": "array",
+                    "description": "One or more worksheet definitions.",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "name":           {"type": "string", "description": "Tab name (auto-uppercased, max 31 chars)."},
+                            "tab_color":      {"type": "string", "description": "Tab hex color (no #). Default: FEC00F for first sheet."},
+                            "columns":        {"type": "array", "items": {"type": "string"}, "description": "Column headers (auto-uppercased)."},
+                            "col_widths":     {"type": "array", "items": {"type": "number"}, "description": "Column widths in Excel character units."},
+                            "rows":           {"type": "array", "items": {"type": "array"}, "description": "Data rows — arrays of cell values."},
+                            "number_formats": {
+                                "type": "object",
+                                "description": "Column index 1-based str → Excel format. e.g. {'3':'0.0%','4':'$#,##0.0','5':'MMM D, YYYY'}",
+                                "additionalProperties": {"type": "string"},
+                            },
+                            "formulas":       {
+                                "type": "array",
+                                "description": "[{cell, formula}] overrides e.g. [{cell:'C10', formula:'=SUM(C5:C9)'}]",
+                                "items": {"type": "object"},
+                            },
+                            "include_footer": {"type": "boolean", "default": True, "description": "Add Potomac footer row below data."},
+                            "footer_text":    {"type": "string", "description": "Custom footer. Default: 'Potomac | Built to Conquer Risk®'."},
+                            "freeze_panes":   {"type": "string", "description": "Cell to freeze at e.g. 'A5'. Defaults to row below headers."},
+                        },
+                        "required": ["name", "columns", "rows"],
+                    },
+                },
+                "include_disclosures": {"type": "boolean", "default": True, "description": "Auto-append DISCLOSURES sheet."},
+                "disclosure_text":     {"type": "string", "description": "Custom disclosure text."},
+            },
+            "required": ["title", "sheets"],
+        },
+    },
     # ── EDGAR / SEC Tools ─────────────────────────────────────────────────────
     # These tools call the SEC EDGAR public API (no API key required).
     # They give Claude access to official SEC filings, financial facts, and
@@ -4643,6 +4775,23 @@ def handle_tool_call(
                 result = json.loads(_docx_json)
             except Exception as _docx_err:
                 result = {"status": "error", "error": str(_docx_err)}
+        elif tool_name == "generate_pptx":
+            # Server-side Potomac PPTX generation via Node.js + pptxgenjs.
+            # Logos from ClaudeSkills/potomac-pptx/brand-assets/logos/.
+            try:
+                from core.tools_v2.document_tools import handle_generate_pptx
+                _pptx_json = handle_generate_pptx(tool_input, api_key=api_key)
+                result = json.loads(_pptx_json)
+            except Exception as _pptx_err:
+                result = {"status": "error", "error": str(_pptx_err)}
+        elif tool_name == "generate_xlsx":
+            # Server-side Potomac XLSX generation via Python openpyxl — no Node.js.
+            try:
+                from core.tools_v2.document_tools import handle_generate_xlsx
+                _xlsx_json = handle_generate_xlsx(tool_input, api_key=api_key)
+                result = json.loads(_xlsx_json)
+            except Exception as _xlsx_err:
+                result = {"status": "error", "error": str(_xlsx_err)}
         elif tool_name == "create_word_document":
             result = _create_word_document(tool_input, api_key)
         elif tool_name == "create_pptx_with_skill":
