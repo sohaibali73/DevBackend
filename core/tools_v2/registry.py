@@ -166,10 +166,22 @@ class ToolRegistry:
         """
         Dispatch a tool call and return a JSON string.
 
-        Uses the existing core/tools.py handle_tool_call for compatibility.
+        Priority:
+          1. Custom handlers registered via register_tool() — checked first.
+             Supports both sync and async callables.
+          2. Fallback to core/tools.py handle_tool_call for built-in tools.
         """
+        import inspect as _inspect
         self._ensure_initialized()
 
+        # ── 1. Custom handlers (generate_docx, etc.) ──────────────────────
+        custom = self._handlers.get(name)
+        if custom is not None:
+            if _inspect.iscoroutinefunction(custom):
+                return await custom(args, api_key=api_key, supabase_client=supabase_client)
+            return custom(args, api_key=api_key, supabase_client=supabase_client)
+
+        # ── 2. Legacy built-in tools (core/tools.py) ──────────────────────
         if self._main_handler:
             return self._main_handler(
                 tool_name=name,

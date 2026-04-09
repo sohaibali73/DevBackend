@@ -1285,6 +1285,103 @@ TOOL_DEFINITIONS = [
             "required": ["title", "description"]
         }
     },
+    # ── Server-side Document Generation (no Claude Skills container) ──────────
+    # generate_docx runs entirely on the Railway server via Node.js + docx npm.
+    # Zero API cost; logos mounted from ClaudeSkills/potomac-docx/assets/.
+    # Use this FIRST for Potomac Word documents — invoke_skill as fallback only.
+    {
+        "name": "generate_docx",
+        "description": (
+            "Generate a professional Potomac-branded Word document (.docx) entirely "
+            "on the server — no Claude Skills container, no API cost, instant download. "
+            "Use this instead of invoke_skill for any Potomac Word document request: "
+            "fund fact sheets, market commentaries, research reports, client memos, "
+            "risk reports, performance reports, proposals, SOPs, trade rationale, "
+            "onboarding guides, legal agreements, or any other business document.\n\n"
+            "Capabilities:\n"
+            "- Potomac yellow (#FEC00F) / dark-gray (#212121) brand palette\n"
+            "- Potomac logo on every page header (standard, black, or white variant)\n"
+            "- H1/H2/H3 headings (Rajdhani ALL CAPS), body text (Quicksand)\n"
+            "- Bullet lists, numbered lists, multi-column tables (zebra-striped, yellow headers)\n"
+            "- Dividers, spacers, page breaks\n"
+            "- Standard Potomac disclosure block (auto-appended unless disabled)\n"
+            "- Page-number footer\n\n"
+            "IMPORTANT: Populate `sections` with ALL the document content. "
+            "Be thorough — the AI writes the content; the tool formats and saves it."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "filename": {
+                    "type": "string",
+                    "description": "Output filename e.g. 'Potomac_Q1_Commentary.docx'. Use underscores.",
+                },
+                "title": {
+                    "type": "string",
+                    "description": "Main document title shown on the title page (ALL CAPS recommended).",
+                },
+                "subtitle": {"type": "string", "description": "Optional subtitle below the title."},
+                "date":     {"type": "string", "description": "Document date, e.g. 'April 2026'."},
+                "author":   {"type": "string", "description": "Author / team name."},
+                "logo_variant": {
+                    "type": "string",
+                    "enum": ["standard", "black", "white"],
+                    "default": "standard",
+                    "description": "Potomac logo variant: 'standard' (color), 'black', or 'white'.",
+                },
+                "header_line_color": {
+                    "type": "string",
+                    "enum": ["yellow", "dark"],
+                    "default": "yellow",
+                    "description": "Color of the underline beneath the header logo.",
+                },
+                "footer_text": {
+                    "type": "string",
+                    "description": "Custom footer left text. Default: 'Potomac  |  Built to Conquer Risk®'.",
+                },
+                "sections": {
+                    "type": "array",
+                    "description": (
+                        "Ordered list of content blocks. Each has a 'type' field plus type-specific fields:\n"
+                        "  heading    → level (1/2/3), text\n"
+                        "  paragraph  → text  OR  runs:[{text,bold,italics,color}]\n"
+                        "  bullets    → items:[str, ...]\n"
+                        "  numbered   → items:[str, ...]\n"
+                        "  table      → headers:[str], rows:[[str]], col_widths:[int] (optional)\n"
+                        "  divider    → (no extra fields, draws yellow horizontal rule)\n"
+                        "  spacer     → size (twips, default 240)\n"
+                        "  page_break → (no extra fields)"
+                    ),
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "type":       {"type": "string"},
+                            "level":      {"type": "integer", "enum": [1, 2, 3]},
+                            "text":       {"type": "string"},
+                            "runs":       {"type": "array", "items": {"type": "object"}},
+                            "items":      {"type": "array", "items": {"type": "string"}},
+                            "headers":    {"type": "array", "items": {"type": "string"}},
+                            "rows":       {"type": "array", "items": {"type": "array"}},
+                            "col_widths": {"type": "array", "items": {"type": "integer"}},
+                            "size":       {"type": "integer"},
+                            "color":      {"type": "string"},
+                        },
+                        "required": ["type"],
+                    },
+                },
+                "include_disclosure": {
+                    "type": "boolean",
+                    "default": True,
+                    "description": "Append standard Potomac disclosures. Set false for internal docs.",
+                },
+                "disclosure_text": {
+                    "type": "string",
+                    "description": "Custom disclosure text (overrides default when include_disclosure=true).",
+                },
+            },
+            "required": ["title", "sections"],
+        },
+    },
     # ── EDGAR / SEC Tools ─────────────────────────────────────────────────────
     # These tools call the SEC EDGAR public API (no API key required).
     # They give Claude access to official SEC filings, financial facts, and
@@ -4527,6 +4624,16 @@ def handle_tool_call(
                 "extra_context": f"Strategy type: {strategy_type}, Trade timing: {trade_timing}",
             }, api_key)
         # ── Document & Presentation generation tools ───────────────────────────
+        elif tool_name == "generate_docx":
+            # Server-side Potomac DOCX generation — no Claude Skills container.
+            # handle_generate_docx returns a JSON string; parse it to a dict so
+            # handle_tool_call can inject _tool_time_ms before re-serialising.
+            try:
+                from core.tools_v2.document_tools import handle_generate_docx
+                _docx_json = handle_generate_docx(tool_input, api_key=api_key)
+                result = json.loads(_docx_json)
+            except Exception as _docx_err:
+                result = {"status": "error", "error": str(_docx_err)}
         elif tool_name == "create_word_document":
             result = _create_word_document(tool_input, api_key)
         elif tool_name == "create_pptx_with_skill":
