@@ -25,6 +25,12 @@ Phase 4 Modules
 ---------------
 diff_engine         : Detect which slides changed between two PPTX versions (diff-aware re-render)
 session_manager     : Stateful editing sessions with full undo/redo history
+
+Phase 5 Modules
+---------------
+content_extractor   : Extract text from PPTX (OCR), PDF, DOCX, HTML, images
+deck_planner        : Claude-powered presentation planning from documents or briefs
+content_writer      : AI slide content enhancement, speaker notes, alternatives
 """
 
 from .slide_renderer import SlideRenderer, SlideManifest, SlideImageInfo
@@ -38,6 +44,9 @@ from .slide_library import SlideLibrary, LibrarySlide, SearchResult
 from .export_pipeline import ExportPipeline, ExportResult
 from .diff_engine import DiffEngine, DiffReport, SlideHash
 from .session_manager import SessionManager, Session, RevisionEntry
+from .content_extractor import ContentExtractor, DocumentContent, PageContent, TableData
+from .deck_planner import DeckPlanner, DeckPlan, SlideBlueprint
+from .content_writer import ContentWriter, SpeakerNote, ContentSuggestion
 
 __all__ = [
     # Phase 1
@@ -73,4 +82,15 @@ __all__ = [
     "SessionManager",
     "Session",
     "RevisionEntry",
+    # Phase 5
+    "ContentExtractor",
+    "DocumentContent",
+    "PageContent",
+    "TableData",
+    "DeckPlanner",
+    "DeckPlan",
+    "SlideBlueprint",
+    "ContentWriter",
+    "SpeakerNote",
+    "ContentSuggestion",
 ]

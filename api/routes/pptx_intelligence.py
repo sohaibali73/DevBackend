@@ -46,6 +46,9 @@ from core.sandbox.automizer_sandbox import AutomizerSandbox
 from core.sandbox.pptx_sandbox import PptxSandbox
 from core.sandbox.pptx_reviser import PptxReviser
 from core.vision.brand_enforcer import BrandEnforcer
+from core.vision.content_extractor import ContentExtractor
+from core.vision.content_writer import ContentWriter
+from core.vision.deck_planner import DeckPlanner
 from core.vision.diff_engine import DiffEngine
 from core.vision.element_matcher import ElementMatcher, get_element_matcher
 from core.vision.export_pipeline import ExportPipeline
@@ -3059,3 +3062,688 @@ async def websocket_session(
             await websocket.send_text(json.dumps({"type": "error", "message": str(exc)}))
         except Exception:
             pass
+
+
+# =============================================================================
+# ██████╗ ██╗  ██╗ █████╗ ███████╗███████╗    ███████╗
+# ██╔══██╗██║  ██║██╔══██╗██╔════╝██╔════╝    ██╔════╝
+# ██████╔╝███████║███████║███████╗█████╗      ███████╗
+# ██╔═══╝ ██╔══██║██╔══██║╚════██║██╔══╝      ╚════██║
+# ██║     ██║  ██║██║  ██║███████║███████╗    ███████║
+# ╚═╝     ╚═╝  ╚═╝╚═╝  ╚═╝╚══════╝╚══════╝    ╚══════╝
+# PHASE 5 — AI Content Intelligence: Text Extraction, Deck Generation, Content AI
+# =============================================================================
+
+
+# =============================================================================
+# POST /pptx/extract-text  — Extract all text from any document or deck
+# =============================================================================
+
+@router.post("/extract-text")
+async def extract_text(
+    files:        List[UploadFile] = File(default=[]),
+    file_ids:     str = Form(default="[]"),
+    context_text: str = Form(default=""),
+    use_vision:   bool = Form(default=True),    # use Claude Vision OCR for images
+    user_id:      str = Depends(get_current_user_id),
+):
+    """
+    Extract all text and structured content from any document.
+
+    Supports: PPTX (including static-image slides via OCR), PDF, DOCX, HTML,
+    TXT, Markdown, PNG/JPG images.
+
+    For static-image PPTX (InDesign exports):
+      - First tries python-pptx native extraction
+      - Falls back to Claude Vision OCR for image-only slides
+      - Falls back to pytesseract if Vision is unavailable
+
+    Returns:
+      - pages[]: per-slide/page content (title, bullets, body, tables)
+      - full_transcript: complete text of the document
+      - titles_list: just the slide/section titles in order
+    """
+    start = time.time()
+    fid_list = _safe_json(file_ids, [])
+    ingested = await _ingest_uploads(files, fid_list, user_id)
+
+    if not ingested:
+        raise HTTPException(status_code=400, detail="No files provided.")
+
+    extractor = ContentExtractor(use_vision=use_vision)
+    results = []
+
+    for fi in ingested:
+        doc_content = await extractor.extract(
+            file_bytes=fi["bytes"],
+            file_type=fi["file_type"],
+            filename=fi["filename"],
+        )
+        results.append({
+            "filename":       fi["filename"],
+            "file_type":      fi["file_type"],
+            "page_count":     doc_content.page_count,
+            "success":        doc_content.success,
+            "error":          doc_content.error,
+            "pages":          doc_content.to_dict()["pages"],
+            "full_transcript": doc_content.full_transcript,
+            "titles_list":    doc_content.titles_list,
+        })
+
+    return {
+        "action":     "extract_text",
+        "files":      results,
+        "elapsed_ms": round((time.time() - start) * 1000),
+    }
+
+
+# =============================================================================
+# POST /pptx/generate-from-document  — Upload any doc → AI generates full deck
+# =============================================================================
+
+@router.post("/generate-from-document")
+async def generate_from_document(
+    files:           List[UploadFile] = File(default=[]),
+    file_ids:        str = Form(default="[]"),
+    slide_count:     int = Form(default=10),
+    audience:        str = Form(default="general"),
+    tone:            str = Form(default="professional"),
+    focus:           str = Form(default=""),
+    output_filename: str = Form(default="generated_from_doc.pptx"),
+    quick_mode:      bool = Form(default=False),   # skip Claude planning → heuristic outline
+    generate_notes:  bool = Form(default=False),   # also generate speaker notes
+    user_id:         str = Depends(get_current_user_id),
+):
+    """
+    Upload any document (PDF, DOCX, PPTX, HTML) → AI extracts content →
+    plans a presentation structure → generates a native-editable branded PPTX.
+
+    Pipeline:
+    1. ContentExtractor extracts text from the uploaded document
+    2. DeckPlanner (Claude) designs an optimal slide structure
+    3. PptxSandbox generates the native PPTX from the plan
+    4. Optionally generates speaker notes for every slide
+
+    quick_mode=True: skips Claude planning, uses fast heuristic outline
+                     (much faster but less intelligent structure)
+
+    Supports uploading up to 3 source documents simultaneously — Claude will
+    synthesize content from all of them into one coherent deck.
+    """
+    start = time.time()
+    fid_list = _safe_json(file_ids, [])
+    ingested = await _ingest_uploads(files, fid_list, user_id)
+
+    if not ingested:
+        raise HTTPException(status_code=400, detail="No files provided.")
+
+    # ── 1. Extract content from all uploaded documents ────────────────────────
+    extractor = ContentExtractor(use_vision=True)
+    all_contents = []
+    for fi in ingested:
+        doc = await extractor.extract(fi["bytes"], fi["file_type"], fi["filename"])
+        if doc.success:
+            all_contents.append(doc)
+
+    if not all_contents:
+        raise HTTPException(status_code=400, detail="Could not extract content from any uploaded file.")
+
+    # Merge transcripts if multiple documents
+    primary_content = all_contents[0]
+    if len(all_contents) > 1:
+        combined_transcript = "\n\n=== DOCUMENT BREAK ===\n\n".join(
+            c.full_transcript for c in all_contents
+        )
+        # Patch the primary content's transcript
+        primary_content = type(primary_content)(
+            filename=" + ".join(c.filename for c in all_contents),
+            file_type=primary_content.file_type,
+            page_count=sum(c.page_count for c in all_contents),
+            pages=[p for c in all_contents for p in c.pages],
+        )
+
+    # ── 2. Plan the deck structure ─────────────────────────────────────────────
+    planner = DeckPlanner()
+    if quick_mode:
+        plan = planner.quick_outline_from_content(primary_content, slide_count=slide_count)
+    else:
+        plan = await planner.plan_from_document(
+            content=primary_content,
+            slide_count=slide_count,
+            audience=audience,
+            tone=tone,
+            focus=focus,
+        )
+
+    # ── 3. Generate PPTX from plan ────────────────────────────────────────────
+    specs   = plan.to_pptx_specs()
+    sandbox = PptxSandbox()
+    loop    = asyncio.get_event_loop()
+    pptx_title = plan.title or primary_content.filename.replace(".pdf", "").replace(".pptx", "")
+
+    pptx_result = await loop.run_in_executor(
+        None, sandbox.generate,
+        {"title": pptx_title, "slides": specs}
+    )
+
+    if not pptx_result.success:
+        return {"success": False, "error": pptx_result.error, "plan": plan.to_dict()}
+
+    gen_job_id = _new_job_id()
+    _save_output_pptx(gen_job_id, pptx_result.data, output_filename)
+
+    # ── 4. Render previews ─────────────────────────────────────────────────────
+    manifest = await _renderer.render(
+        file_bytes=pptx_result.data, file_type="pptx", filename=output_filename
+    )
+    for slide in manifest.slides:
+        _save_slide_preview(gen_job_id, slide.index, slide.image_bytes)
+
+    # ── 5. Optional speaker notes ──────────────────────────────────────────────
+    notes = []
+    if generate_notes:
+        writer = ContentWriter()
+        try:
+            speaker_notes = await writer.generate_speaker_notes(plan, audience=audience)
+            notes = [n.to_dict() for n in speaker_notes]
+        except Exception as exc:
+            logger.warning("Speaker notes generation failed: %s", exc)
+
+    return {
+        "success":       True,
+        "job_id":        gen_job_id,
+        "source_files":  [fi["filename"] for fi in ingested],
+        "plan":          plan.to_dict(),
+        "slide_count":   len(specs),
+        "output_filename": output_filename,
+        "download_url":  f"/pptx/download/{gen_job_id}",
+        "preview_urls":  [f"/pptx/preview/{gen_job_id}/{s.index}" for s in manifest.slides],
+        "speaker_notes": notes,
+        "elapsed_ms":    round((time.time() - start) * 1000),
+    }
+
+
+# =============================================================================
+# POST /pptx/generate-from-brief  — Text brief → AI plan → PPTX
+# =============================================================================
+
+@router.post("/generate-from-brief")
+async def generate_from_brief(
+    brief:           str = Form(...),
+    slide_count:     int = Form(default=10),
+    audience:        str = Form(default="general"),
+    tone:            str = Form(default="professional"),
+    deck_title:      str = Form(default=""),
+    output_filename: str = Form(default="generated_deck.pptx"),
+    generate_notes:  bool = Form(default=False),
+    user_id:         str = Depends(get_current_user_id),
+):
+    """
+    Generate a complete presentation from a text brief using AI.
+
+    brief: A plain-English description of what the deck should be:
+      "Create a 10-slide investor pitch for Potomac's Q2 2026 fund strategy,
+       covering market environment, our 4 strategies, risk metrics, and next steps.
+       Audience: institutional investors. Tone: confident and data-driven."
+
+    Claude plans the slide structure, selects the best layout for each slide
+    type, and writes appropriate content. PptxSandbox renders the final PPTX
+    in Potomac brand colors and fonts.
+
+    No source documents needed — pure AI generation from the brief.
+    """
+    start = time.time()
+
+    # ── 1. Plan from brief ────────────────────────────────────────────────────
+    planner = DeckPlanner()
+    plan = await planner.plan_from_brief(
+        brief=brief,
+        slide_count=slide_count,
+        audience=audience,
+        tone=tone,
+        deck_title=deck_title,
+    )
+
+    # ── 2. Generate PPTX ──────────────────────────────────────────────────────
+    specs     = plan.to_pptx_specs()
+    sandbox   = PptxSandbox()
+    loop      = asyncio.get_event_loop()
+    pptx_result = await loop.run_in_executor(
+        None, sandbox.generate,
+        {"title": plan.title or deck_title or "Presentation", "slides": specs}
+    )
+
+    if not pptx_result.success:
+        return {"success": False, "error": pptx_result.error, "plan": plan.to_dict()}
+
+    gen_job_id = _new_job_id()
+    _save_output_pptx(gen_job_id, pptx_result.data, output_filename)
+
+    manifest = await _renderer.render(
+        file_bytes=pptx_result.data, file_type="pptx", filename=output_filename
+    )
+    for slide in manifest.slides:
+        _save_slide_preview(gen_job_id, slide.index, slide.image_bytes)
+
+    notes = []
+    if generate_notes:
+        writer = ContentWriter()
+        try:
+            speaker_notes = await writer.generate_speaker_notes(plan, audience=audience)
+            notes = [n.to_dict() for n in speaker_notes]
+        except Exception as exc:
+            logger.warning("Speaker notes failed: %s", exc)
+
+    return {
+        "success":       True,
+        "job_id":        gen_job_id,
+        "brief":         brief[:200],
+        "plan":          plan.to_dict(),
+        "slide_count":   len(specs),
+        "output_filename": output_filename,
+        "download_url":  f"/pptx/download/{gen_job_id}",
+        "preview_urls":  [f"/pptx/preview/{gen_job_id}/{s.index}" for s in manifest.slides],
+        "speaker_notes": notes,
+        "elapsed_ms":    round((time.time() - start) * 1000),
+    }
+
+
+# =============================================================================
+# POST /pptx/plan  — Get deck plan without generating PPTX (dry run)
+# =============================================================================
+
+@router.post("/plan")
+async def plan_deck(
+    files:       List[UploadFile] = File(default=[]),
+    file_ids:    str = Form(default="[]"),
+    brief:       str = Form(default=""),
+    slide_count: int = Form(default=10),
+    audience:    str = Form(default="general"),
+    tone:        str = Form(default="professional"),
+    quick_mode:  bool = Form(default=False),
+    user_id:     str = Depends(get_current_user_id),
+):
+    """
+    Get a presentation plan (structure + content outline) without generating the PPTX.
+
+    Use this to preview the slide structure before committing to generation,
+    or to let the user modify the plan (add/remove/reorder slides) before
+    calling /pptx/generate-from-document or /pptx/generate-from-brief.
+
+    Provide either:
+      - files/file_ids: source document to extract content from
+      - brief: text description of what the deck should contain
+
+    Returns the DeckPlan with all SlideBlueprints showing:
+      - slide_type, title, bullets, design_notes for each slide
+    """
+    start = time.time()
+    fid_list = _safe_json(file_ids, [])
+
+    planner = DeckPlanner()
+    plan: Any = None
+
+    if files or fid_list:
+        ingested = await _ingest_uploads(files, fid_list, user_id)
+        extractor = ContentExtractor(use_vision=False)  # fast mode for planning
+        contents = []
+        for fi in ingested:
+            doc = await extractor.extract(fi["bytes"], fi["file_type"], fi["filename"])
+            if doc.success:
+                contents.append(doc)
+
+        if contents:
+            primary = contents[0]
+            if quick_mode:
+                plan = planner.quick_outline_from_content(primary, slide_count=slide_count)
+            else:
+                plan = await planner.plan_from_document(
+                    content=primary, slide_count=slide_count,
+                    audience=audience, tone=tone,
+                )
+
+    if plan is None and brief.strip():
+        plan = await planner.plan_from_brief(
+            brief=brief, slide_count=slide_count,
+            audience=audience, tone=tone,
+        )
+
+    if plan is None:
+        raise HTTPException(status_code=400, detail="Provide files or brief.")
+
+    return {
+        "plan":        plan.to_dict(),
+        "slide_count": plan.slide_count,
+        "summary":     plan.summary,
+        "elapsed_ms":  round((time.time() - start) * 1000),
+    }
+
+
+# =============================================================================
+# POST /pptx/speaker-notes  — Auto-generate speaker notes for any deck
+# =============================================================================
+
+@router.post("/speaker-notes")
+async def generate_speaker_notes(
+    files:      List[UploadFile] = File(default=[]),
+    file_ids:   str = Form(default="[]"),
+    job_id:     str = Form(default=""),
+    plan:       str = Form(default=""),     # optional JSON DeckPlan
+    audience:   str = Form(default="general"),
+    context:    str = Form(default=""),     # e.g., "Q2 2026 earnings call"
+    fast:       bool = Form(default=True),
+    user_id:    str = Depends(get_current_user_id),
+):
+    """
+    Auto-generate speaker notes for every slide in a deck.
+
+    File sources (pick one):
+      files/file_ids : upload a PPTX → extract text → generate notes per slide
+      job_id         : use a previously generated deck (has slide previews)
+      plan           : pass a JSON DeckPlan directly (from /pptx/plan)
+
+    Each slide gets:
+      - notes: 150-250 word speaker script (natural speech, not bullets)
+      - key_points: 3-5 talking points
+      - transitions: how to move to the next slide
+    """
+    start = time.time()
+    writer = ContentWriter()
+
+    fid_list = _safe_json(file_ids, [])
+    plan_data = _safe_json(plan, None)
+
+    # ── Build slide list ──────────────────────────────────────────────────────
+    slides = []
+
+    if plan_data and isinstance(plan_data, dict):
+        # Use provided DeckPlan JSON
+        from core.vision.deck_planner import SlideBlueprint, DeckPlan
+        slides = plan_data.get("slides", [])
+        deck_audience = plan_data.get("audience", audience)
+        if not slides:
+            raise HTTPException(status_code=400, detail="Plan has no slides.")
+        from dataclasses import asdict
+        # Convert dicts to SlideBlueprint-like objects for ContentWriter
+        class SlideDict:
+            def __init__(self, d):
+                self.slide_number = d.get("slide_number", 1)
+                self.title = d.get("title", "")
+                self.slide_type = d.get("slide_type", "content")
+                self.bullets = d.get("bullets", [])
+                self.body_text = d.get("body_text", "")
+        slides = [SlideDict(s) for s in slides]
+
+    elif files or fid_list:
+        # Extract from PPTX
+        ingested = await _ingest_uploads(files, fid_list, user_id)
+        extractor = ContentExtractor(use_vision=False)
+        for fi in ingested:
+            if fi["file_type"] in ("pptx", "ppt", "pdf"):
+                doc = await extractor.extract(fi["bytes"], fi["file_type"], fi["filename"])
+                class PageSlide:
+                    def __init__(self, p):
+                        self.slide_number = p["page_index"]
+                        self.title = p.get("title", "")
+                        self.slide_type = p.get("page_type", "content")
+                        self.bullets = p.get("bullets", [])
+                        self.body_text = p.get("body_text", "")
+                slides = [PageSlide(p.to_dict()) for p in doc.pages]
+                break
+
+    elif job_id.strip():
+        # Analyze existing job's PPTX
+        job_pptx = sorted(_job_dir(job_id).glob("*.pptx"))
+        if job_pptx:
+            extractor = ContentExtractor(use_vision=False)
+            doc = await extractor.extract(job_pptx[0].read_bytes(), "pptx", job_pptx[0].name)
+            class PageSlide:
+                def __init__(self, p):
+                    self.slide_number = p["page_index"]
+                    self.title = p.get("title", "")
+                    self.slide_type = p.get("page_type", "content")
+                    self.bullets = p.get("bullets", [])
+                    self.body_text = p.get("body_text", "")
+            slides = [PageSlide(p.to_dict()) for p in doc.pages]
+
+    if not slides:
+        raise HTTPException(status_code=400, detail="No slides found to generate notes for.")
+
+    # ── Generate notes ────────────────────────────────────────────────────────
+    notes = await writer.generate_speaker_notes(
+        deck_plan=slides,
+        audience=audience,
+        context=context,
+        fast=fast,
+    )
+
+    return {
+        "success":      True,
+        "slide_count":  len(notes),
+        "audience":     audience,
+        "speaker_notes": [n.to_dict() for n in notes],
+        "elapsed_ms":   round((time.time() - start) * 1000),
+    }
+
+
+# =============================================================================
+# POST /pptx/enhance-slide  — AI improve / rewrite a single slide's content
+# =============================================================================
+
+@router.post("/enhance-slide")
+async def enhance_slide(
+    title:       str = Form(...),
+    bullets:     str = Form(default="[]"),      # JSON array of bullets
+    body_text:   str = Form(default=""),
+    slide_type:  str = Form(default="content"),
+    instruction: str = Form(default="Make this more concise and executive-level"),
+    audience:    str = Form(default="general"),
+    user_id:     str = Depends(get_current_user_id),
+):
+    """
+    Improve a single slide's content with AI.
+
+    Examples of instructions:
+      "Make this more concise — max 5 bullets"
+      "Rewrite as executive-level language for a board audience"
+      "Add more specific data points and metrics"
+      "Convert the paragraph into bullet points"
+      "Simplify — remove jargon, write for a general audience"
+    """
+    start = time.time()
+    bullets_list = _safe_json(bullets, [])
+    writer = ContentWriter()
+
+    result = await writer.enhance_slide_content(
+        title=title,
+        bullets=bullets_list,
+        body_text=body_text,
+        slide_type=slide_type,
+        instruction=instruction,
+        audience=audience,
+    )
+
+    return {
+        "success":    True,
+        "original":   {"title": title, "bullets": bullets_list, "body_text": body_text},
+        "enhanced":   result,
+        "instruction": instruction,
+        "elapsed_ms": round((time.time() - start) * 1000),
+    }
+
+
+# =============================================================================
+# POST /pptx/suggest-alternatives  — 3 alternative presentations for a slide
+# =============================================================================
+
+@router.post("/suggest-alternatives")
+async def suggest_alternatives(
+    title:      str = Form(...),
+    bullets:    str = Form(default="[]"),
+    body_text:  str = Form(default=""),
+    slide_type: str = Form(default="content"),
+    count:      int = Form(default=3),
+    user_id:    str = Depends(get_current_user_id),
+):
+    """
+    Generate N alternative ways to present the same slide content.
+
+    Returns multiple SlideBlueprint suggestions, each with a different layout,
+    framing, or emphasis. The user can pick the one they like best and generate
+    that specific version using /pptx/content.
+
+    Each suggestion includes:
+      - slide_type: the recommended pptxgenjs layout
+      - title, bullets, body_text: content for that layout
+      - design_notes: visual design recommendation
+      - rationale: why this approach works for the content
+    """
+    start = time.time()
+    bullets_list = _safe_json(bullets, [])
+    writer = ContentWriter()
+
+    suggestions = await writer.suggest_alternatives(
+        title=title,
+        bullets=bullets_list,
+        body_text=body_text,
+        slide_type=slide_type,
+        count=count,
+    )
+
+    return {
+        "success":     True,
+        "count":       len(suggestions),
+        "suggestions": [s.to_dict() for s in suggestions],
+        "elapsed_ms":  round((time.time() - start) * 1000),
+    }
+
+
+# =============================================================================
+# POST /pptx/content  — Generate fresh content for a slide type + topic
+# =============================================================================
+
+@router.post("/content")
+async def generate_slide_content(
+    topic:      str = Form(...),
+    slide_type: str = Form(default="content"),
+    audience:   str = Form(default="general"),
+    tone:       str = Form(default="professional"),
+    context:    str = Form(default=""),
+    generate_pptx: bool = Form(default=False),   # also generate a single-slide PPTX
+    user_id:    str = Depends(get_current_user_id),
+):
+    """
+    Generate fresh slide content for a given topic and slide type.
+
+    Great for rapidly creating individual slides to add to an existing deck
+    or to test different content approaches before full generation.
+
+    slide_type must be one of: title | content | two_column | three_column |
+    metrics | process | card_grid | icon_grid | timeline | section_divider |
+    executive_summary | quote | comparison | table
+
+    If generate_pptx=True, also generates a single-slide PPTX preview
+    that can be downloaded immediately.
+    """
+    start = time.time()
+    writer = ContentWriter()
+
+    content_data = await writer.generate_slide_content(
+        topic=topic,
+        slide_type=slide_type,
+        audience=audience,
+        tone=tone,
+        context=context,
+    )
+
+    result: Dict[str, Any] = {
+        "success":    True,
+        "topic":      topic,
+        "slide_type": slide_type,
+        "content":    content_data,
+        "elapsed_ms": round((time.time() - start) * 1000),
+    }
+
+    if generate_pptx:
+        # Build a single-slide PPTX for preview
+        spec = {"type": slide_type, **content_data}
+        sandbox = PptxSandbox()
+        loop = asyncio.get_event_loop()
+        pptx_result = await loop.run_in_executor(
+            None, sandbox.generate,
+            {"title": topic, "slides": [spec]}
+        )
+        if pptx_result.success:
+            gen_job_id = _new_job_id()
+            _save_output_pptx(gen_job_id, pptx_result.data, f"{slide_type}_preview.pptx")
+            manifest = await _renderer.render(
+                file_bytes=pptx_result.data, file_type="pptx",
+                filename=f"{slide_type}_preview.pptx"
+            )
+            for slide in manifest.slides:
+                _save_slide_preview(gen_job_id, slide.index, slide.image_bytes)
+            result["preview_job_id"]  = gen_job_id
+            result["download_url"]    = f"/pptx/download/{gen_job_id}"
+            result["preview_url"]     = f"/pptx/preview/{gen_job_id}/1"
+
+    return result
+
+
+# =============================================================================
+# POST /pptx/summarize  — Summarize any document into executive bullets
+# =============================================================================
+
+@router.post("/summarize")
+async def summarize_document(
+    files:       List[UploadFile] = File(default=[]),
+    file_ids:    str = Form(default="[]"),
+    max_bullets: int = Form(default=5),
+    audience:    str = Form(default="executive"),
+    format:      str = Form(default="executive"),   # "executive" | "detailed" | "one_liner"
+    user_id:     str = Depends(get_current_user_id),
+):
+    """
+    Summarize any document into executive-level bullet points.
+
+    Upload a PPTX, PDF, DOCX, or HTML — the system extracts all text
+    and distills it into concise, executive-ready bullets.
+
+    Also returns a one-liner summary and, if format="detailed", a full paragraph.
+
+    Great for: "What does this 50-page report actually say? Give me 5 bullets."
+    """
+    start = time.time()
+    fid_list = _safe_json(file_ids, [])
+    ingested = await _ingest_uploads(files, fid_list, user_id)
+
+    if not ingested:
+        raise HTTPException(status_code=400, detail="No files provided.")
+
+    extractor = ContentExtractor(use_vision=False)
+    writer    = ContentWriter()
+    results   = []
+
+    for fi in ingested:
+        doc = await extractor.extract(fi["bytes"], fi["file_type"], fi["filename"])
+        if not doc.success:
+            results.append({"filename": fi["filename"], "error": doc.error})
+            continue
+
+        transcript = doc.full_transcript[:6000]
+
+        bullets   = await writer.summarize_for_exec(transcript, max_bullets, audience)
+        one_liner = await writer.rewrite_as_headline(transcript[:500])
+
+        results.append({
+            "filename":    fi["filename"],
+            "page_count":  doc.page_count,
+            "bullets":     bullets,
+            "one_liner":   one_liner,
+            "word_count":  len(transcript.split()),
+        })
+
+    return {
+        "success":    True,
+        "files":      results,
+        "elapsed_ms": round((time.time() - start) * 1000),
+    }
