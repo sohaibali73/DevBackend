@@ -42,9 +42,12 @@ from fastapi.responses import JSONResponse, Response, StreamingResponse
 from api.dependencies import get_current_user_id
 from core.sandbox.automizer_sandbox import AutomizerSandbox
 from core.sandbox.pptx_sandbox import PptxSandbox
+from core.sandbox.pptx_reviser import PptxReviser
 from core.vision.element_matcher import ElementMatcher, get_element_matcher
 from core.vision.reconstruction_engine import ReconstructionEngine
+from core.vision.revision_engine import RevisionEngine
 from core.vision.slide_renderer import SlideRenderer
+from core.vision.streaming_pipeline import StreamingPipeline
 from core.vision.vision_engine import VisionEngine
 
 router = APIRouter(prefix="/pptx", tags=["PPTX Intelligence"])
@@ -1242,3 +1245,551 @@ def _build_preview_urls(
             for s in manifest.slides
         ]
     return result
+
+
+# =============================================================================
+# ██████╗ ██╗  ██╗ █████╗ ███████╗███████╗    ██████╗
+# ██╔══██╗██║  ██║██╔══██╗██╔════╝██╔════╝    ╚════██╗
+# ██████╔╝███████║███████║███████╗█████╗           ██╔╝
+# ██╔═══╝ ██╔══██║██╔══██║╚════██║██╔══╝          ██╔╝
+# ██║     ██║  ██║██║  ██║███████║███████╗        ██████╗
+# ╚═╝     ╚═╝  ╚═╝╚═╝  ╚═╝╚══════╝╚══════╝        ╚═════╝
+# PHASE 2 ENDPOINTS — SSE Streaming + Smart Revision + Slide Grid + Comparison
+# =============================================================================
+
+# =============================================================================
+# POST /pptx/stream/interpret-task  (SSE)
+# =============================================================================
+
+@router.post("/stream/interpret-task")
+async def stream_interpret_task(
+    files:        List[UploadFile] = File(default=[]),
+    file_ids:     str = Form(default="[]"),
+    context_text: str = Form(default=""),
+    run_vision:   bool = Form(default=True),
+    user_id:      str = Depends(get_current_user_id),
+):
+    """
+    **Streaming version of /pptx/interpret-task** — real-time SSE events.
+
+    Returns `text/event-stream`.  Each slide preview is emitted the moment
+    it finishes rendering — no waiting for the full deck to complete.
+
+    Event types emitted:
+        slide_preview     — PNG ready for one slide (includes preview_b64)
+        task_interpreted  — Claude understood the task
+        slide_analysis    — Claude Vision result per slide (if run_vision=True)
+        merge_complete    — merged .pptx is ready (if action=merge)
+        reconstruct_complete — reconstructed .pptx ready
+        analysis_complete — all Vision analyses done
+        done              — final event with elapsed_ms
+        error             — non-fatal or fatal error
+        status            — progress message
+
+    Frontend usage:
+        const src = new EventSource('/pptx/stream/interpret-task', {
+          withCredentials: true
+        });
+        // OR via fetch with ReadableStream for POST:
+        const resp = await fetch('/pptx/stream/interpret-task', {
+          method: 'POST',
+          body: formData,
+          headers: { Authorization: `Bearer ${token}` },
+        });
+        const reader = resp.body.getReader();
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          const text = new TextDecoder().decode(value);
+          const events = text.split('\\n\\n').filter(Boolean);
+          for (const e of events) {
+            const data = JSON.parse(e.replace('data: ', ''));
+            // handle data.type ...
+          }
+        }
+    """
+    fid_list = _safe_json(file_ids, [])
+    ingested = await _ingest_uploads(files, fid_list, user_id)
+
+    if not ingested and not context_text.strip():
+        raise HTTPException(status_code=400, detail="Provide at least one file or context_text.")
+
+    job_id   = _new_job_id()
+    pipeline = StreamingPipeline()
+
+    async def event_generator():
+        async for event in pipeline.stream_interpret_task(
+            job_id=job_id,
+            ingested=ingested,
+            context_text=context_text,
+            run_vision=run_vision,
+        ):
+            yield event
+
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control":     "no-cache",
+            "X-Accel-Buffering": "no",     # disable Nginx buffering
+            "X-Job-Id":          job_id,   # frontend can read this from headers
+        },
+    )
+
+
+# =============================================================================
+# POST /pptx/stream/analyze  (SSE — analyze only)
+# =============================================================================
+
+@router.post("/stream/analyze")
+async def stream_analyze(
+    files:        List[UploadFile] = File(default=[]),
+    file_ids:     str = Form(default="[]"),
+    context_text: str = Form(default=""),
+    slide_range:  str = Form(default=""),
+    user_id:      str = Depends(get_current_user_id),
+):
+    """
+    Streaming analysis endpoint. Streams `slide_preview` events immediately
+    as each slide renders, then `slide_analysis` events as Claude processes them.
+    """
+    fid_list = _safe_json(file_ids, [])
+    sr_tuple = _parse_slide_range(slide_range)
+
+    ingested = await _ingest_uploads(files, fid_list, user_id)
+    if not ingested:
+        raise HTTPException(status_code=400, detail="No files provided.")
+
+    job_id   = _new_job_id()
+    pipeline = StreamingPipeline()
+
+    async def event_generator():
+        # Render + stream previews
+        rendered_manifests = []
+        for fi in ingested:
+            if fi["file_type"] not in ("pptx", "ppt", "pdf", "png", "jpg", "jpeg"):
+                continue
+            manifest = await pipeline._renderer.render(
+                file_bytes=fi["bytes"],
+                file_type=fi["file_type"],
+                filename=fi["filename"],
+                slide_range=sr_tuple,
+            )
+            rendered_manifests.append((fi["filename"], manifest))
+
+            if not manifest.success:
+                from core.vision.streaming_pipeline import _sse_error
+                yield _sse_error(job_id, f"Render failed: {manifest.error}")
+                continue
+
+            from core.vision.streaming_pipeline import _sse, _save_slide_preview
+            for slide in manifest.slides:
+                _save_slide_preview(job_id, slide.index, slide.image_bytes)
+                yield _sse(
+                    "slide_preview", job_id,
+                    slide_index=slide.index,
+                    total_slides=manifest.slide_count,
+                    filename=fi["filename"],
+                    preview_b64=slide.data_uri,
+                    preview_url=f"/pptx/preview/{job_id}/{slide.index}",
+                    width_px=slide.width_px,
+                    height_px=slide.height_px,
+                )
+                await asyncio.sleep(0)
+
+        # Stream vision analysis
+        async for event in pipeline._stream_vision_analysis(
+            job_id=job_id,
+            rendered_manifests=rendered_manifests,
+            context=context_text,
+        ):
+            yield event
+
+        from core.vision.streaming_pipeline import _sse
+        yield _sse("done", job_id, success=True)
+
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control":     "no-cache",
+            "X-Accel-Buffering": "no",
+            "X-Job-Id":          job_id,
+        },
+    )
+
+
+# =============================================================================
+# POST /pptx/smart-revise
+# =============================================================================
+
+@router.post("/smart-revise")
+async def smart_revise(
+    files:           List[UploadFile] = File(default=[]),
+    file_ids:        str = Form(default="[]"),
+    job_id:          str = Form(default=""),
+    instruction:     str = Form(...),
+    output_filename: str = Form(default=""),
+    extra_context:   str = Form(default=""),
+    preview:         bool = Form(default=False),
+    user_id:         str = Depends(get_current_user_id),
+):
+    """
+    **Intelligent revision** — parse a natural language instruction with Claude
+    and execute targeted operations on a PPTX without regenerating it from scratch.
+
+    Supports operations via `PptxReviser` (fast, no subprocess):
+      - find_replace: "Change Q1 2025 to Q2 2025 everywhere"
+      - delete_slide: "Remove slide 7"
+      - reorder_slides: "Move slide 10 to position 2"
+      - update_table: "Update row 2, col 3 on slide 8 to 14.2x"
+      - append_slides: "Add a summary slide at the end"
+
+    And operations via `AutomizerSandbox` (structural):
+      - set_text: "Set the title shape on slide 3 to 'New Title'"
+      - replace_tagged: "Replace {{QUARTER}} with Q2 2025"
+
+    File sources (pick one):
+      - files[]: upload the PPTX directly
+      - file_ids: reference a previously uploaded file
+      - job_id: use the .pptx output of a previous job
+
+    preview=True: parse the instruction and return the operation list
+                  WITHOUT executing (dry run for UI confirmation)
+    """
+    start = time.time()
+
+    # ── Resolve PPTX source ───────────────────────────────────────────────────
+    pptx_bytes: Optional[bytes] = None
+    source_filename = "revised_presentation.pptx"
+
+    if files:
+        pptx_files_uploaded = [f for f in files if f.filename and
+                                f.filename.lower().endswith((".pptx", ".ppt"))]
+        if pptx_files_uploaded:
+            data = await pptx_files_uploaded[0].read()
+            pptx_bytes = data
+            source_filename = pptx_files_uploaded[0].filename or source_filename
+
+    if pptx_bytes is None and file_ids.strip() and file_ids != "[]":
+        fid_list = _safe_json(file_ids, [])
+        if fid_list:
+            ingested = await _ingest_uploads([], fid_list, user_id)
+            pptx_ingested = [fi for fi in ingested if fi["file_type"] in ("pptx", "ppt")]
+            if pptx_ingested:
+                pptx_bytes = pptx_ingested[0]["bytes"]
+                source_filename = pptx_ingested[0]["filename"]
+
+    if pptx_bytes is None and job_id.strip():
+        job_pptx = sorted(_job_dir(job_id).glob("*.pptx")) if job_id else []
+        if job_pptx:
+            pptx_bytes = job_pptx[0].read_bytes()
+            source_filename = job_pptx[0].name
+
+    if pptx_bytes is None:
+        raise HTTPException(status_code=400,
+                            detail="Provide a PPTX file, file_id, or job_id.")
+
+    out_filename = output_filename or f"revised_{source_filename}"
+    engine = RevisionEngine()
+
+    # ── Preview mode (parse only) ─────────────────────────────────────────────
+    if preview:
+        slide_count = SlideRenderer.get_slide_count(pptx_bytes)
+        ops = await engine.parse_only(instruction, slide_count, extra_context)
+        return {
+            "preview": True,
+            "instruction": instruction,
+            "parsed_operations": ops,
+            "operation_count": len(ops),
+            "slide_count": slide_count,
+            "elapsed_ms": round((time.time() - start) * 1000),
+        }
+
+    # ── Execute revision ──────────────────────────────────────────────────────
+    result = await engine.smart_revise(
+        pptx_bytes=pptx_bytes,
+        instruction=instruction,
+        output_filename=out_filename,
+        extra_context=extra_context,
+    )
+
+    if not result.success:
+        return {
+            "success": False,
+            "error": result.error,
+            "operations": result.operations,
+            "elapsed_ms": round((time.time() - start) * 1000),
+        }
+
+    # Save output
+    new_job_id = _new_job_id()
+    _save_output_pptx(new_job_id, result.pptx_bytes, out_filename)
+
+    # Render previews of revised deck
+    revised_manifest = await _renderer.render(
+        file_bytes=result.pptx_bytes, file_type="pptx", filename=out_filename
+    )
+    for slide in revised_manifest.slides:
+        _save_slide_preview(new_job_id, slide.index, slide.image_bytes)
+
+    preview_urls = [f"/pptx/preview/{new_job_id}/{s.index}" for s in revised_manifest.slides]
+
+    return {
+        "success": True,
+        "job_id": new_job_id,
+        "instruction": instruction,
+        "operations": result.operations,
+        "operation_count": len(result.operations),
+        "summary": result.summary,
+        "output_filename": out_filename,
+        "download_url": f"/pptx/download/{new_job_id}",
+        "slide_count": revised_manifest.slide_count,
+        "preview_urls": preview_urls,
+        "exec_time_ms": result.exec_time_ms,
+        "elapsed_ms": round((time.time() - start) * 1000),
+    }
+
+
+# =============================================================================
+# GET /pptx/slides/{job_id}  — Slide grid / picker
+# =============================================================================
+
+@router.get("/slides/{job_id}")
+async def get_slide_grid(
+    job_id:   str,
+    b64:      bool = False,    # include base64 in response (can be large)
+    user_id:  str = Depends(get_current_user_id),
+):
+    """
+    Return all rendered slide thumbnails for a job as a grid manifest.
+
+    The frontend uses this to display a visual slide picker so users can
+    click to select which slides to include in a merge or review.
+
+    b64=True includes base64-encoded PNGs in the response (convenient but large).
+    b64=False (default) returns only preview_url references.
+    """
+    job_dir = _job_dir(job_id)
+    png_files = sorted(job_dir.glob("slide_*.png"), key=lambda p: p.name)
+
+    if not png_files:
+        raise HTTPException(status_code=404, detail=f"No slide previews found for job {job_id}.")
+
+    slides = []
+    for p in png_files:
+        # Parse slide index from filename: slide_0015.png → 15
+        try:
+            idx = int(p.stem.split("_")[1])
+        except (IndexError, ValueError):
+            idx = len(slides) + 1
+
+        entry: Dict[str, Any] = {
+            "index":       idx,
+            "preview_url": f"/pptx/preview/{job_id}/{idx}",
+            "filename":    p.name,
+            "size_bytes":  p.stat().st_size,
+        }
+
+        if b64:
+            import base64 as _b64
+            entry["preview_b64"] = "data:image/png;base64," + _b64.b64encode(
+                p.read_bytes()
+            ).decode()
+
+        slides.append(entry)
+
+    meta = _read_job_meta(job_id) or {}
+    return {
+        "job_id":      job_id,
+        "slide_count": len(slides),
+        "slides":      slides,
+        "action":      meta.get("action"),
+        "status":      meta.get("status"),
+        "download_url": f"/pptx/download/{job_id}"
+        if sorted(job_dir.glob("*.pptx")) else None,
+    }
+
+
+# =============================================================================
+# POST /pptx/compare  — Deck similarity comparison
+# =============================================================================
+
+@router.post("/compare")
+async def compare_decks(
+    files:        List[UploadFile] = File(...),
+    file_ids:     str = Form(default="[]"),
+    threshold:    float = Form(default=0.85),   # similarity threshold 0-1
+    user_id:      str = Depends(get_current_user_id),
+):
+    """
+    Compare two presentation decks and identify similar / duplicate slides.
+
+    Returns a similarity matrix and a list of matched slide pairs with scores.
+    Useful for:
+    - Finding duplicate content between decks before merging
+    - Identifying which slides have been updated between versions
+    - Detecting brand-inconsistent slides
+
+    threshold : minimum perceptual similarity (0–1) to flag as a match (default 0.85)
+
+    Response:
+    {
+      "deck_a": { "filename": "...", "slide_count": 19 },
+      "deck_b": { "filename": "...", "slide_count": 32 },
+      "matches": [
+        { "deck_a_slide": 1, "deck_b_slide": 5, "score": 0.97, "type": "identical" },
+        { "deck_a_slide": 3, "deck_b_slide": 8, "score": 0.88, "type": "similar" }
+      ],
+      "unique_to_a": [2, 4, 6, ...],   # slides only in deck A
+      "unique_to_b": [1, 3, 7, ...]    # slides only in deck B
+    }
+    """
+    start = time.time()
+    fid_list = _safe_json(file_ids, [])
+    ingested = await _ingest_uploads(files, fid_list, user_id)
+
+    pptx_ingested = [fi for fi in ingested if fi["file_type"] in ("pptx", "ppt", "pdf")]
+    if len(pptx_ingested) < 2:
+        raise HTTPException(status_code=400, detail="Provide exactly 2 files to compare.")
+
+    deck_a_fi = pptx_ingested[0]
+    deck_b_fi = pptx_ingested[1]
+
+    # Render both decks
+    manifest_a = await _renderer.render(
+        file_bytes=deck_a_fi["bytes"], file_type=deck_a_fi["file_type"],
+        filename=deck_a_fi["filename"],
+    )
+    manifest_b = await _renderer.render(
+        file_bytes=deck_b_fi["bytes"], file_type=deck_b_fi["file_type"],
+        filename=deck_b_fi["filename"],
+    )
+
+    if not manifest_a.success or not manifest_b.success:
+        return {
+            "error": f"Render failed: {manifest_a.error or manifest_b.error}"
+        }
+
+    # Compute perceptual hashes for all slides in both decks
+    loop = asyncio.get_event_loop()
+    hashes_a = await loop.run_in_executor(
+        None, _hash_slides, manifest_a.slides
+    )
+    hashes_b = await loop.run_in_executor(
+        None, _hash_slides, manifest_b.slides
+    )
+
+    # Find matches using Hamming distance on pHash
+    matches = []
+    matched_a: set = set()
+    matched_b: set = set()
+
+    for idx_a, (h_a, slide_a) in enumerate(zip(hashes_a, manifest_a.slides)):
+        best_score = 0.0
+        best_idx_b = -1
+        for idx_b, (h_b, slide_b) in enumerate(zip(hashes_b, manifest_b.slides)):
+            if not h_a or not h_b:
+                continue
+            distance = _hamming_distance(h_a, h_b)
+            score = max(0.0, 1.0 - distance / 64.0)
+            if score > best_score:
+                best_score = score
+                best_idx_b = idx_b
+
+        if best_score >= threshold and best_idx_b >= 0:
+            match_type = "identical" if best_score >= 0.98 else "similar"
+            matches.append({
+                "deck_a_slide": slide_a.index,
+                "deck_b_slide": manifest_b.slides[best_idx_b].index,
+                "score": round(best_score, 4),
+                "type": match_type,
+            })
+            matched_a.add(slide_a.index)
+            matched_b.add(manifest_b.slides[best_idx_b].index)
+
+    unique_to_a = [s.index for s in manifest_a.slides if s.index not in matched_a]
+    unique_to_b = [s.index for s in manifest_b.slides if s.index not in matched_b]
+
+    return {
+        "deck_a": {
+            "filename":    deck_a_fi["filename"],
+            "slide_count": manifest_a.slide_count,
+        },
+        "deck_b": {
+            "filename":    deck_b_fi["filename"],
+            "slide_count": manifest_b.slide_count,
+        },
+        "threshold":    threshold,
+        "matches":      sorted(matches, key=lambda m: m["score"], reverse=True),
+        "match_count":  len(matches),
+        "unique_to_a":  unique_to_a,
+        "unique_to_b":  unique_to_b,
+        "elapsed_ms":   round((time.time() - start) * 1000),
+    }
+
+
+def _hash_slides(slides) -> List[Optional[str]]:
+    """Compute perceptual hashes for a list of SlideImageInfo objects."""
+    from core.vision.element_matcher import _phash
+    return [_phash(s.image_bytes) for s in slides]
+
+
+def _hamming_distance(h1: str, h2: str) -> int:
+    """Hamming distance between two hex hash strings."""
+    try:
+        return bin(int(h1, 16) ^ int(h2, 16)).count("1")
+    except Exception:
+        return 64
+
+
+# =============================================================================
+# POST /pptx/revision-preview  — Parse instruction without executing
+# =============================================================================
+
+@router.post("/revision-preview")
+async def revision_preview(
+    instruction:  str = Form(...),
+    slide_count:  int = Form(default=0),
+    extra_context: str = Form(default=""),
+    user_id:      str = Depends(get_current_user_id),
+):
+    """
+    Parse a revision instruction and return the operation list WITHOUT executing.
+
+    Use this to show the user what changes would be made before they confirm.
+
+    Response:
+    {
+      "instruction": "Delete slide 5 and rename Q1 to Q2",
+      "operations": [
+        { "type": "delete_slide", "slide_index": 4 },
+        { "type": "find_replace", "find": "Q1", "replace": "Q2" }
+      ],
+      "operation_count": 2,
+      "human_summary": "Will delete slide 5 and replace all Q1 → Q2 text"
+    }
+    """
+    engine = RevisionEngine()
+    ops = await engine.parse_only(instruction, slide_count, extra_context)
+
+    # Build a quick human summary
+    op_names = {
+        "find_replace": "global text replace",
+        "delete_slide": "delete slide",
+        "reorder_slides": "reorder slides",
+        "update_table": "update table cell",
+        "append_slides": "append new slides",
+        "update_slide": "update slide content",
+        "set_text": "set shape text",
+        "replace_tagged": "replace tagged placeholder",
+    }
+    summary_parts = [op_names.get(op.get("type", ""), op.get("type", "")) for op in ops]
+    human_summary = f"Will perform: {', '.join(summary_parts)}" if summary_parts else "No recognized operations"
+
+    return {
+        "instruction":     instruction,
+        "operations":      ops,
+        "operation_count": len(ops),
+        "human_summary":   human_summary,
+    }
