@@ -70,6 +70,16 @@ const GRAY_60   = '999999';
 const GRAY_20   = 'DDDDDD';
 const YELLOW_20 = 'FEF7D8';
 
+// ── Brand fonts ───────────────────────────────────────────────────────────────
+// FONT_H: Potomac headline font. 'Trebuchet MS' is pre-installed on all
+//         Windows/Mac systems and has a clean geometric look for slide titles.
+//         Switch to 'Rajdhani' if the Potomac brand font is installed on client
+//         machines (it will render correctly when opened in PowerPoint).
+// FONT_B: Body/body text. 'Calibri' is the Microsoft Office default —
+//         always available, clean, modern, professional.
+const FONT_H = 'Trebuchet MS';   // slide titles, section headers, KPI values
+const FONT_B = 'Calibri';        // bullets, body text, captions, labels, tables
+
 // ── Spec ──────────────────────────────────────────────────────────────────────
 const spec = JSON.parse(fs.readFileSync('spec.json', 'utf8'));
 
@@ -101,10 +111,12 @@ function addLogo(slide, x, y, w, h, variant) {
                (variant === 'yellow') ? LOGOS.yellow :
                LOGOS.full;
   if (data) {
-    slide.addImage({ data, x, y, w, h });
+    // sizing:'contain' preserves aspect ratio — the logo is NEVER stretched
+    // regardless of the bounding box dimensions passed by the caller.
+    slide.addImage({ data, x, y, w, h, sizing: { type: 'contain', w, h } });
   } else {
     slide.addText('POTOMAC', {
-      x, y, w, h, fontFace: 'Arial', fontSize: 14, bold: true,
+      x, y, w, h, fontFace: FONT_H, fontSize: 14, bold: true,
       color: DARK_GRAY, align: 'center', valign: 'middle'
     });
   }
@@ -117,7 +129,9 @@ function buildTitleSlide(d) {
   const isExec = (d.style === 'executive');
   slide.background = { color: isExec ? DARK_GRAY : WHITE };
 
-  addLogo(slide, 4.1, 0.9, 1.8, 0.73, isExec ? 'yellow' : 'full');
+  // Give the centered logo a taller bounding box so the icon isn't compressed.
+  // sizing:'contain' (set inside addLogo) ensures the logo fills proportionally.
+  addLogo(slide, 4.1, 0.45, 1.8, 1.5, isExec ? 'yellow' : 'full');
 
   slide.addText((d.title || '').toUpperCase(), {
     x: 0.5, y: 2.4, w: 9, h: 1.5,
@@ -428,7 +442,7 @@ function buildSectionDividerSlide(d) {
 function buildCtaSlide(d) {
   const slide = pres.addSlide();
   slide.background = { color: WHITE };
-  addLogo(slide, 4.1, 0.7, 1.8, 0.73, 'full');
+  addLogo(slide, 4.1, 0.4, 1.8, 1.0, 'full');
 
   slide.addText((d.title || '').toUpperCase(), {
     x: 0.5, y: 1.8, w: 9, h: 1.0,
@@ -1099,7 +1113,25 @@ class PptxSandbox:
             (temp_dir / "spec.json").write_text(
                 json.dumps(spec, ensure_ascii=False, indent=2), encoding="utf-8"
             )
-            (temp_dir / "presentation_builder.js").write_text(_BUILDER_SCRIPT, encoding="utf-8")
+
+            # ── Apply brand fonts (Python-level substitution) ──────────────
+            # The _BUILDER_SCRIPT still contains fontFace: 'Arial' literals.
+            # We replace them here so the JS sees FONT_H / FONT_B variables
+            # (defined at top of the script as Trebuchet MS / Calibri).
+            # Rule: bold+title text → FONT_H (heading); everything else → FONT_B
+            import re as _re
+            _script = _BUILDER_SCRIPT
+            # fontFace: 'Arial' followed by bold: true within ~200 chars → FONT_H
+            _script = _re.sub(
+                r"fontFace: 'Arial'((?:(?!fontFace).){0,200}?)bold: true",
+                r"fontFace: FONT_H\1bold: true",
+                _script,
+                flags=_re.DOTALL,
+            )
+            # All remaining 'Arial' references → FONT_B (body/caption/label text)
+            _script = _script.replace("fontFace: 'Arial'", "fontFace: FONT_B")
+
+            (temp_dir / "presentation_builder.js").write_text(_script, encoding="utf-8")
             (temp_dir / "package.json").write_text(
                 json.dumps({"name": "pptx-gen", "version": "1.0.0"}), encoding="utf-8"
             )
