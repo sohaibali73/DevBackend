@@ -1164,6 +1164,358 @@ def handle_revise_pptx(
 
 
 # =============================================================================
+# ── PPTX Template Engine (pptx-automizer) ────────────────────────────────────
+# =============================================================================
+
+GENERATE_PPTX_TEMPLATE_TOOL_DEF: Dict[str, Any] = {
+    "name": "generate_pptx_template",
+    "description": (
+        "THE STAFF-REPLACEMENT TOOL. Update existing client decks and quarterly reports "
+        "with new data in seconds — preserving every pixel of original designer formatting.\n\n"
+        "Two modes:\n\n"
+        "━━ UPDATE MODE (most common) ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+        "User uploads last quarter's deck → AI injects this quarter's numbers, chart data, "
+        "table rows → output is a pixel-identical updated presentation.\n"
+        "  - global_replacements: change 'Q4 2025' → 'Q1 2026' across ENTIRE deck at once\n"
+        "  - set_chart_data: inject new series/category data into real PowerPoint charts\n"
+        "    (preserves ALL chart styling: colors, fonts, axes, legend, borders)\n"
+        "  - set_table: inject new rows into real styled tables\n"
+        "    (preserves: header fills, borders, column widths, fonts)\n"
+        "  - swap_image: replace chart export PNGs, client logos, screenshots\n\n"
+        "━━ ASSEMBLY MODE ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+        "Cherry-pick slides from one or more .pptx template files and assemble a new "
+        "presentation. Each slide can have targeted modifications.\n\n"
+        "WORKFLOW FOR QUARTERLY UPDATES:\n"
+        "1. Call analyze_pptx(file_id) → get slide-by-slide structure + shape names\n"
+        "2. Call generate_pptx_template(template_file_id, mode='update', global_replacements=[...], "
+        "slide_modifications=[{slide_number, modifications:[chart/table/image ops]}])\n\n"
+        "Shape names: visible in PowerPoint via ALT+F10 (Selection Pane). "
+        "analyze_pptx returns all shape names per slide.\n\n"
+        "Per-slide modification ops:\n"
+        "  set_text            → {op, shape, text}\n"
+        "  replace_tagged      → {op, shape, tags:[{find, by}], opening_tag, closing_tag}\n"
+        "                        Replaces {{find}} with by. Default delimiters: {{ }}\n"
+        "  replace_text        → {op, shape, replacements:[{find, replace}]}\n"
+        "                        Simple literal find/replace within a specific shape\n"
+        "  set_chart_data      → {op, shape, series:[{label}], categories:[{label, values:[]}]}\n"
+        "  set_extended_chart_data → same, for waterfall/funnel/map/combo charts\n"
+        "  set_table           → {op, shape, body:[{label, values:[]}], adjust_height, adjust_width}\n"
+        "  swap_image          → {op, shape, image_file} (image_file from extra_images)\n"
+        "  set_position        → {op, shape, x, y, w, h} (centimeters)\n"
+        "  remove_element      → {op, shape}\n"
+        "  add_element         → {op, source_file, slide_number, element_name}\n"
+        "  generate_scratch    → {op, code} (pptxgenjs code using pSlide, pptxGenJs)\n\n"
+        "Chart data format:\n"
+        "  series:     [{label: 'Fund'}, {label: 'Benchmark'}]\n"
+        "  categories: [{label: 'Jan', values: [2.1, 1.8]}, {label: 'Feb', values: [0.9, 1.1]}]\n\n"
+        "Table body format:\n"
+        "  body: [{label: 'row1', values: ['AAPL', '8.2%', '$1.2M']}, ...]\n\n"
+        "Killer use cases:\n"
+        "• Quarterly report refresh: upload Q4 deck → Q1 deck in 30 seconds\n"
+        "• Fund fact sheets: inject NAV, returns, holdings into designed template\n"
+        "• Client decks: update portfolio stats, benchmark data, commentary\n"
+        "• RFP decks: fill prospect name, AUM, strategy details into proposal template\n"
+        "• Board decks: update all KPI charts and risk table with latest data"
+    ),
+    "input_schema": {
+        "type": "object",
+        "properties": {
+            "template_file_id": {
+                "type": "string",
+                "description": (
+                    "file_id of a user-uploaded .pptx file to use as the template. "
+                    "For update mode: this is the deck being updated (e.g. last quarter's report). "
+                    "For assembly mode: this is the source of slides to cherry-pick from."
+                ),
+            },
+            "output_filename": {
+                "type": "string",
+                "description": "Output filename e.g. 'Potomac_Q1_2026_Report.pptx'.",
+            },
+            "mode": {
+                "type": "string",
+                "enum": ["assembly", "update"],
+                "description": (
+                    "'update' — preserve all slides, apply global text replacements + "
+                    "targeted chart/table/image ops on specific slides. "
+                    "Use for quarterly updates, data refreshes on existing decks.\n"
+                    "'assembly' — cherry-pick slides from template file(s) and combine them. "
+                    "Use when building a new presentation from designed templates."
+                ),
+                "default": "update",
+            },
+            "remove_existing_slides": {
+                "type": "boolean",
+                "description": (
+                    "Remove slides from root template before adding new ones. "
+                    "Default: true. Always true for update mode (slides are re-added from source)."
+                ),
+                "default": True,
+            },
+            "global_replacements": {
+                "type": "array",
+                "description": (
+                    "[UPDATE MODE] Text replacements applied to ALL text shapes on ALL slides. "
+                    "Use for date/period updates that appear throughout the entire deck. "
+                    "Example: [{\"find\": \"Q4 2025\", \"replace\": \"Q1 2026\"}, "
+                    "{\"find\": \"December 31, 2025\", \"replace\": \"March 31, 2026\"}]"
+                ),
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "find":        {"type": "string", "description": "Text to find."},
+                        "replace":     {"type": "string", "description": "Replacement text."},
+                        "match_case":  {"type": "boolean", "description": "Case-sensitive. Default false."},
+                    },
+                    "required": ["find", "replace"],
+                },
+            },
+            "slide_modifications": {
+                "type": "array",
+                "description": (
+                    "[UPDATE MODE] Per-slide operations (chart data, table data, image swap, etc.) "
+                    "applied after global_replacements. Identify slide numbers and shape names "
+                    "from analyze_pptx output first."
+                ),
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "slide_number": {
+                            "type": "integer",
+                            "description": "1-based slide number (from analyze_pptx output).",
+                        },
+                        "modifications": {
+                            "type": "array",
+                            "description": "List of modification operations for this slide.",
+                            "items": {"type": "object"},
+                        },
+                    },
+                    "required": ["slide_number", "modifications"],
+                },
+            },
+            "slides": {
+                "type": "array",
+                "description": (
+                    "[ASSEMBLY MODE] Slides to cherry-pick from the template and include "
+                    "in the output presentation. Each can have modifications."
+                ),
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "source_file": {
+                            "type": "string",
+                            "description": (
+                                "Template filename to pull this slide from. "
+                                "Use 'input.pptx' to refer to the file from template_file_id."
+                            ),
+                            "default": "input.pptx",
+                        },
+                        "slide_number": {
+                            "type": "integer",
+                            "description": "1-based slide number within source_file.",
+                        },
+                        "modifications": {
+                            "type": "array",
+                            "description": "Modifications to apply to this slide.",
+                            "items": {"type": "object"},
+                        },
+                    },
+                    "required": ["slide_number"],
+                },
+            },
+            "extra_images": {
+                "type": "array",
+                "description": (
+                    "Image files (uploaded via file_id) to make available for swap_image operations. "
+                    "Each image is referenced by its 'name' in swap_image ops."
+                ),
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "name":    {"type": "string", "description": "Filename used in swap_image op (e.g. 'chart.png')."},
+                        "file_id": {"type": "string", "description": "file_id of the uploaded image."},
+                    },
+                    "required": ["name", "file_id"],
+                },
+            },
+        },
+        "required": [],
+    },
+}
+
+
+def handle_generate_pptx_template(
+    tool_input: Dict[str, Any],
+    api_key: str = None,
+    supabase_client=None,
+) -> str:
+    """
+    Execute a generate_pptx_template operation via pptx-automizer Node.js subprocess.
+
+    Resolves file_ids for the template PPTX and any extra images, builds the spec,
+    runs AutomizerSandbox, stores the result, and returns a JSON response.
+    """
+    start = time.time()
+    try:
+        from core.sandbox.automizer_sandbox import AutomizerSandbox
+        from core.file_store import get_file, store_file
+
+        # ── Validate mode ──────────────────────────────────────────────────
+        mode = tool_input.get("mode", "update").lower()
+        if mode not in ("assembly", "update"):
+            return json.dumps({"status": "error", "error": f"Invalid mode '{mode}'. Use 'assembly' or 'update'."})
+
+        # ── Resolve template file ──────────────────────────────────────────
+        template_bytes: bytes | None = None
+        template_file_id = tool_input.get("template_file_id", "").strip()
+
+        if template_file_id:
+            file_entry = get_file(template_file_id)
+            if not file_entry:
+                return json.dumps({
+                    "status": "error",
+                    "error": f"Template file not found: {template_file_id}",
+                })
+            if not file_entry.filename.lower().endswith(".pptx"):
+                return json.dumps({
+                    "status": "error",
+                    "error": f"Template must be a .pptx file, got: {file_entry.filename}",
+                })
+            template_bytes = file_entry.data
+            logger.info(
+                "generate_pptx_template: template=%s (%d bytes)",
+                file_entry.filename, len(template_bytes),
+            )
+
+        # ── Validate: template required unless using only builtin templates ─
+        if not template_file_id and mode == "update":
+            return json.dumps({
+                "status": "error",
+                "error": "template_file_id is required for update mode.",
+            })
+
+        # ── Resolve extra images ───────────────────────────────────────────
+        extra_images: dict[str, bytes] = {}
+        for img_spec in tool_input.get("extra_images", []):
+            img_name    = img_spec.get("name", "").strip()
+            img_file_id = img_spec.get("file_id", "").strip()
+            if not img_name or not img_file_id:
+                continue
+            img_entry = get_file(img_file_id)
+            if img_entry and img_entry.data:
+                extra_images[img_name] = img_entry.data
+                logger.debug("Resolved extra image: %s (%d bytes)", img_name, len(img_entry.data))
+            else:
+                logger.warning("Extra image file_id %s not found — skipped", img_file_id)
+
+        # ── Build output filename ──────────────────────────────────────────
+        raw_filename = tool_input.get("output_filename", "").strip()
+        if not raw_filename:
+            raw_filename = "Potomac_Updated.pptx"
+        if not raw_filename.lower().endswith(".pptx"):
+            raw_filename += ".pptx"
+        output_filename = re.sub(r"[^\w.\-]", "_", raw_filename)[:120]
+
+        # ── Build spec ────────────────────────────────────────────────────
+        spec: Dict[str, Any] = {
+            "mode":     mode,
+            "filename": output_filename,
+        }
+
+        # root_template is always "input.pptx" when template_bytes is provided
+        if template_bytes is not None:
+            spec["root_template"] = "input.pptx"
+
+        if "remove_existing_slides" in tool_input:
+            spec["remove_existing_slides"] = bool(tool_input["remove_existing_slides"])
+
+        # Update-mode specific fields
+        if mode == "update":
+            spec["global_replacements"] = tool_input.get("global_replacements", [])
+            spec["slide_modifications"] = tool_input.get("slide_modifications", [])
+
+        # Assembly-mode specific fields
+        if mode == "assembly":
+            raw_slides = tool_input.get("slides", [])
+            # Normalize source_file: if omitted, default to "input.pptx"
+            norm_slides = []
+            for s in raw_slides:
+                ns = dict(s)
+                if "source_file" not in ns or not ns["source_file"]:
+                    ns["source_file"] = "input.pptx"
+                norm_slides.append(ns)
+            spec["slides"] = norm_slides
+
+        # Media files list (names only — bytes already resolved above)
+        if extra_images:
+            spec["media_files"] = list(extra_images.keys())
+
+        # ── Execute AutomizerSandbox ───────────────────────────────────────
+        sandbox = AutomizerSandbox()
+        result  = sandbox.run(
+            spec=spec,
+            template_bytes=template_bytes,
+            extra_images=extra_images if extra_images else None,
+            timeout=180,
+        )
+
+        if not result.success:
+            return json.dumps({
+                "status":   "error",
+                "error":    result.error,
+                "warnings": result.warnings,
+                "exec_time_ms": result.exec_time_ms,
+            })
+
+        # ── Store result ───────────────────────────────────────────────────
+        entry = store_file(
+            data=result.data,
+            filename=result.filename,
+            file_type="pptx",
+            tool_name="generate_pptx_template",
+        )
+        elapsed_ms = round((time.time() - start) * 1000, 2)
+
+        slide_count_info = ""
+        if mode == "update":
+            n_global = len(spec.get("global_replacements", []))
+            n_slides  = len(spec.get("slide_modifications", []))
+            slide_count_info = (
+                f" {n_global} global replacement(s), {n_slides} slide(s) modified."
+            )
+        elif mode == "assembly":
+            slide_count_info = f" {len(spec.get('slides', []))} slide(s) assembled."
+
+        warn_note = ""
+        if result.warnings:
+            warn_note = f" ({len(result.warnings)} non-fatal warning(s))"
+
+        logger.info(
+            "generate_pptx_template ✓  mode=%s  %s  %.1f KB  %.0f ms",
+            mode, entry.filename, entry.size_kb, elapsed_ms,
+        )
+
+        return json.dumps({
+            "status":        "success",
+            "mode":          mode,
+            "file_id":       entry.file_id,
+            "filename":      entry.filename,
+            "size_kb":       entry.size_kb,
+            "download_url":  f"/files/{entry.file_id}/download",
+            "warnings":      result.warnings,
+            "exec_time_ms":  elapsed_ms,
+            "message": (
+                f"✅ Presentation updated via pptx-automizer.{slide_count_info}{warn_note} "
+                f"Download: /files/{entry.file_id}/download"
+            ),
+        })
+
+    except Exception as exc:
+        logger.error("handle_generate_pptx_template error: %s", exc, exc_info=True)
+        return json.dumps({"status": "error", "error": str(exc)})
+
+
+# =============================================================================
 # Shared helpers
 # =============================================================================
 
@@ -1191,15 +1543,19 @@ def _auto_register() -> None:
     try:
         from core.tools_v2.registry import ToolRegistry
         reg = ToolRegistry()
-        reg.register_tool(GENERATE_DOCX_TOOL_DEF, handler=handle_generate_docx)
-        reg.register_tool(GENERATE_PPTX_TOOL_DEF,           handler=handle_generate_pptx)
-        reg.register_tool(GENERATE_PPTX_FREESTYLE_TOOL_DEF, handler=handle_generate_pptx_freestyle)
-        reg.register_tool(ANALYZE_PPTX_TOOL_DEF,            handler=handle_analyze_pptx)
-        reg.register_tool(REVISE_PPTX_TOOL_DEF,             handler=handle_revise_pptx)
-        reg.register_tool(GENERATE_TRANSFORM_XLSX_TOOL_DEF, handler=handle_transform_xlsx)
-        reg.register_tool(GENERATE_ANALYZE_XLSX_TOOL_DEF,   handler=handle_analyze_xlsx)
-        reg.register_tool(GENERATE_XLSX_TOOL_DEF,  handler=handle_generate_xlsx)
-        logger.debug("docx / pptx / analyze_pptx / revise_pptx / transform_xlsx / analyze_xlsx / generate_xlsx registered")
+        reg.register_tool(GENERATE_DOCX_TOOL_DEF,               handler=handle_generate_docx)
+        reg.register_tool(GENERATE_PPTX_TOOL_DEF,               handler=handle_generate_pptx)
+        reg.register_tool(GENERATE_PPTX_FREESTYLE_TOOL_DEF,     handler=handle_generate_pptx_freestyle)
+        reg.register_tool(GENERATE_PPTX_TEMPLATE_TOOL_DEF,      handler=handle_generate_pptx_template)
+        reg.register_tool(ANALYZE_PPTX_TOOL_DEF,                handler=handle_analyze_pptx)
+        reg.register_tool(REVISE_PPTX_TOOL_DEF,                 handler=handle_revise_pptx)
+        reg.register_tool(GENERATE_TRANSFORM_XLSX_TOOL_DEF,     handler=handle_transform_xlsx)
+        reg.register_tool(GENERATE_ANALYZE_XLSX_TOOL_DEF,       handler=handle_analyze_xlsx)
+        reg.register_tool(GENERATE_XLSX_TOOL_DEF,               handler=handle_generate_xlsx)
+        logger.debug(
+            "docx / pptx / pptx_freestyle / pptx_template / analyze_pptx / revise_pptx / "
+            "transform_xlsx / analyze_xlsx / generate_xlsx registered"
+        )
     except Exception as exc:
         logger.debug("ToolRegistry auto-register skipped: %s", exc)
 

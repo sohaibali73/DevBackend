@@ -1517,6 +1517,100 @@ TOOL_DEFINITIONS = [
             "required": ["title", "code"],
         },
     },
+    # ── PPTX Template Engine (pptx-automizer) ────────────────────────────────
+    {
+        "name": "generate_pptx_template",
+        "description": (
+            "THE STAFF-REPLACEMENT TOOL. Update existing Potomac client decks and quarterly "
+            "reports with new data while preserving every pixel of original designer formatting.\n\n"
+            "TWO MODES:\n\n"
+            "'update' — Upload last quarter's deck → inject this quarter's numbers, chart data, "
+            "table rows → output is pixel-identical updated presentation. Supports:\n"
+            "  global_replacements: change 'Q4 2025'→'Q1 2026' across ENTIRE deck at once\n"
+            "  set_chart_data: inject new data into real PowerPoint charts (preserves all styling)\n"
+            "  set_table: inject rows into real styled tables (preserves formatting)\n"
+            "  swap_image: replace chart PNGs, logos, screenshots\n\n"
+            "'assembly' — Cherry-pick slides from .pptx template files, assemble new deck.\n\n"
+            "WORKFLOW: (1) analyze_pptx → get shape names, (2) generate_pptx_template with mods.\n\n"
+            "Per-slide ops: set_text, replace_tagged ({{tag}} style), replace_text, "
+            "set_chart_data, set_extended_chart_data, set_table, swap_image, set_position, "
+            "remove_element, add_element, generate_scratch (pptxgenjs code).\n\n"
+            "Chart format: series:[{label}], categories:[{label, values:[]}]\n"
+            "Table format: body:[{label, values:[]}]\n\n"
+            "Use cases: quarterly report refresh, fund fact sheets, client deck data updates, "
+            "RFP decks, board presentations — any deck that gets updated periodically."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "template_file_id": {
+                    "type": "string",
+                    "description": "file_id of the uploaded .pptx template/existing deck.",
+                },
+                "output_filename": {
+                    "type": "string",
+                    "description": "Output filename e.g. 'Potomac_Q1_2026_Report.pptx'.",
+                },
+                "mode": {
+                    "type": "string",
+                    "enum": ["assembly", "update"],
+                    "description": "'update' to refresh existing deck data. 'assembly' to cherry-pick slides.",
+                    "default": "update",
+                },
+                "global_replacements": {
+                    "type": "array",
+                    "description": "[update] Replacements on ALL text on ALL slides. [{find, replace}]",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "find":       {"type": "string"},
+                            "replace":    {"type": "string"},
+                            "match_case": {"type": "boolean"},
+                        },
+                        "required": ["find", "replace"],
+                    },
+                },
+                "slide_modifications": {
+                    "type": "array",
+                    "description": "[update] Per-slide modifications. [{slide_number, modifications:[mod_spec]}]",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "slide_number": {"type": "integer"},
+                            "modifications": {"type": "array", "items": {"type": "object"}},
+                        },
+                        "required": ["slide_number", "modifications"],
+                    },
+                },
+                "slides": {
+                    "type": "array",
+                    "description": "[assembly] Slides to include. [{source_file, slide_number, modifications}]",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "source_file":   {"type": "string", "default": "input.pptx"},
+                            "slide_number":  {"type": "integer"},
+                            "modifications": {"type": "array", "items": {"type": "object"}},
+                        },
+                        "required": ["slide_number"],
+                    },
+                },
+                "extra_images": {
+                    "type": "array",
+                    "description": "Images for swap_image ops. [{name, file_id}]",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "name":    {"type": "string"},
+                            "file_id": {"type": "string"},
+                        },
+                        "required": ["name", "file_id"],
+                    },
+                },
+            },
+            "required": [],
+        },
+    },
     # ── PPTX Intelligence Tools ──────────────────────────────────────────────
     {
         "name": "analyze_pptx",
@@ -4940,6 +5034,15 @@ def handle_tool_call(
                 result = json.loads(_rpptx_json)
             except Exception as _rpptx_err:
                 result = {"status": "error", "error": str(_rpptx_err)}
+        elif tool_name == "generate_pptx_template":
+            # Template-driven PPTX assembly/update via pptx-automizer + pptxgenjs.
+            # Supports: update mode (quarterly refresh), assembly mode (cherry-pick slides).
+            try:
+                from core.tools_v2.document_tools import handle_generate_pptx_template
+                _pptx_tmpl_json = handle_generate_pptx_template(tool_input, api_key=api_key)
+                result = json.loads(_pptx_tmpl_json)
+            except Exception as _pptx_tmpl_err:
+                result = {"status": "error", "error": str(_pptx_tmpl_err)}
         elif tool_name == "analyze_xlsx":
             # Profile an uploaded .xlsx or .csv — columns, dtypes, nulls, samples.
             try:
