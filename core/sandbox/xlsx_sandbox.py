@@ -207,6 +207,129 @@ class XlsxSandbox:
                 elif columns:
                     ws.freeze_panes = f"A{header_row + 1}"
 
+                # ── Charts ─────────────────────────────────────────────────
+                from openpyxl.chart import (
+                    BarChart, LineChart, PieChart, AreaChart, ScatterChart,
+                    Reference,
+                )
+
+                for chart_spec in sheet_spec.get("charts", []):
+                    chart_type = chart_spec.get("type", "bar_chart")
+                    title = chart_spec.get("title", "")
+                    x_col = chart_spec.get("x_col", 1)
+                    y_cols = chart_spec.get("y_cols", [])
+                    series_labels = chart_spec.get("series_labels", [])
+                    anchor = chart_spec.get("anchor", "G5")
+                    width = chart_spec.get("width", 15)
+                    height = chart_spec.get("height", 10)
+
+                    chart = None
+                    if chart_type == "bar_chart":
+                        chart = BarChart()
+                    elif chart_type == "line_chart":
+                        chart = LineChart()
+                    elif chart_type == "pie_chart":
+                        chart = PieChart()
+                    elif chart_type == "area_chart":
+                        chart = AreaChart()
+                    elif chart_type == "scatter_chart":
+                        chart = ScatterChart()
+
+                    if chart:
+                        chart.title = title
+                        chart.style = 10
+                        chart.y_axis.title = series_labels[0] if series_labels else ""
+                        chart.x_axis.title = columns[x_col - 1] if x_col <= len(columns) else ""
+
+                        data_end = data_start + len(rows_data) - 1
+
+                        # X axis labels
+                        if x_col >= 1:
+                            chart.set_categories(
+                                Reference(ws, min_col=x_col, min_row=data_start, max_row=data_end)
+                            )
+
+                        # Y series
+                        for series_idx, y_col in enumerate(y_cols):
+                            series = Reference(ws, min_col=y_col, min_row=header_row, max_row=data_end)
+                            chart.append(series)
+                            if series_idx < len(series_labels):
+                                chart.series[series_idx].title = series_labels[series_idx]
+
+                        ws.add_chart(chart, anchor)
+                        chart.width = width
+                        chart.height = height
+
+                # ── Conditional Formatting ─────────────────────────────────
+                from openpyxl.formatting.rule import (
+                    ColorScaleRule, DataBarRule, CellIsRule
+                )
+                from openpyxl.styles import Font, PatternFill
+
+                for cf_spec in sheet_spec.get("conditional_formats", []):
+                    cf_type = cf_spec.get("type")
+                    range_str = cf_spec.get("range", "")
+
+                    if cf_type == "color_scale" and range_str:
+                        colors = cf_spec.get("colors", ["EB2F5C", "FFEB84", "63BE7B"])
+                        ws.conditional_formatting.add(range_str,
+                            ColorScaleRule(
+                                start_type="min", start_color=colors[0],
+                                mid_type="num", mid_value=0, mid_color=colors[1],
+                                end_type="max", end_color=colors[2]
+                            )
+                        )
+
+                    elif cf_type == "data_bars" and range_str:
+                        color = cf_spec.get("color", "FEC00F")
+                        ws.conditional_formatting.add(range_str,
+                            DataBarRule(start_type="min", end_type="max", color=color)
+                        )
+
+                    elif cf_type == "highlight_negatives" and range_str:
+                        ws.conditional_formatting.add(range_str,
+                            CellIsRule(
+                                operator="lessThan", formula=["0"],
+                                font=Font(color="EB2F5C")
+                            )
+                        )
+
+                    elif cf_type == "highlight_positives" and range_str:
+                        ws.conditional_formatting.add(range_str,
+                            CellIsRule(
+                                operator="greaterThan", formula=["0"],
+                                font=Font(color="276221")
+                            )
+                        )
+
+                # ── Excel Table ────────────────────────────────────────────
+                if sheet_spec.get("as_table", False):
+                    from openpyxl.worksheet.table import Table, TableStyleInfo
+
+                    table_name = sheet_spec.get("table_name", "DataTable")
+                    table = Table(displayName=table_name, ref=f"A{header_row}:{get_column_letter(col_count)}{data_start + len(rows_data) - 1}")
+
+                    style = TableStyleInfo(
+                        name="TableStyleMedium9",
+                        showFirstColumn=False,
+                        showLastColumn=False,
+                        showRowStripes=True,
+                        showColumnStripes=False
+                    )
+                    table.tableStyleInfo = style
+
+                    # Totals row
+                    totals = sheet_spec.get("totals_row", {})
+                    if totals:
+                        table.showTotals = True
+                        for col_idx, func in totals.items():
+                            col_letter = get_column_letter(int(col_idx))
+                            for tc in table.tableColumns:
+                                if tc.name == columns[int(col_idx) - 1]:
+                                    tc.totalsRowFunction = func
+
+                    ws.add_table(table)
+
                 # ── Page setup for printing ────────────────────────────────
                 ws.page_setup.orientation = "landscape"
                 ws.page_setup.fitToWidth  = 1

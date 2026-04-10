@@ -1466,6 +1466,54 @@ TOOL_DEFINITIONS = [
             "required": ["title", "slides"],
         },
     },
+    # ── Server-side XLSX Intelligence Tools ──────────────────────────────────
+    # analyze_xlsx: profile any uploaded .xlsx or .csv — columns, dtypes, stats, samples
+    # transform_xlsx: pandas pipeline — filter, sort, clean, pivot, group, dedupe
+    {
+        "name": "analyze_xlsx",
+        "description": (
+            "Analyze any uploaded Excel (.xlsx) or CSV file. "
+            "Returns sheet names, column names, data types, null counts, duplicate count, "
+            "numeric statistics (min/max/mean/std), and 5 sample rows. "
+            "Call this FIRST whenever the user uploads a spreadsheet — no manual inspection needed."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "file_id": {"type": "string", "description": "UUID of the uploaded file to analyze."}
+            },
+            "required": ["file_id"]
+        },
+    },
+    {
+        "name": "transform_xlsx",
+        "description": (
+            "Apply data cleaning and transformation operations to any uploaded Excel or CSV file. "
+            "Operations run as a pipeline in order. Output is a branded Potomac .xlsx download.\n\n"
+            "Operations (each is an object with 'type' + operation-specific fields):\n"
+            "  filter_rows    → {column, op ('=='|'!='|'>'|'>='|'<'|'<='|'contains'|'not_null'), value}\n"
+            "  sort           → {by:[col,...], ascending:[true,...]}\n"
+            "  rename_columns → {mapper: {old_name: new_name, ...}}\n"
+            "  drop_columns   → {columns: [col, ...]}\n"
+            "  add_column     → {name, formula} (pandas eval syntax e.g. 'PRICE * SHARES')\n"
+            "  fill_nulls     → {column, value}\n"
+            "  drop_duplicates → {subset:[col,...], keep:'first'|'last'}\n"
+            "  change_dtype   → {column, to:'date'|'int'|'float'|'string'}\n"
+            "  normalize_text → {column, transform:'upper'|'lower'|'title'|'strip'}\n"
+            "  group_aggregate → {by:[col,...], agg:{col:'sum'|'mean'|'count'|'min'|'max'...}}\n"
+            "  pivot          → {index, columns, values, aggfunc:'mean'|'sum'|'count'...}"
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "file_id":         {"type": "string", "description": "UUID of the uploaded file."},
+                "operations":      {"type": "array", "items": {"type": "object"}, "description": "Ordered operations pipeline."},
+                "output_title":    {"type": "string", "description": "Title for the output workbook."},
+                "output_filename": {"type": "string", "description": "Custom output filename."},
+            },
+            "required": ["file_id", "operations"]
+        },
+    },
     # ── Server-side XLSX generation ──────────────────────────────────────────
     # generate_xlsx runs entirely in Python via openpyxl — no Node.js subprocess.
     # Zero API cost. Full Potomac brand styling applied automatically.
@@ -4784,6 +4832,22 @@ def handle_tool_call(
                 result = json.loads(_pptx_json)
             except Exception as _pptx_err:
                 result = {"status": "error", "error": str(_pptx_err)}
+        elif tool_name == "analyze_xlsx":
+            # Profile an uploaded .xlsx or .csv — columns, dtypes, nulls, samples.
+            try:
+                from core.tools_v2.document_tools import handle_analyze_xlsx
+                _analyze_json = handle_analyze_xlsx(tool_input, api_key=api_key)
+                result = json.loads(_analyze_json)
+            except Exception as _analyze_err:
+                result = {"status": "error", "error": str(_analyze_err)}
+        elif tool_name == "transform_xlsx":
+            # Pandas pipeline: filter, sort, clean, pivot, group, dedupe — returns branded xlsx.
+            try:
+                from core.tools_v2.document_tools import handle_transform_xlsx
+                _transform_json = handle_transform_xlsx(tool_input, api_key=api_key)
+                result = json.loads(_transform_json)
+            except Exception as _transform_err:
+                result = {"status": "error", "error": str(_transform_err)}
         elif tool_name == "generate_xlsx":
             # Server-side Potomac XLSX generation via Python openpyxl — no Node.js.
             try:

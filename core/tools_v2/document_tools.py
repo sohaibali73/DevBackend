@@ -473,6 +473,72 @@ def handle_generate_pptx(
 # ── XLSX ──────────────────────────────────────────────────────────────────────
 # =============================================================================
 
+GENERATE_TRANSFORM_XLSX_TOOL_DEF: Dict[str, Any] = {
+     "name": "transform_xlsx",
+     "description": (
+         "Apply data cleaning and transformation operations to any uploaded Excel or CSV file. "
+         "Use this instead of asking the user to clean or modify data manually.\n\n"
+         "Supported operations: filter_rows, sort, rename_columns, drop_columns, add_column, "
+         "fill_nulls, drop_duplicates, change_dtype, normalize_text, group_aggregate, pivot.\n\n"
+         "This tool replaces 100% of manual data cleaning work. "
+         "All operations are applied in order, and the result is returned as a branded Potomac xlsx file."
+     ),
+     "input_schema": {
+         "type": "object",
+         "properties": {
+             "file_id": {
+                 "type": "string",
+                 "description": "UUID of the uploaded file to transform."
+             },
+             "operations": {
+                 "type": "array",
+                 "description": "Ordered list of operations to apply",
+                 "items": {
+                     "type": "object",
+                     "properties": {
+                         "type": {"type": "string", "description": "Operation type"}
+                     },
+                     "additionalProperties": True
+                 }
+             },
+             "output_title": {
+                 "type": "string",
+                 "description": "Title for the output workbook"
+             },
+             "output_filename": {
+                 "type": "string",
+                 "description": "Optional custom filename for output"
+             }
+         },
+         "required": ["file_id", "operations"]
+     }
+ }
+
+
+GENERATE_ANALYZE_XLSX_TOOL_DEF: Dict[str, Any] = {
+     "name": "analyze_xlsx",
+     "description": (
+         "Analyze any uploaded Excel (.xlsx) or CSV file. "
+         "Returns a full structured profile including columns, data types, null counts, "
+         "duplicates, numeric statistics, and sample rows.  "
+         "Use this BEFORE requesting the user to send raw data or paste cell values.\n\n"
+         "This tool eliminates 100% of manual inspection work. "
+         "The LLM will know exactly what is inside the file without opening Excel.\n\n"
+         "Always call this first when the user uploads any spreadsheet file."
+     ),
+     "input_schema": {
+         "type": "object",
+         "properties": {
+             "file_id": {
+                 "type": "string",
+                 "description": "UUID of the uploaded file to analyze."
+             }
+         },
+         "required": ["file_id"]
+     }
+ }
+
+
 GENERATE_XLSX_TOOL_DEF: Dict[str, Any] = {
     "name": "generate_xlsx",
     "description": (
@@ -602,6 +668,122 @@ GENERATE_XLSX_TOOL_DEF: Dict[str, Any] = {
 }
 
 
+def handle_transform_xlsx(
+    tool_input: Dict[str, Any],
+    api_key: str = None,
+    supabase_client=None,
+) -> str:
+    """Transform an uploaded Excel/CSV file with pipeline operations."""
+    start = time.time()
+    try:
+        from core.sandbox.xlsx_transformer import XlsxTransformer
+        from core.file_store import get_file, store_file
+
+        file_id = tool_input.get("file_id", "").strip()
+        operations = tool_input.get("operations", [])
+        
+        if not file_id:
+            return json.dumps({"status": "error", "error": "Missing required field: 'file_id'"})
+        if not isinstance(operations, list) or not operations:
+            return json.dumps({"status": "error", "error": "'operations' must be a non-empty array"})
+
+        file_entry = get_file(file_id)
+        if not file_entry:
+            return json.dumps({"status": "error", "error": f"File not found: {file_id}"})
+
+        transformer = XlsxTransformer()
+        result = transformer.transform(
+            file_entry.data,
+            operations,
+            filename=file_entry.filename,
+            output_title=tool_input.get("output_title")
+        )
+
+        if not result.success:
+            return json.dumps({
+                "status": "error",
+                "error": result.error,
+                "exec_time_ms": result.exec_time_ms
+            })
+
+        entry = store_file(
+            data=result.data,
+            filename=tool_input.get("output_filename") or result.filename,
+            file_type="xlsx",
+            tool_name="transform_xlsx"
+        )
+
+        logger.info("transform_xlsx ✓  file_id=%s  ops=%d  rows=%d  %.0f ms",
+                    file_id, result.operations_applied, result.row_count, result.exec_time_ms)
+
+        return json.dumps({
+            "status":       "success",
+            "file_id":      entry.file_id,
+            "filename":     entry.filename,
+            "size_kb":      entry.size_kb,
+            "download_url": f"/files/{entry.file_id}/download",
+            "row_count":    result.row_count,
+            "operations_applied": result.operations_applied,
+            "exec_time_ms": result.exec_time_ms,
+            "message": (
+                f"✅ File transformed successfully. "
+                f"{result.operations_applied} operations applied, {result.row_count} rows output."
+            ),
+        })
+
+    except Exception as exc:
+        logger.error("handle_transform_xlsx error: %s", exc, exc_info=True)
+        return json.dumps({"status": "error", "error": str(exc)})
+
+
+def handle_analyze_xlsx(
+    tool_input: Dict[str, Any],
+    api_key: str = None,
+    supabase_client=None,
+) -> str:
+    """Analyze an uploaded Excel/CSV file and return profile."""
+    start = time.time()
+    try:
+        from core.sandbox.xlsx_analyzer import XlsxAnalyzer
+        from core.file_store import get_file
+
+        file_id = tool_input.get("file_id", "").strip()
+        if not file_id:
+            return json.dumps({"status": "error", "error": "Missing required field: 'file_id'"})
+
+        file_entry = get_file(file_id)
+        if not file_entry:
+            return json.dumps({"status": "error", "error": f"File not found: {file_id}"})
+
+        analyzer = XlsxAnalyzer()
+        result = analyzer.analyze(file_entry.data, filename=file_entry.filename)
+
+        if not result.success:
+            return json.dumps({
+                "status": "error",
+                "error": result.error,
+                "exec_time_ms": result.exec_time_ms
+            })
+
+        logger.info("analyze_xlsx ✓  file_id=%s  %.0f ms", file_id, result.exec_time_ms)
+
+        return json.dumps({
+            "status":       "success",
+            "file_id":      file_id,
+            "filename":     file_entry.filename,
+            "exec_time_ms": result.exec_time_ms,
+            "profile":      result.profile,
+            "message": (
+                f"✅ File analyzed successfully. "
+                f"{result.profile['sheet_count']} sheet(s) found."
+            ),
+        })
+
+    except Exception as exc:
+        logger.error("handle_analyze_xlsx error: %s", exc, exc_info=True)
+        return json.dumps({"status": "error", "error": str(exc)})
+
+
 def handle_generate_xlsx(
     tool_input: Dict[str, Any],
     api_key: str = None,
@@ -693,8 +875,10 @@ def _auto_register() -> None:
         reg = ToolRegistry()
         reg.register_tool(GENERATE_DOCX_TOOL_DEF, handler=handle_generate_docx)
         reg.register_tool(GENERATE_PPTX_TOOL_DEF, handler=handle_generate_pptx)
+        reg.register_tool(GENERATE_TRANSFORM_XLSX_TOOL_DEF, handler=handle_transform_xlsx)
+        reg.register_tool(GENERATE_ANALYZE_XLSX_TOOL_DEF, handler=handle_analyze_xlsx)
         reg.register_tool(GENERATE_XLSX_TOOL_DEF, handler=handle_generate_xlsx)
-        logger.debug("generate_docx / generate_pptx / generate_xlsx registered in ToolRegistry")
+        logger.debug("generate_docx / generate_pptx / transform_xlsx / analyze_xlsx / generate_xlsx registered in ToolRegistry")
     except Exception as exc:
         logger.debug("ToolRegistry auto-register skipped: %s", exc)
 
