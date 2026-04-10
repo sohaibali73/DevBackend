@@ -501,21 +501,386 @@ function buildImageSlide(d) {
   return slide;
 }
 
+// ── NEW PROFESSIONAL SLIDE TYPES ─────────────────────────────────────────────
+
+function buildTableSlide(d) {
+  const slide = pres.addSlide();
+  slide.background = { color: WHITE };
+  addLogo(slide, 8.55, 0.15, 1.25, 0.5, 'full');
+  slide.addShape(pres.shapes.RECTANGLE, { x: 0, y: 0, w: 0.15, h: 7.5, fill: { color: YELLOW } });
+  slide.addText((d.title || '').toUpperCase(), {
+    x: 0.5, y: 0.4, w: 7.9, h: 0.9, fontFace: 'Arial', fontSize: 26, bold: true, color: DARK_GRAY, valign: 'middle'
+  });
+  slide.addShape(pres.shapes.RECTANGLE, { x: 0.5, y: 1.3, w: 2.5, h: 0.06, fill: { color: YELLOW } });
+
+  const headers = d.headers || [];
+  const rows    = d.rows    || [];
+  const tableRows = [];
+
+  if (headers.length > 0) {
+    tableRows.push(headers.map(h => ({
+      text: String(h).toUpperCase(),
+      options: { bold: true, color: DARK_GRAY, fill: { color: YELLOW }, align: 'center', valign: 'middle', fontSize: 11, fontFace: 'Arial', border: { type: 'solid', color: DARK_GRAY, pt: 0.5 } }
+    })));
+  }
+  rows.forEach((row, ri) => {
+    const isAlt = ri % 2 === 1;
+    const bg    = isAlt ? 'F5F5F5' : WHITE;
+    tableRows.push((Array.isArray(row) ? row : [row]).map((cell, ci) => {
+      const isNum = d.number_cols && d.number_cols.includes(ci + 1);
+      return { text: String(cell === null || cell === undefined ? '' : cell), options: { color: DARK_GRAY, fill: { color: bg }, align: isNum ? 'center' : 'left', fontSize: 11, fontFace: 'Arial', border: { type: 'solid', color: 'DDDDDD', pt: 0.5 } } };
+    }));
+  });
+  if (d.totals_row) {
+    const tRow = d.totals_row;
+    const cells = tRow.values ? [tRow.label, ...tRow.values] : [tRow.label || 'TOTAL'];
+    tableRows.push(cells.map(c => ({ text: String(c || ''), options: { bold: true, color: DARK_GRAY, fill: { color: 'FEF7D8' }, align: 'center', fontSize: 11, fontFace: 'Arial', border: { type: 'solid', color: DARK_GRAY, pt: 0.5 } } })));
+  }
+
+  if (tableRows.length > 0) {
+    const numCols = Math.max(...tableRows.map(r => r.length));
+    const colW    = 9.0 / Math.max(numCols, 1);
+    slide.addTable(tableRows, { x: 0.5, y: 1.5, w: 9.0, colW: Array(numCols).fill(colW), rowH: 0.42 });
+  }
+  if (d.caption) {
+    slide.addText(String(d.caption), { x: 0.5, y: 6.8, w: 9, h: 0.4, fontFace: 'Arial', fontSize: 10, italic: true, color: GRAY_60 });
+  }
+  return slide;
+}
+
+function buildChartSlide(d) {
+  const slide = pres.addSlide();
+  slide.background = { color: WHITE };
+  addLogo(slide, 8.55, 0.15, 1.25, 0.5, 'full');
+  slide.addShape(pres.shapes.RECTANGLE, { x: 0, y: 0, w: 0.15, h: 7.5, fill: { color: YELLOW } });
+  slide.addText((d.title || '').toUpperCase(), {
+    x: 0.5, y: 0.4, w: 7.9, h: 0.9, fontFace: 'Arial', fontSize: 26, bold: true, color: DARK_GRAY, valign: 'middle'
+  });
+  slide.addShape(pres.shapes.RECTANGLE, { x: 0.5, y: 1.3, w: 2.5, h: 0.06, fill: { color: YELLOW } });
+
+  const chartType  = (d.chart_type || 'bar').toLowerCase();
+  const categories = d.categories || d.labels || [];
+  const values     = d.values     || [];
+  const seriesData = d.series     || [];
+
+  if (chartType === 'waterfall') {
+    const n      = categories.length;
+    const chartX = 0.5, chartY = 1.6, chartH = 4.8, chartW = 9.0;
+    const maxVal = Math.max(...values.map(Math.abs)) * 1.3 || 100;
+    let running  = 0;
+    const baseY  = chartY + chartH;
+    slide.addShape(pres.shapes.RECTANGLE, { x: chartX, y: baseY, w: chartW, h: 0.025, fill: { color: DARK_GRAY } });
+    categories.forEach((cat, i) => {
+      const val    = values[i] || 0;
+      const barW   = chartW / (n * 1.5);
+      const barH   = Math.abs(val) / maxVal * chartH * 0.85;
+      const isStart = i === 0, isEnd = i === n - 1;
+      const color  = isStart || isEnd ? YELLOW : (val >= 0 ? '22C55E' : 'EB2F5C');
+      const barX   = chartX + i * (chartW / n) + (chartW / n - barW) / 2;
+      const barY   = val >= 0 ? baseY - ((running + val) / maxVal) * chartH * 0.85
+                              : baseY - (running / maxVal) * chartH * 0.85;
+      slide.addShape(pres.shapes.RECTANGLE, { x: barX, y: barY, w: barW, h: barH, fill: { color }, line: { color: WHITE, pt: 1 } });
+      const valStr = (val >= 0 && !isStart ? '+' : '') + val;
+      slide.addText(String(valStr), { x: barX, y: barY - 0.32, w: barW, h: 0.3, fontFace: 'Arial', fontSize: 10, bold: true, color: DARK_GRAY, align: 'center' });
+      slide.addText(String(cat), { x: barX - 0.1, y: baseY + 0.05, w: barW + 0.2, h: 0.4, fontFace: 'Arial', fontSize: 9, color: DARK_GRAY, align: 'center' });
+      if (i > 0 && i < n - 1) running += val;
+    });
+  } else {
+    let pptxChartType;
+    const chartOpts = {
+      x: 0.5, y: 1.5, w: 9.0, h: 5.5,
+      chartColors: [YELLOW, DARK_GRAY, '999999', 'EB2F5C', '22C55E'],
+      showLegend: seriesData.length > 1, legendPos: 'b', legendFontSize: 10,
+      dataLabelFontSize: 10, dataLabelColor: DARK_GRAY,
+    };
+    switch (chartType) {
+      case 'line':          pptxChartType = pres.charts.LINE;      break;
+      case 'pie':           pptxChartType = pres.charts.PIE;       chartOpts.showLegend = true; break;
+      case 'donut':         pptxChartType = pres.charts.DOUGHNUT;  chartOpts.showLegend = true; break;
+      case 'scatter':       pptxChartType = pres.charts.SCATTER;   break;
+      case 'area':          pptxChartType = pres.charts.AREA;      break;
+      case 'stacked_bar':   pptxChartType = pres.charts.BAR;       chartOpts.barGrouping = 'stacked'; break;
+      case 'clustered_bar': pptxChartType = pres.charts.BAR;       chartOpts.barGrouping = 'clustered'; break;
+      default:              pptxChartType = pres.charts.BAR;       break;
+    }
+    const chartData = seriesData.length > 0
+      ? seriesData.map(s => ({ name: s.name || '', labels: categories, values: s.values || [] }))
+      : [{ name: d.y_axis_label || 'Value', labels: categories, values }];
+    slide.addChart(pptxChartType, chartData, chartOpts);
+  }
+
+  if (d.caption) {
+    slide.addText(String(d.caption), { x: 0.5, y: 7.1, w: 9, h: 0.3, fontFace: 'Arial', fontSize: 10, italic: true, color: GRAY_60, align: 'center' });
+  }
+  return slide;
+}
+
+function buildTimelineSlide(d) {
+  const slide = pres.addSlide();
+  slide.background = { color: WHITE };
+  addLogo(slide, 8.55, 0.15, 1.25, 0.5, 'full');
+  slide.addShape(pres.shapes.RECTANGLE, { x: 0, y: 0, w: 0.15, h: 7.5, fill: { color: YELLOW } });
+  slide.addText((d.title || '').toUpperCase(), {
+    x: 0.5, y: 0.4, w: 7.9, h: 0.9, fontFace: 'Arial', fontSize: 26, bold: true, color: DARK_GRAY, valign: 'middle'
+  });
+  slide.addShape(pres.shapes.RECTANGLE, { x: 0.5, y: 1.3, w: 2.5, h: 0.06, fill: { color: YELLOW } });
+
+  const milestones = d.milestones || [];
+  const n = Math.max(1, milestones.length);
+  const timelineY = 3.8, lineX = 0.8, lineW = 8.4, r = 0.18;
+  const stepW = n > 1 ? lineW / (n - 1) : lineW;
+
+  slide.addShape(pres.shapes.RECTANGLE, { x: lineX, y: timelineY - 0.02, w: lineW, h: 0.04, fill: { color: YELLOW } });
+
+  milestones.forEach((m, i) => {
+    const xC = n === 1 ? lineX + lineW / 2 : lineX + i * stepW;
+    const isDone    = (m.status || '').toLowerCase() === 'complete';
+    const isCurrent = (m.status || '').toLowerCase() === 'in_progress';
+    const dotFill   = isDone ? YELLOW : (isCurrent ? 'FEE896' : 'FFFFFF');
+    const dotLine   = isDone ? YELLOW : DARK_GRAY;
+    const textColor = isDone || isCurrent ? DARK_GRAY : GRAY_60;
+    const isAbove   = i % 2 === 0;
+    const labelY    = isAbove ? timelineY - r - 1.2 : timelineY + r + 0.15;
+    const dateY     = isAbove ? timelineY - r - 0.55 : timelineY + r + 0.75;
+
+    slide.addShape(pres.shapes.ELLIPSE, { x: xC - r, y: timelineY - r, w: r * 2, h: r * 2, fill: { color: dotFill }, line: { color: dotLine, pt: 1.5 } });
+    slide.addText(String(m.label || '').toUpperCase(), { x: xC - 1.0, y: labelY, w: 2.0, h: 0.5, fontFace: 'Arial', fontSize: 11, bold: true, color: textColor, align: 'center' });
+    slide.addText(String(m.date  || ''), { x: xC - 1.0, y: dateY,  w: 2.0, h: 0.35, fontFace: 'Arial', fontSize: 10, color: GRAY_60, align: 'center' });
+    const connY1 = isAbove ? labelY + 0.5 : timelineY + r;
+    const connY2 = isAbove ? timelineY - r : dateY;
+    slide.addShape(pres.shapes.RECTANGLE, { x: xC - 0.01, y: Math.min(connY1, connY2), w: 0.02, h: Math.abs(connY2 - connY1), fill: { color: dotFill } });
+  });
+
+  if (d.caption) {
+    slide.addText(String(d.caption), { x: 0.5, y: 7.0, w: 9, h: 0.4, fontFace: 'Arial', fontSize: 10, italic: true, color: GRAY_60, align: 'center' });
+  }
+  return slide;
+}
+
+function buildMatrix2x2Slide(d) {
+  const slide = pres.addSlide();
+  slide.background = { color: WHITE };
+  addLogo(slide, 8.55, 0.15, 1.25, 0.5, 'full');
+  slide.addShape(pres.shapes.RECTANGLE, { x: 0, y: 0, w: 0.15, h: 7.5, fill: { color: YELLOW } });
+  slide.addText((d.title || '').toUpperCase(), {
+    x: 0.5, y: 0.4, w: 7.9, h: 0.9, fontFace: 'Arial', fontSize: 26, bold: true, color: DARK_GRAY, valign: 'middle'
+  });
+  slide.addShape(pres.shapes.RECTANGLE, { x: 0.5, y: 1.3, w: 2.5, h: 0.06, fill: { color: YELLOW } });
+
+  const mX = 1.0, mY = 1.6, mW = 8.0, mH = 5.4, midX = mX + mW / 2, midY = mY + mH / 2;
+  [ [mX, mY, mW/2, mH/2, 'F9F9F9'], [midX, mY, mW/2, mH/2, 'FEF7D8'], [mX, midY, mW/2, mH/2, 'FEF7D8'], [midX, midY, mW/2, mH/2, 'F9F9F9'] ]
+    .forEach(([x, y, w, h, bg]) => slide.addShape(pres.shapes.RECTANGLE, { x, y, w, h, fill: { color: bg }, line: { color: GRAY_20, pt: 1 } }));
+
+  slide.addShape(pres.shapes.RECTANGLE, { x: mX, y: midY - 0.025, w: mW, h: 0.05, fill: { color: YELLOW } });
+  slide.addShape(pres.shapes.RECTANGLE, { x: midX - 0.025, y: mY, w: 0.05, h: mH, fill: { color: YELLOW } });
+
+  const qLabels = d.quadrant_labels || ['', '', '', ''];
+  [[mX+0.1,mY+0.1],[midX+0.1,mY+0.1],[mX+0.1,midY+0.1],[midX+0.1,midY+0.1]].forEach(([qx, qy], qi) => {
+    if (qLabels[qi]) slide.addText(String(qLabels[qi]).toUpperCase(), { x: qx, y: qy, w: mW/2-0.2, h: 0.55, fontFace: 'Arial', fontSize: 9, bold: true, color: GRAY_60, valign: 'top' });
+  });
+
+  if (d.x_label) slide.addText(String(d.x_label).toUpperCase(), { x: mX, y: mY + mH + 0.1, w: mW, h: 0.35, fontFace: 'Arial', fontSize: 11, bold: true, color: DARK_GRAY, align: 'center' });
+  if (d.y_label) slide.addText(String(d.y_label).toUpperCase(), { x: 0.1, y: mY, w: 0.7, h: mH, fontFace: 'Arial', fontSize: 11, bold: true, color: DARK_GRAY, align: 'center', valign: 'middle', rotate: 270 });
+
+  (d.items || []).forEach(item => {
+    const px = mX + (item.x || 0.5) * mW - 0.15;
+    const py = mY + (1 - (item.y || 0.5)) * mH - 0.15;
+    const sz = Math.max(0.2, Math.min(0.5, (item.size || 20) / 60));
+    slide.addShape(pres.shapes.ELLIPSE, { x: px, y: py, w: sz, h: sz, fill: { color: YELLOW }, line: { color: DARK_GRAY, pt: 1 } });
+    slide.addText(String(item.label || ''), { x: px + sz + 0.06, y: py, w: 1.5, h: sz, fontFace: 'Arial', fontSize: 10, bold: true, color: DARK_GRAY, valign: 'middle' });
+  });
+  return slide;
+}
+
+function buildScorecardSlide(d) {
+  const slide = pres.addSlide();
+  slide.background = { color: WHITE };
+  addLogo(slide, 8.55, 0.15, 1.25, 0.5, 'full');
+  slide.addShape(pres.shapes.RECTANGLE, { x: 0, y: 0, w: 0.15, h: 7.5, fill: { color: YELLOW } });
+  slide.addText((d.title || '').toUpperCase(), {
+    x: 0.5, y: 0.4, w: 7.9, h: 0.9, fontFace: 'Arial', fontSize: 26, bold: true, color: DARK_GRAY, valign: 'middle'
+  });
+  slide.addShape(pres.shapes.RECTANGLE, { x: 0.5, y: 1.3, w: 2.5, h: 0.06, fill: { color: YELLOW } });
+
+  const items = d.items || [];
+  const tableRows = [[
+    { text: 'METRIC',  options: { bold: true, color: DARK_GRAY, fill: { color: YELLOW }, fontSize: 11, fontFace: 'Arial', border: { type: 'solid', color: DARK_GRAY, pt: 0.5 } } },
+    { text: 'STATUS',  options: { bold: true, color: DARK_GRAY, fill: { color: YELLOW }, fontSize: 11, fontFace: 'Arial', align: 'center', border: { type: 'solid', color: DARK_GRAY, pt: 0.5 } } },
+    { text: 'VALUE',   options: { bold: true, color: DARK_GRAY, fill: { color: YELLOW }, fontSize: 11, fontFace: 'Arial', align: 'center', border: { type: 'solid', color: DARK_GRAY, pt: 0.5 } } },
+    { text: 'COMMENT', options: { bold: true, color: DARK_GRAY, fill: { color: YELLOW }, fontSize: 11, fontFace: 'Arial', border: { type: 'solid', color: DARK_GRAY, pt: 0.5 } } },
+  ]];
+
+  items.forEach((item, ri) => {
+    const bg     = ri % 2 === 1 ? 'F5F5F5' : WHITE;
+    const status = (item.status || 'green').toLowerCase();
+    const ragColor = status === 'green' ? '22C55E' : status === 'red' ? 'EB2F5C' : YELLOW;
+    const ragLabel = status === 'green' ? '● ON TRACK' : status === 'red' ? '● BREACH' : '● AT RISK';
+    tableRows.push([
+      { text: String(item.metric || '').toUpperCase(), options: { bold: true, color: DARK_GRAY, fill: { color: bg }, fontSize: 11, fontFace: 'Arial', border: { type: 'solid', color: 'DDDDDD', pt: 0.5 } } },
+      { text: ragLabel, options: { color: ragColor, fill: { color: bg }, fontSize: 11, fontFace: 'Arial', bold: true, align: 'center', border: { type: 'solid', color: 'DDDDDD', pt: 0.5 } } },
+      { text: String(item.value   || ''), options: { color: DARK_GRAY, fill: { color: bg }, fontSize: 11, fontFace: 'Arial', align: 'center', border: { type: 'solid', color: 'DDDDDD', pt: 0.5 } } },
+      { text: String(item.comment || ''), options: { color: GRAY_60,   fill: { color: bg }, fontSize: 11, fontFace: 'Arial', border: { type: 'solid', color: 'DDDDDD', pt: 0.5 } } },
+    ]);
+  });
+
+  slide.addTable(tableRows, { x: 0.5, y: 1.5, w: 9.0, colW: [2.5, 1.8, 2.2, 2.5], rowH: Math.min(0.72, 5.4 / Math.max(items.length + 1, 1)) });
+  return slide;
+}
+
+function buildComparisonSlide(d) {
+  const slide = pres.addSlide();
+  slide.background = { color: WHITE };
+  addLogo(slide, 8.55, 0.15, 1.25, 0.5, 'full');
+  slide.addShape(pres.shapes.RECTANGLE, { x: 0, y: 0, w: 0.15, h: 7.5, fill: { color: YELLOW } });
+  slide.addText((d.title || '').toUpperCase(), {
+    x: 0.5, y: 0.4, w: 7.9, h: 0.9, fontFace: 'Arial', fontSize: 26, bold: true, color: DARK_GRAY, valign: 'middle'
+  });
+  slide.addShape(pres.shapes.RECTANGLE, { x: 0.5, y: 1.3, w: 2.5, h: 0.06, fill: { color: YELLOW } });
+
+  const rows   = d.rows   || [];
+  const winner = d.winner || 'right';
+  const lLabel = d.left_label  || 'OPTION A';
+  const rLabel = d.right_label || 'OPTION B';
+  const totalH = rows.length * 0.65 + 0.55;
+
+  slide.addShape(pres.shapes.RECTANGLE, { x: 2.8, y: 1.5, w: 3.1, h: 0.52, fill: { color: winner === 'left' ? YELLOW : 'F5F5F5' } });
+  slide.addShape(pres.shapes.RECTANGLE, { x: 6.0, y: 1.5, w: 3.7, h: 0.52, fill: { color: winner === 'right' ? YELLOW : 'F5F5F5' } });
+  slide.addText(String(lLabel).toUpperCase(), { x: 2.8, y: 1.5, w: 3.1, h: 0.52, fontFace: 'Arial', fontSize: 12, bold: true, color: DARK_GRAY, align: 'center', valign: 'middle' });
+  slide.addText(String(rLabel).toUpperCase(), { x: 6.0, y: 1.5, w: 3.7, h: 0.52, fontFace: 'Arial', fontSize: 12, bold: true, color: DARK_GRAY, align: 'center', valign: 'middle' });
+
+  // Winner yellow edge bar
+  if (winner === 'right') slide.addShape(pres.shapes.RECTANGLE, { x: 5.97, y: 1.5, w: 0.06, h: totalH, fill: { color: YELLOW } });
+  else                    slide.addShape(pres.shapes.RECTANGLE, { x: 2.77, y: 1.5, w: 0.06, h: totalH, fill: { color: YELLOW } });
+
+  rows.forEach((row, ri) => {
+    const rowY = 2.08 + ri * 0.65;
+    const bg   = ri % 2 === 1 ? 'F5F5F5' : WHITE;
+    slide.addShape(pres.shapes.RECTANGLE, { x: 0.5,  y: rowY, w: 2.2, h: 0.62, fill: { color: bg } });
+    slide.addShape(pres.shapes.RECTANGLE, { x: 2.8,  y: rowY, w: 3.1, h: 0.62, fill: { color: winner === 'left'  ? 'FEF7D8' : bg } });
+    slide.addShape(pres.shapes.RECTANGLE, { x: 6.0,  y: rowY, w: 3.7, h: 0.62, fill: { color: winner === 'right' ? 'FEF7D8' : bg } });
+    slide.addText(String(row.label || '').toUpperCase(), { x: 0.5, y: rowY, w: 2.2, h: 0.62, fontFace: 'Arial', fontSize: 11, bold: true, color: DARK_GRAY, valign: 'middle' });
+    slide.addText(String(row.left  || ''), { x: 2.8, y: rowY, w: 3.1, h: 0.62, fontFace: 'Arial', fontSize: 11, color: DARK_GRAY, align: 'center', valign: 'middle' });
+    slide.addText(String(row.right || ''), { x: 6.0, y: rowY, w: 3.7, h: 0.62, fontFace: 'Arial', fontSize: 11, color: DARK_GRAY, align: 'center', valign: 'middle' });
+    slide.addShape(pres.shapes.RECTANGLE, { x: 0.5, y: rowY + 0.61, w: 9.2, h: 0.015, fill: { color: 'DDDDDD' } });
+  });
+  return slide;
+}
+
+function buildIconGridSlide(d) {
+  const slide = pres.addSlide();
+  slide.background = { color: WHITE };
+  addLogo(slide, 8.55, 0.15, 1.25, 0.5, 'full');
+  slide.addShape(pres.shapes.RECTANGLE, { x: 0, y: 0, w: 0.15, h: 7.5, fill: { color: YELLOW } });
+  slide.addText((d.title || '').toUpperCase(), {
+    x: 0.5, y: 0.4, w: 7.9, h: 0.9, fontFace: 'Arial', fontSize: 26, bold: true, color: DARK_GRAY, valign: 'middle'
+  });
+  slide.addShape(pres.shapes.RECTANGLE, { x: 0.5, y: 1.3, w: 2.5, h: 0.06, fill: { color: YELLOW } });
+
+  const items = d.items || [];
+  const cols  = d.columns || Math.min(3, Math.max(1, Math.ceil(Math.sqrt(items.length))));
+  const rows  = Math.ceil(items.length / cols);
+  const cellW = 8.8 / cols;
+  const cellH = 5.0 / Math.max(rows, 1);
+  const iconMap = { shield:'🛡', chart:'📊', clock:'⏱', star:'★', check:'✓', lock:'🔒', globe:'🌐', dollar:'$', people:'👥', trophy:'🏆', lightning:'⚡', target:'🎯', default:'●' };
+
+  items.forEach((item, idx) => {
+    const col = idx % cols, row = Math.floor(idx / cols);
+    const cx  = 0.6 + col * cellW, cy = 1.6 + row * cellH;
+    const iconChar = iconMap[item.icon] || iconMap.default;
+    const iconSz = 0.7, iconX = cx + cellW / 2 - iconSz / 2;
+    slide.addShape(pres.shapes.ROUNDED_RECTANGLE, { x: iconX, y: cy + 0.1, w: iconSz, h: iconSz, fill: { color: YELLOW }, line: { color: YELLOW }, rectRadius: 0.15 });
+    slide.addText(iconChar, { x: iconX, y: cy + 0.1, w: iconSz, h: iconSz, fontFace: 'Arial', fontSize: 22, color: DARK_GRAY, align: 'center', valign: 'middle' });
+    slide.addText((item.title || '').toUpperCase(), { x: cx, y: cy + iconSz + 0.25, w: cellW - 0.1, h: 0.45, fontFace: 'Arial', fontSize: 12, bold: true, color: DARK_GRAY, align: 'center' });
+    if (item.body) slide.addText(String(item.body), { x: cx, y: cy + iconSz + 0.75, w: cellW - 0.1, h: cellH - iconSz - 0.85, fontFace: 'Arial', fontSize: 11, color: GRAY_60, align: 'center', valign: 'top' });
+  });
+  return slide;
+}
+
+function buildExecutiveSummarySlide(d) {
+  const slide = pres.addSlide();
+  slide.background = { color: WHITE };
+  addLogo(slide, 8.55, 0.15, 1.25, 0.5, 'full');
+  // Thick yellow bar — executive emphasis
+  slide.addShape(pres.shapes.RECTANGLE, { x: 0, y: 0, w: 0.5, h: 7.5, fill: { color: YELLOW } });
+
+  slide.addText((d.headline || d.title || '').toUpperCase(), {
+    x: 0.75, y: 1.0, w: 9.0, h: 2.5, fontFace: 'Arial', fontSize: 28, bold: true, color: DARK_GRAY, valign: 'middle'
+  });
+  slide.addShape(pres.shapes.RECTANGLE, { x: 0.75, y: 3.6, w: 8.5, h: 0.06, fill: { color: YELLOW } });
+
+  const points = d.supporting_points || d.bullets || [];
+  if (points.length > 0) {
+    slide.addText(points.map(p => ({ text: String(p), options: { bullet: { type: 'bullet' }, paraSpaceBef: 8, paraSpaceAft: 8 } })), {
+      x: 0.75, y: 3.8, w: 9.0, h: 2.8, fontFace: 'Arial', fontSize: 16, color: DARK_GRAY, valign: 'top'
+    });
+  }
+  if (d.call_to_action) {
+    slide.addShape(pres.shapes.RECTANGLE, { x: 0.75, y: 6.7, w: 9.0, h: 0.62, fill: { color: 'FEF7D8' } });
+    slide.addText(String(d.call_to_action), { x: 0.95, y: 6.7, w: 8.8, h: 0.62, fontFace: 'Arial', fontSize: 13, bold: true, color: DARK_GRAY, valign: 'middle' });
+  }
+  return slide;
+}
+
+function buildImageContentSlide(d) {
+  const slide = pres.addSlide();
+  slide.background = { color: WHITE };
+  addLogo(slide, 8.55, 0.15, 1.25, 0.5, 'full');
+  slide.addShape(pres.shapes.RECTANGLE, { x: 0, y: 0, w: 0.15, h: 7.5, fill: { color: YELLOW } });
+  slide.addText((d.title || '').toUpperCase(), {
+    x: 0.5, y: 0.4, w: 7.9, h: 0.9, fontFace: 'Arial', fontSize: 26, bold: true, color: DARK_GRAY, valign: 'middle'
+  });
+  slide.addShape(pres.shapes.RECTANGLE, { x: 0.5, y: 1.3, w: 2.5, h: 0.06, fill: { color: YELLOW } });
+
+  const imgSide = d.image_side === 'right' ? 'right' : 'left';
+  const imgX    = imgSide === 'left' ? 0.5 : 5.2;
+  const textX   = imgSide === 'left' ? 4.8 : 0.5;
+
+  if (d.data) {
+    try {
+      slide.addImage({ data: 'data:image/' + (d.format || 'png') + ';base64,' + d.data, x: imgX, y: 1.5, w: 4.2, h: 5.5 });
+    } catch (e) {
+      slide.addShape(pres.shapes.RECTANGLE, { x: imgX, y: 1.5, w: 4.2, h: 5.5, fill: { color: 'F5F5F5' }, line: { color: GRAY_20 } });
+    }
+  } else {
+    slide.addShape(pres.shapes.RECTANGLE, { x: imgX, y: 1.5, w: 4.2, h: 5.5, fill: { color: 'FEF7D8' }, line: { color: YELLOW } });
+    slide.addText(String(d.image_search || 'IMAGE'), { x: imgX, y: 1.5, w: 4.2, h: 5.5, fontFace: 'Arial', fontSize: 12, italic: true, color: GRAY_60, align: 'center', valign: 'middle' });
+  }
+
+  const bullets = d.bullets || [];
+  if (bullets.length > 0) {
+    slide.addText(bullets.map(b => ({ text: String(b), options: { bullet: { type: 'bullet' }, paraSpaceBef: 8, paraSpaceAft: 8 } })), {
+      x: textX, y: 1.5, w: 4.5, h: 5.5, fontFace: 'Arial', fontSize: 15, color: DARK_GRAY, valign: 'top'
+    });
+  } else if (d.text) {
+    slide.addText(String(d.text), { x: textX, y: 1.5, w: 4.5, h: 5.5, fontFace: 'Arial', fontSize: 15, color: DARK_GRAY, valign: 'top' });
+  }
+  return slide;
+}
+
 // ── Build all slides ──────────────────────────────────────────────────────────
 for (const s of (spec.slides || [])) {
   try {
     switch (s.type) {
-      case 'title':           buildTitleSlide(s);          break;
-      case 'content':         buildContentSlide(s);        break;
-      case 'two_column':      buildTwoColumnSlide(s);      break;
-      case 'three_column':    buildThreeColumnSlide(s);    break;
-      case 'metrics':         buildMetricsSlide(s);        break;
-      case 'process':         buildProcessSlide(s);        break;
-      case 'quote':           buildQuoteSlide(s);          break;
-      case 'section_divider': buildSectionDividerSlide(s); break;
-      case 'cta':             buildCtaSlide(s);            break;
-      case 'image':           buildImageSlide(s);          break;
-      default:                buildContentSlide(s);        break;
+      case 'title':             buildTitleSlide(s);           break;
+      case 'content':           buildContentSlide(s);         break;
+      case 'two_column':        buildTwoColumnSlide(s);       break;
+      case 'three_column':      buildThreeColumnSlide(s);     break;
+      case 'metrics':           buildMetricsSlide(s);         break;
+      case 'process':           buildProcessSlide(s);         break;
+      case 'quote':             buildQuoteSlide(s);           break;
+      case 'section_divider':   buildSectionDividerSlide(s);  break;
+      case 'cta':               buildCtaSlide(s);             break;
+      case 'image':             buildImageSlide(s);           break;
+      case 'table':             buildTableSlide(s);           break;
+      case 'chart':             buildChartSlide(s);           break;
+      case 'timeline':          buildTimelineSlide(s);        break;
+      case 'matrix_2x2':        buildMatrix2x2Slide(s);       break;
+      case 'scorecard':         buildScorecardSlide(s);       break;
+      case 'comparison':        buildComparisonSlide(s);      break;
+      case 'icon_grid':         buildIconGridSlide(s);        break;
+      case 'executive_summary': buildExecutiveSummarySlide(s);break;
+      case 'image_content':     buildImageContentSlide(s);    break;
+      default:                  buildContentSlide(s);         break;
     }
   } catch (err) {
     process.stderr.write('WARN: slide[' + s.type + '] error: ' + err.message + '\n');

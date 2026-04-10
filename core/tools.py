@@ -1466,6 +1466,40 @@ TOOL_DEFINITIONS = [
             "required": ["title", "slides"],
         },
     },
+    # ── PPTX Intelligence Tools ──────────────────────────────────────────────
+    {
+        "name": "analyze_pptx",
+        "description": (
+            "Read and profile any uploaded PowerPoint (.pptx) file. "
+            "Returns slide count, titles, all text, table data, image locations, "
+            "and a Potomac brand compliance score. "
+            "Use BEFORE revising or extending an existing deck."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "file_id": {"type": "string", "description": "UUID of the uploaded .pptx file."}
+            },
+            "required": ["file_id"]
+        },
+    },
+    {
+        "name": "revise_pptx",
+        "description": (
+            "Apply targeted revisions to an existing .pptx in milliseconds. "
+            "Operations: find_replace (global text swap), update_slide, append_slides, delete_slide, reorder_slides, update_table. "
+            "Use find_replace for quarterly updates — change Q1→Q2, update all numbers across entire deck at once."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "file_id":         {"type": "string", "description": "UUID of the existing .pptx to revise."},
+                "revisions":       {"type": "array",  "items": {"type": "object"}, "description": "Ordered revision operations."},
+                "output_filename": {"type": "string", "description": "Output filename e.g. 'Potomac_Q2_2026.pptx'."},
+            },
+            "required": ["file_id", "revisions"]
+        },
+    },
     # ── Server-side XLSX Intelligence Tools ──────────────────────────────────
     # analyze_xlsx: profile any uploaded .xlsx or .csv — columns, dtypes, stats, samples
     # transform_xlsx: pandas pipeline — filter, sort, clean, pivot, group, dedupe
@@ -4825,13 +4859,28 @@ def handle_tool_call(
                 result = {"status": "error", "error": str(_docx_err)}
         elif tool_name == "generate_pptx":
             # Server-side Potomac PPTX generation via Node.js + pptxgenjs.
-            # Logos from ClaudeSkills/potomac-pptx/brand-assets/logos/.
             try:
                 from core.tools_v2.document_tools import handle_generate_pptx
                 _pptx_json = handle_generate_pptx(tool_input, api_key=api_key)
                 result = json.loads(_pptx_json)
             except Exception as _pptx_err:
                 result = {"status": "error", "error": str(_pptx_err)}
+        elif tool_name == "analyze_pptx":
+            # Read and profile any uploaded .pptx — slide count, titles, text, brand compliance.
+            try:
+                from core.tools_v2.document_tools import handle_analyze_pptx
+                _apptx_json = handle_analyze_pptx(tool_input, api_key=api_key)
+                result = json.loads(_apptx_json)
+            except Exception as _apptx_err:
+                result = {"status": "error", "error": str(_apptx_err)}
+        elif tool_name == "revise_pptx":
+            # Apply targeted find_replace / slide updates / appends to existing .pptx in milliseconds.
+            try:
+                from core.tools_v2.document_tools import handle_revise_pptx
+                _rpptx_json = handle_revise_pptx(tool_input, api_key=api_key)
+                result = json.loads(_rpptx_json)
+            except Exception as _rpptx_err:
+                result = {"status": "error", "error": str(_rpptx_err)}
         elif tool_name == "analyze_xlsx":
             # Profile an uploaded .xlsx or .csv — columns, dtypes, nulls, samples.
             try:

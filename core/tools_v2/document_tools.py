@@ -280,22 +280,34 @@ GENERATE_PPTX_TOOL_DEF: Dict[str, Any] = {
     "description": (
         "Generate a professional Potomac-branded PowerPoint presentation (.pptx) "
         "entirely on the server — no Claude Skills container, no API cost, instant download. "
-        "Use for any Potomac slide deck request: client pitches, market outlooks, "
-        "quarterly reviews, fund overviews, educational decks, board presentations, "
-        "proposal decks, investment strategy summaries, or any presentation.\n\n"
-        "Slide types available:\n"
-        "  title           — large branded title slide (standard or executive dark style)\n"
-        "  content         — bullet list or text with title\n"
-        "  two_column      — side-by-side comparison layout\n"
-        "  three_column    — triple-column layout with optional headers\n"
-        "  metrics         — large KPI numbers (up to 6 metrics per slide)\n"
-        "  process         — horizontal step-by-step flow with numbered circles\n"
-        "  quote           — testimonial / pull-quote with attribution\n"
-        "  section_divider — branded section break with thick left accent bar\n"
-        "  cta             — closing / call-to-action slide with button and contact info\n"
-        "  image           — full-slide image from user upload (file_id) or base64\n\n"
-        "IMPORTANT: Build a complete deck — include a title slide, section dividers, "
-        "content slides, and a CTA closing slide.  More slides = better output."
+        "Use for any Potomac slide deck request: pitch books, consulting reports, board presentations, "
+        "investor day decks, marketing campaigns, M&A advisory, quarterly updates, or any presentation.\n\n"
+        "Slide types — original:\n"
+        "  title             — branded title slide (standard white or executive dark)\n"
+        "  content           — bullet list or text body with title\n"
+        "  two_column        — side-by-side layout with optional column headers\n"
+        "  three_column      — triple-column with optional yellow header boxes\n"
+        "  metrics           — large KPI numbers in Potomac yellow (up to 6 per slide)\n"
+        "  process           — numbered step flow with yellow circles and connector lines\n"
+        "  quote             — pull-quote with attribution on yellow-tint background\n"
+        "  section_divider   — bold branded section break\n"
+        "  cta               — closing slide with yellow button and contact info\n"
+        "  image             — embedded image from file_id upload or base64\n\n"
+        "Slide types — NEW (professional / consulting grade):\n"
+        "  table             — data table with yellow headers, zebra rows, optional totals row. Fields: headers:[str], rows:[[str]], number_cols:[int], totals_row:{label,values:[str]}, caption\n"
+        "  chart             — native chart. Fields: chart_type (bar/line/pie/donut/waterfall/clustered_bar/stacked_bar/area/scatter), categories:[str], values:[num], series:[{name,values}], caption\n"
+        "  timeline          — milestone timeline. Fields: milestones:[{date,label,status(complete|in_progress|upcoming)}], caption\n"
+        "  matrix_2x2        — BCG/strategic quadrant. Fields: x_label, y_label, quadrant_labels:[4 str], items:[{label,x(0-1),y(0-1),size}]\n"
+        "  scorecard         — RAG status dashboard. Fields: items:[{metric,status(green|yellow|red),value,comment}]\n"
+        "  comparison        — side-by-side vs. table. Fields: left_label, right_label, winner(left|right), rows:[{label,left,right}]\n"
+        "  icon_grid         — visual feature grid. Fields: items:[{icon,title,body}], columns(2|3). Icons: shield,chart,clock,star,check,lock,globe,dollar,people,trophy,lightning,target\n"
+        "  executive_summary — big headline + supporting points. Fields: headline, supporting_points:[str], call_to_action\n"
+        "  image_content     — image + bullets hybrid. Fields: image_side(left|right), file_id OR image_search(keyword), bullets:[str], text\n\n"
+        "Potomac brand auto-applied to every slide: Potomac logo top-right, yellow left accent bar, "
+        "branded footer, Calibri font, #FEC00F/#212121 palette only.\n\n"
+        "IMPORTANT: Build a complete deck — title slide, section dividers, content slides, CTA closing. "
+        "Use executive_summary for the 'so what' slide. Use table for comps/data. Use chart for trends. "
+        "More slides = better output. Always populate all fields for each slide type."
     ),
     "input_schema": {
         "type": "object",
@@ -846,6 +858,181 @@ def handle_generate_xlsx(
 
 
 # =============================================================================
+# ── PPTX INTELLIGENCE ─────────────────────────────────────────────────────────
+# =============================================================================
+
+ANALYZE_PPTX_TOOL_DEF: Dict[str, Any] = {
+    "name": "analyze_pptx",
+    "description": (
+        "Read and profile any uploaded PowerPoint (.pptx) file. "
+        "Returns slide count, titles, all text, table data, image locations, "
+        "and a Potomac brand compliance score.\n\n"
+        "Use this BEFORE revising or extending an existing deck. "
+        "The LLM will know the full structure without opening PowerPoint."
+    ),
+    "input_schema": {
+        "type": "object",
+        "properties": {
+            "file_id": {"type": "string", "description": "UUID of the uploaded .pptx file to analyze."}
+        },
+        "required": ["file_id"],
+    },
+}
+
+REVISE_PPTX_TOOL_DEF: Dict[str, Any] = {
+    "name": "revise_pptx",
+    "description": (
+        "Apply targeted revisions to an existing .pptx file in milliseconds. "
+        "This is the biggest time-saver: IB analysts spend 80% of their time updating numbers. "
+        "This tool does a full data refresh in < 500ms.\n\n"
+        "Operations:\n"
+        "  find_replace   → {find, replace} — replaces all occurrences across the entire deck\n"
+        "  update_slide   → {slide_index, slide:{type,...}} — replaces slide content\n"
+        "  append_slides  → {slides:[...]} — append new slides to end of deck\n"
+        "  delete_slide   → {slide_index} — remove a slide\n"
+        "  reorder_slides → {order:[0,2,1,...]} — change slide order\n"
+        "  update_table   → {slide_index, row, col, value} — update single table cell\n\n"
+        "Use find_replace for quarterly updates (change Q1→Q2, update all numbers). "
+        "All revisions are applied in order. Output is a new Potomac-compliant .pptx."
+    ),
+    "input_schema": {
+        "type": "object",
+        "properties": {
+            "file_id": {"type": "string", "description": "UUID of the existing .pptx to revise."},
+            "revisions": {
+                "type": "array",
+                "description": "Ordered list of revision operations.",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "type":         {"type": "string", "description": "Operation: find_replace|update_slide|append_slides|delete_slide|reorder_slides|update_table"},
+                        "find":         {"type": "string", "description": "Text to find (find_replace)."},
+                        "replace":      {"type": "string", "description": "Replacement text (find_replace)."},
+                        "slide_index":  {"type": "integer", "description": "0-based slide index."},
+                        "slide":        {"type": "object",  "description": "Slide spec for update_slide (same format as generate_pptx slides)."},
+                        "slides":       {"type": "array",   "description": "Slide specs for append_slides."},
+                        "order":        {"type": "array",   "items": {"type": "integer"}, "description": "New slide order for reorder_slides."},
+                        "row":          {"type": "integer", "description": "0-based row index for update_table."},
+                        "col":          {"type": "integer", "description": "0-based column index for update_table."},
+                        "value":        {"type": "string",  "description": "New cell value for update_table."},
+                    },
+                    "required": ["type"],
+                },
+            },
+            "output_filename": {"type": "string", "description": "Output filename e.g. 'Potomac_Q2_2026_Update.pptx'."},
+        },
+        "required": ["file_id", "revisions"],
+    },
+}
+
+
+def handle_analyze_pptx(
+    tool_input: Dict[str, Any],
+    api_key: str = None,
+    supabase_client=None,
+) -> str:
+    """Analyze an uploaded .pptx and return structured profile."""
+    start = time.time()
+    try:
+        from core.sandbox.pptx_analyzer import PptxAnalyzer
+        from core.file_store import get_file
+
+        file_id = tool_input.get("file_id", "").strip()
+        if not file_id:
+            return json.dumps({"status": "error", "error": "Missing required field: 'file_id'"})
+
+        file_entry = get_file(file_id)
+        if not file_entry:
+            return json.dumps({"status": "error", "error": f"File not found: {file_id}"})
+
+        analyzer = PptxAnalyzer()
+        result   = analyzer.analyze(file_entry.data, filename=file_entry.filename)
+
+        if not result.success:
+            return json.dumps({"status": "error", "error": result.error, "exec_time_ms": result.exec_time_ms})
+
+        logger.info("analyze_pptx ✓  file_id=%s  slides=%d  %.0f ms",
+                    file_id, result.profile.get("slide_count", 0), result.exec_time_ms)
+
+        return json.dumps({
+            "status":       "success",
+            "file_id":      file_id,
+            "filename":     file_entry.filename,
+            "exec_time_ms": result.exec_time_ms,
+            "profile":      result.profile,
+            "message":      f"✅ Presentation analyzed. {result.profile.get('slide_count',0)} slides found. Brand compliance: {result.profile.get('brand_compliance',{}).get('score',0)}%.",
+        })
+
+    except Exception as exc:
+        logger.error("handle_analyze_pptx error: %s", exc, exc_info=True)
+        return json.dumps({"status": "error", "error": str(exc)})
+
+
+def handle_revise_pptx(
+    tool_input: Dict[str, Any],
+    api_key: str = None,
+    supabase_client=None,
+) -> str:
+    """Apply targeted revisions to an existing .pptx file."""
+    start = time.time()
+    try:
+        from core.sandbox.pptx_reviser import PptxReviser
+        from core.file_store import get_file, store_file
+
+        file_id   = tool_input.get("file_id", "").strip()
+        revisions = tool_input.get("revisions", [])
+
+        if not file_id:
+            return json.dumps({"status": "error", "error": "Missing required field: 'file_id'"})
+        if not isinstance(revisions, list) or not revisions:
+            return json.dumps({"status": "error", "error": "'revisions' must be a non-empty array"})
+
+        file_entry = get_file(file_id)
+        if not file_entry:
+            return json.dumps({"status": "error", "error": f"File not found: {file_id}"})
+
+        reviser = PptxReviser()
+        result  = reviser.revise(
+            file_entry.data,
+            revisions,
+            output_filename=tool_input.get("output_filename"),
+        )
+
+        if not result.success:
+            return json.dumps({"status": "error", "error": result.error, "exec_time_ms": result.exec_time_ms})
+
+        entry = store_file(
+            data=result.data,
+            filename=result.filename,
+            file_type="pptx",
+            tool_name="revise_pptx",
+        )
+        elapsed_ms = round((time.time() - start) * 1000, 2)
+        logger.info("revise_pptx ✓  %s  ops=%d  replacements=%d  %.0f ms",
+                    entry.filename, result.operations_applied, result.replacements_made, elapsed_ms)
+
+        return json.dumps({
+            "status":              "success",
+            "file_id":             entry.file_id,
+            "filename":            entry.filename,
+            "size_kb":             entry.size_kb,
+            "download_url":        f"/files/{entry.file_id}/download",
+            "operations_applied":  result.operations_applied,
+            "replacements_made":   result.replacements_made,
+            "exec_time_ms":        elapsed_ms,
+            "message": (
+                f"✅ Presentation revised. {result.operations_applied} operations, "
+                f"{result.replacements_made} text replacements. "
+                f"Download: /files/{entry.file_id}/download"
+            ),
+        })
+
+    except Exception as exc:
+        logger.error("handle_revise_pptx error: %s", exc, exc_info=True)
+        return json.dumps({"status": "error", "error": str(exc)})
+
+
+# =============================================================================
 # Shared helpers
 # =============================================================================
 
@@ -875,10 +1062,12 @@ def _auto_register() -> None:
         reg = ToolRegistry()
         reg.register_tool(GENERATE_DOCX_TOOL_DEF, handler=handle_generate_docx)
         reg.register_tool(GENERATE_PPTX_TOOL_DEF, handler=handle_generate_pptx)
+        reg.register_tool(ANALYZE_PPTX_TOOL_DEF,  handler=handle_analyze_pptx)
+        reg.register_tool(REVISE_PPTX_TOOL_DEF,   handler=handle_revise_pptx)
         reg.register_tool(GENERATE_TRANSFORM_XLSX_TOOL_DEF, handler=handle_transform_xlsx)
-        reg.register_tool(GENERATE_ANALYZE_XLSX_TOOL_DEF, handler=handle_analyze_xlsx)
-        reg.register_tool(GENERATE_XLSX_TOOL_DEF, handler=handle_generate_xlsx)
-        logger.debug("generate_docx / generate_pptx / transform_xlsx / analyze_xlsx / generate_xlsx registered in ToolRegistry")
+        reg.register_tool(GENERATE_ANALYZE_XLSX_TOOL_DEF,   handler=handle_analyze_xlsx)
+        reg.register_tool(GENERATE_XLSX_TOOL_DEF,  handler=handle_generate_xlsx)
+        logger.debug("docx / pptx / analyze_pptx / revise_pptx / transform_xlsx / analyze_xlsx / generate_xlsx registered")
     except Exception as exc:
         logger.debug("ToolRegistry auto-register skipped: %s", exc)
 
