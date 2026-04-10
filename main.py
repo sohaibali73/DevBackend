@@ -422,6 +422,16 @@ except Exception as e:
     logger.error(f"✗ Failed to load training_courses router: {e}")
     logger.debug(traceback.format_exc())
 
+try:
+    from api.routes import pptx_intelligence
+    app.include_router(pptx_intelligence.router)
+    routers_loaded.append("pptx_intelligence")
+    logger.info("✓ Loaded pptx_intelligence router (CV-powered slide merging, analysis, reconstruction)")
+except Exception as e:
+    routers_failed.append(("pptx_intelligence", str(e)))
+    logger.error(f"✗ Failed to load pptx_intelligence router: {e}")
+    logger.debug(traceback.format_exc())
+
 # Start background task cleanup loop on app startup
 @app.on_event("startup")
 async def startup_task_manager():

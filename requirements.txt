@@ -37,6 +37,9 @@ PyMuPDF
 python-pptx>=0.6.21
 Pillow>=10.0.0
 
+# PPTX Intelligence Pipeline (computer vision + perceptual hashing)
+imagehash>=4.3.1          # perceptual hash for design element library matching
+
 # Bulletproof universal parser (magic bytes + 64+ formats + OCR + archives)
 filetype
 unstructured[all-docs]
