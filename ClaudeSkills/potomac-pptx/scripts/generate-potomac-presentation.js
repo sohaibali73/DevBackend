@@ -41,7 +41,7 @@ class PotomacPresentationGenerator {
     // Set slide size (16:9 aspect ratio)
     this.pres.defineLayout({
       name: 'POTOMAC_STANDARD',
-      width: 10,
+      width: 13.333,
       height: 7.5
     });
     

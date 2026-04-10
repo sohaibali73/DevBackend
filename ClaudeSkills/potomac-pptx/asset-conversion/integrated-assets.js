@@ -421,7 +421,7 @@ class PotomacAssetIntegratedBuilder {
     // Set slide size
     this.pres.defineLayout({
       name: 'POTOMAC_STANDARD',
-      width: 10,
+      width: 13.333,
       height: 7.5
     });
     

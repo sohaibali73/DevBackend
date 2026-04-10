@@ -37,7 +37,7 @@ const inputData = JSON.parse(fs.readFileSync(inputFile, 'utf8'));
 const pptx = new PptxGenJS();
 
 // Set Potomac theme
-pptx.defineLayout({ name: 'POTOMAC', width: 10, height: 5.625 });
+pptx.defineLayout({ name: 'POTOMAC', width: 13.333, height: 7.5 });
 pptx.layout = 'POTOMAC';
 
 // Potomac brand colors

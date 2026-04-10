@@ -102,7 +102,11 @@ const pres = new pptxgen();
 pres.author  = 'Potomac';
 pres.company = 'Potomac';
 pres.title   = spec.title || 'POTOMAC PRESENTATION';
-// Default layout is LAYOUT_WIDE (10x7.5 inches) — no defineLayout needed
+
+// Standard PowerPoint 16:9 widescreen: 13.333" × 7.5"
+pres.layout = 'LAYOUT_WIDE';   // 13.333" × 7.5" — NEVER change this
+const W = 13.333;   // slide width in inches
+const H = 7.5;      // slide height in inches
 
 // ── Helper: add logo ──────────────────────────────────────────────────────────
 function addLogo(slide, x, y, w, h, variant) {
@@ -130,17 +134,17 @@ function buildTitleSlide(d) {
 
   // Give the centered logo a taller bounding box so the icon isn't compressed.
   // sizing:'contain' (set inside addLogo) ensures the logo fills proportionally.
-  addLogo(slide, 4.1, 0.45, 1.8, 1.5, isExec ? 'yellow' : 'full');
+  addLogo(slide, 5.77, 0.45, 1.8, 1.5, isExec ? 'yellow' : 'full');
 
   slide.addText((d.title || '').toUpperCase(), {
-    x: 0.5, y: 2.4, w: 9, h: 1.5,
+    x: 0.5, y: 2.4, w: 12.33, h: 1.5,
     fontFace: 'Arial', fontSize: 44, bold: true,
     color: isExec ? WHITE : DARK_GRAY, align: 'center', valign: 'middle'
   });
 
   if (d.subtitle) {
     slide.addText(d.subtitle, {
-      x: 0.5, y: 4.1, w: 9, h: 0.9,
+      x: 0.5, y: 4.1, w: 12.33, h: 0.9,
       fontFace: 'Arial', fontSize: 20, italic: isExec,
       color: isExec ? YELLOW : GRAY_60, align: 'center', valign: 'middle'
     });
@@ -148,13 +152,13 @@ function buildTitleSlide(d) {
 
   // Accent bar
   slide.addShape(pres.shapes.RECTANGLE, {
-    x: 0.5, y: 5.5, w: 9, h: 0.08, fill: { color: YELLOW }
+    x: 0.5, y: 5.5, w: 12.33, h: 0.08, fill: { color: YELLOW }
   });
 
   const tagline = d.tagline || (isExec ? 'Built to Conquer Risk\u00AE' : null);
   if (tagline) {
     slide.addText(tagline, {
-      x: 0.5, y: 5.8, w: 9, h: 0.5,
+      x: 0.5, y: 5.8, w: 12.33, h: 0.5,
       fontFace: 'Arial', fontSize: 15, italic: true,
       color: YELLOW, align: 'center', valign: 'middle'
     });
@@ -1190,7 +1194,7 @@ pres.title   = __PRES_TITLE__;
 // LLM FREESTYLE CODE
 // Available: pres, YELLOW, DARK_GRAY, WHITE, GRAY_60, GRAY_20, YELLOW_20,
 //            FONT_H, FONT_B, LOGOS, addLogo(slide,x,y,w,h,variant)
-// Canvas: 10" wide × 7.5" tall (LAYOUT_WIDE). Coords in inches.
+// Canvas: 13.333" wide × 7.5" tall (LAYOUT_WIDE = standard PowerPoint 16:9).
 // ═══════════════════════════════════════════════════════════════════════════
 
 __LLM_CODE__
@@ -1205,6 +1209,119 @@ pres.writeFile({ fileName: __outFile__ })
   .then(() => { process.stdout.write('SUCCESS:' + __outFile__ + '\n'); })
   .catch(err => { process.stderr.write('ERROR:' + err.message + '\n'); process.exit(1); });
 """.strip()
+
+
+# =============================================================================
+# Coordinate patch for LAYOUT_WIDE (13.333" × 7.5")
+# =============================================================================
+# The _BUILDER_SCRIPT JS was originally written for a 10" wide canvas.
+# This function fixes ALL element positions to the correct 16:9 standard.
+# Applied at runtime in generate() so the JS never needs direct editing.
+
+def _patch_coords_for_wide(script: str) -> str:
+    """Translate 10"-based JS coordinates to LAYOUT_WIDE (13.333" × 7.5")."""
+    rp = script.replace  # shorthand
+
+    # ── Logo: top-right corner (8.55" → 11.73") ───────────────────────────────
+    script = rp('addLogo(slide, 8.55, 0.15, 1.25, 0.5', 'addLogo(slide, 11.73, 0.15, 1.25, 0.5')
+    script = rp('addLogo(slide, 8.7, 0.15, 1.1, 0.5',  'addLogo(slide, 11.93, 0.15, 1.1, 0.5')
+
+    # ── Title slide: centered logo, content widths ─────────────────────────────
+    # (centered logo fix already applied in buildTitleSlide directly)
+
+    # ── Title bar on most slides (w: 7.9 → 12.33) ────────────────────────────
+    script = rp('x: 0.5, y: 0.4, w: 7.9, h: 0.9, fontFace:', 'x: 0.5, y: 0.4, w: 12.33, h: 0.9, fontFace:')
+    script = rp('x: 0.5, y: 0.4, w: 7.9, h: 0.9, fontFace', 'x: 0.5, y: 0.4, w: 12.33, h: 0.9, fontFace')
+
+    # ── Content slide: bullets / text body (w: 9.1 → 12.33) ─────────────────
+    script = rp('x: 0.5, y: 1.55, w: 9.1,', 'x: 0.5, y: 1.55, w: 12.33,')
+
+    # ── Two-column: column widths (4.3 → 5.9, leaves 0.6 gap, 11.93 total) ──
+    script = rp('const colW    = 4.3;', 'const colW    = 5.9;')
+
+    # ── Three-column: column widths (2.85 → 4.0) ─────────────────────────────
+    script = rp('const colW    = 2.85;', 'const colW    = 4.0;')
+
+    # ── Metrics: row width (8.8 → 12.33) ─────────────────────────────────────
+    script = rp('const mW      = 8.8 / perRow;', 'const mW      = 12.33 / perRow;')
+    script = rp('x: 0.5, y: 6.5, w: 9,', 'x: 0.5, y: 6.5, w: 12.33,')
+
+    # ── Process: step width (9.0 → 12.33) ────────────────────────────────────
+    script = rp('const stepW = 9.0 / n;', 'const stepW = 12.33 / n;')
+
+    # ── Quote: text widths (7.4 → 11.5) ─────────────────────────────────────
+    script = rp('x: 1.4, y: 1.8, w: 7.4,', 'x: 1.4, y: 1.8, w: 11.5,')
+    script = rp('x: 1.4, y: 5.0, w: 7.4,', 'x: 1.4, y: 5.0, w: 11.5,')
+    script = rp('x: 1.4, y: 5.8, w: 7.4,', 'x: 1.4, y: 5.8, w: 11.5,')
+
+    # ── Section divider: text widths (8.0 → 12.13) ───────────────────────────
+    script = rp('x: 0.8, y: 2.4, w: 8.0,', 'x: 0.8, y: 2.4, w: 12.13,')
+    script = rp('x: 0.8, y: 4.2, w: 8.0,', 'x: 0.8, y: 4.2, w: 12.13,')
+
+    # ── CTA: centered logo, text, button ─────────────────────────────────────
+    script = rp('addLogo(slide, 4.1, 0.4, 1.8, 1.0,', 'addLogo(slide, 5.77, 0.4, 1.8, 1.0,')
+    script = rp('x: 0.5, y: 1.8, w: 9, h: 1.0,', 'x: 0.5, y: 1.8, w: 12.33, h: 1.0,')
+    script = rp('x: 0.5, y: 3.0, w: 9, h: 1.5,', 'x: 0.5, y: 3.0, w: 12.33, h: 1.5,')
+    script = rp('x: 3.5, y: 4.8, w: 3.0, h: 0.7,\n    fill: { color: YELLOW }', 'x: 5.17, y: 4.8, w: 3.0, h: 0.7,\n    fill: { color: YELLOW }')
+    script = rp('x: 3.5, y: 4.8, w: 3.0, h: 0.7,\n    fontFace:', 'x: 5.17, y: 4.8, w: 3.0, h: 0.7,\n    fontFace:')
+    script = rp('x: 0.5, y: 5.7, w: 9,', 'x: 0.5, y: 5.7, w: 12.33,')
+    script = rp('x: 0.5, y: 6.3, w: 9,', 'x: 0.5, y: 6.3, w: 12.33,')
+
+    # ── Image slide: centering math ───────────────────────────────────────────
+    script = rp('(10 - w) / 2', '(W - w) / 2')
+    script = rp('9.5 - w', '12.833 - w')
+    script = rp('x: 0.5, y: yOff + h + 0.15, w: 9,', 'x: 0.5, y: yOff + h + 0.15, w: 12.33,')
+
+    # ── Table slide ───────────────────────────────────────────────────────────
+    script = rp('const colW    = 9.0 / Math.max(numCols, 1);',
+                'const colW    = 12.33 / Math.max(numCols, 1);')
+    script = rp('{ x: 0.5, y: 1.5, w: 9.0, colW: Array(numCols).fill(colW),',
+                '{ x: 0.5, y: 1.5, w: 12.33, colW: Array(numCols).fill(colW),')
+    script = rp('{ x: 0.5, y: 6.8, w: 9,', '{ x: 0.5, y: 6.8, w: 12.33,')
+
+    # ── Chart slide ───────────────────────────────────────────────────────────
+    script = rp('const chartX = 0.5, chartY = 1.6, chartH = 4.8, chartW = 9.0;',
+                'const chartX = 0.5, chartY = 1.6, chartH = 4.8, chartW = 12.33;')
+    script = rp('x: 0.5, y: 1.5, w: 9.0, h: 5.5,', 'x: 0.5, y: 1.5, w: 12.33, h: 5.5,')
+    script = rp('{ x: 0.5, y: 7.1, w: 9,', '{ x: 0.5, y: 7.1, w: 12.33,')
+
+    # ── Timeline: line width (8.4 → 11.73) ────────────────────────────────────
+    script = rp('const timelineY = 3.8, lineX = 0.8, lineW = 8.4,',
+                'const timelineY = 3.8, lineX = 0.8, lineW = 11.73,')
+    script = rp('{ x: 0.5, y: 7.0, w: 9,', '{ x: 0.5, y: 7.0, w: 12.33,')
+
+    # ── Matrix 2×2: matrix width (8.0 → 11.33) ────────────────────────────────
+    script = rp('const mX = 1.0, mY = 1.6, mW = 8.0,',
+                'const mX = 1.0, mY = 1.6, mW = 11.33,')
+
+    # ── Scorecard: table column widths (total 9.0 → 12.0) ────────────────────
+    script = rp('{ x: 0.5, y: 1.5, w: 9.0, colW: [2.5, 1.8, 2.2, 2.5],',
+                '{ x: 0.5, y: 1.5, w: 12.0, colW: [3.3, 2.4, 3.0, 3.3],')
+
+    # ── Comparison: divider line width ────────────────────────────────────────
+    script = rp('{ x: 0.5, y: rowY + 0.61, w: 9.2,',
+                '{ x: 0.5, y: rowY + 0.61, w: 12.53,')
+
+    # ── Icon grid: cell width (8.8 → 12.33) ───────────────────────────────────
+    script = rp('const cellW = 8.8 / cols;', 'const cellW = 12.33 / cols;')
+
+    # ── Executive summary ─────────────────────────────────────────────────────
+    script = rp('x: 0.75, y: 1.0, w: 9.0, h: 2.5,', 'x: 0.75, y: 1.0, w: 12.08, h: 2.5,')
+    script = rp('x: 0.75, y: 3.6, w: 8.5,', 'x: 0.75, y: 3.6, w: 12.08,')
+    script = rp('x: 0.75, y: 3.8, w: 9.0,', 'x: 0.75, y: 3.8, w: 12.08,')
+    script = rp('x: 0.75, y: 6.7, w: 9.0,', 'x: 0.75, y: 6.7, w: 12.08,')
+    script = rp('x: 0.95, y: 6.7, w: 8.8,', 'x: 0.95, y: 6.7, w: 11.88,')
+
+    # ── Card grid: card area width, title/subtitle widths ─────────────────────
+    script = rp('const cardW  = (9.8 - gap * (cols + 1)) / cols;',
+                'const cardW  = (12.93 - gap * (cols + 1)) / cols;')
+    script = rp('x: 0.5, y: headY, w: 9,', 'x: 0.5, y: headY, w: 12.33,')
+    script = rp('x: 0.5, y: subY, w: 9,',  'x: 0.5, y: subY, w: 12.33,')
+
+    # ── Hub-spoke: title width ────────────────────────────────────────────────
+    script = rp('x: 0.5, y: 0.65, w: 9,', 'x: 0.5, y: 0.65, w: 12.33,')
+
+    return script
 
 
 # =============================================================================
@@ -1423,6 +1540,9 @@ class PptxSandbox:
             )
             # All remaining 'Arial' references → FONT_B (body/caption/label text)
             _script = _script.replace("fontFace: 'Arial'", "fontFace: FONT_B")
+
+            # ── Fix all coordinates for LAYOUT_WIDE (13.333" × 7.5") ──────────
+            _script = _patch_coords_for_wide(_script)
 
             (temp_dir / "presentation_builder.js").write_text(_script, encoding="utf-8")
             (temp_dir / "package.json").write_text(
