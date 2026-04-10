@@ -52,12 +52,15 @@ from core.vision.deck_planner import DeckPlanner
 from core.vision.diff_engine import DiffEngine
 from core.vision.element_matcher import ElementMatcher, get_element_matcher
 from core.vision.export_pipeline import ExportPipeline
+from core.vision.job_manager import JobManager
 from core.vision.reconstruction_engine import ReconstructionEngine
+from core.vision.render_cache import RenderCache, get_render_cache
 from core.vision.revision_engine import RevisionEngine
 from core.vision.session_manager import SessionManager
 from core.vision.slide_library import SlideLibrary
 from core.vision.slide_renderer import SlideRenderer
 from core.vision.streaming_pipeline import StreamingPipeline
+from core.vision.template_registry import TemplateRegistry, get_template_registry
 from core.vision.vision_engine import VisionEngine
 
 router = APIRouter(prefix="/pptx", tags=["PPTX Intelligence"])
@@ -3746,4 +3749,391 @@ async def summarize_document(
         "success":    True,
         "files":      results,
         "elapsed_ms": round((time.time() - start) * 1000),
+    }
+
+
+# =============================================================================
+# ██████╗ ██╗  ██╗ █████╗ ███████╗███████╗     ██████╗
+# ██╔══██╗██║  ██║██╔══██╗██╔════╝██╔════╝    ██╔════╝
+# ██████╔╝███████║███████║███████╗█████╗      ███████╗
+# ██╔═══╝ ██╔══██║██╔══██║╚════██║██╔══╝      ██╔═══██╗
+# ██║     ██║  ██║██║  ██║███████║███████╗    ╚██████╔╝
+# ╚═╝     ╚═╝  ╚═╝╚═╝  ╚═╝╚══════╝╚══════╝     ╚═════╝
+# PHASE 6 — Production: Job Lifecycle, Render Cache, Template Registry
+# =============================================================================
+
+
+# =============================================================================
+# GET /pptx/jobs  — List all jobs for the current user
+# =============================================================================
+
+@router.get("/jobs")
+async def list_jobs(
+    action:    Optional[str] = None,
+    status:    Optional[str] = None,
+    limit:     int = 20,
+    offset:    int = 0,
+    sort_by:   str = "created_at",
+    user_id:   str = Depends(get_current_user_id),
+):
+    """
+    List all PPTX intelligence jobs for the current user.
+
+    Returns job metadata: action, status, slide count, size, age.
+    Useful for building a "recent presentations" dashboard.
+
+    action : filter by action type (merge | analyze | reconstruct | ...)
+    status : filter by status (complete | running | error)
+    """
+    loop = asyncio.get_event_loop()
+    mgr  = JobManager()
+    jobs = await loop.run_in_executor(
+        None,
+        lambda: mgr.list_jobs(
+            user_id=user_id,
+            action_filter=action,
+            status_filter=status,
+            limit=limit,
+            offset=offset,
+            sort_by=sort_by,
+        ),
+    )
+    return {
+        "total":   len(jobs),
+        "offset":  offset,
+        "limit":   limit,
+        "jobs":    [j.to_dict() for j in jobs],
+    }
+
+
+# =============================================================================
+# DELETE /pptx/jobs/{job_id}  — Delete a specific job
+# =============================================================================
+
+@router.delete("/jobs/{job_id}")
+async def delete_job(
+    job_id:  str,
+    user_id: str = Depends(get_current_user_id),
+):
+    """Delete a specific job and all its cached files (slides, PPTX, exports)."""
+    loop = asyncio.get_event_loop()
+    mgr  = JobManager()
+    ok   = await loop.run_in_executor(None, mgr.delete_job, job_id, user_id)
+    if not ok:
+        raise HTTPException(status_code=404, detail=f"Job {job_id} not found or access denied.")
+    return {"deleted": True, "job_id": job_id}
+
+
+# =============================================================================
+# DELETE /pptx/jobs  — Delete ALL jobs for the current user
+# =============================================================================
+
+@router.delete("/jobs")
+async def delete_all_jobs(
+    user_id: str = Depends(get_current_user_id),
+):
+    """Delete ALL jobs for the current user. ⚠️ Irreversible."""
+    loop  = asyncio.get_event_loop()
+    mgr   = JobManager()
+    count = await loop.run_in_executor(None, mgr.delete_all_user_jobs, user_id)
+    return {"deleted_count": count, "message": f"Deleted {count} jobs."}
+
+
+# =============================================================================
+# GET /pptx/storage  — User storage statistics
+# =============================================================================
+
+@router.get("/storage")
+async def get_storage_stats(
+    user_id: str = Depends(get_current_user_id),
+):
+    """
+    Get storage statistics for the current user.
+
+    Returns:
+      - job_count: number of jobs on disk
+      - session_count: number of editing sessions
+      - total_mb: total disk usage
+      - usage_pct: % of quota used
+      - is_over_quota: whether user is over the 500MB quota
+    """
+    loop  = asyncio.get_event_loop()
+    mgr   = JobManager()
+    stats = await loop.run_in_executor(None, mgr.storage_stats, user_id)
+    return stats.to_dict()
+
+
+# =============================================================================
+# POST /pptx/cleanup  — Trigger expired job cleanup
+# =============================================================================
+
+@router.post("/cleanup")
+async def trigger_cleanup(
+    max_age_hours: int = Form(default=72),
+    dry_run:       bool = Form(default=False),
+    user_id:       str = Depends(get_current_user_id),
+):
+    """
+    Trigger cleanup of expired jobs older than max_age_hours.
+
+    dry_run=True: count jobs that WOULD be deleted without actually deleting.
+    dry_run=False: delete expired jobs immediately.
+
+    Note: This cleans ALL expired jobs system-wide, not just for the current user.
+    The system also runs this automatically every 24 hours at startup.
+
+    max_age_hours : TTL in hours (default 72 = 3 days)
+    """
+    loop    = asyncio.get_event_loop()
+    mgr     = JobManager()
+    deleted = await loop.run_in_executor(
+        None, mgr.cleanup_expired_jobs, max_age_hours, dry_run
+    )
+    return {
+        "dry_run":      dry_run,
+        "deleted_count": deleted,
+        "max_age_hours": max_age_hours,
+        "message": (
+            f"Would delete {deleted} expired jobs."
+            if dry_run else
+            f"Deleted {deleted} expired jobs older than {max_age_hours} hours."
+        ),
+    }
+
+
+# =============================================================================
+# GET /pptx/cache/stats  — Render cache statistics
+# =============================================================================
+
+@router.get("/cache/stats")
+async def get_cache_stats(
+    user_id: str = Depends(get_current_user_id),
+):
+    """
+    Return render cache statistics.
+
+    The render cache stores slide PNG images keyed by SHA256(file_bytes) + DPI.
+    Identical PPTX files reuse cached renders regardless of filename.
+
+    Returns: hit_count, miss_count, hit_rate_pct, cached_files, cache_mb
+    """
+    cache = get_render_cache()
+    return cache.stats.to_dict()
+
+
+# =============================================================================
+# POST /pptx/cache/prune  — Prune LRU render cache
+# =============================================================================
+
+@router.post("/cache/prune")
+async def prune_cache(
+    max_mb: int = Form(default=2048),   # max cache size in MB (default 2 GB)
+    user_id: str = Depends(get_current_user_id),
+):
+    """
+    Prune the render cache using LRU eviction.
+
+    Removes least-recently-used slide PNGs until cache size is under max_mb.
+    Safe to call at any time — does not affect in-progress renders.
+    """
+    loop    = asyncio.get_event_loop()
+    cache   = get_render_cache()
+    max_bytes = max_mb * 1024 * 1024
+    deleted = await loop.run_in_executor(None, cache.prune_lru, max_bytes)
+    return {
+        "deleted_files": deleted,
+        "max_mb":        max_mb,
+        "message":       f"Pruned {deleted} cache files to stay under {max_mb} MB.",
+    }
+
+
+# =============================================================================
+# GET /pptx/templates  — List all slide templates (catalog)
+# =============================================================================
+
+@router.get("/templates")
+async def list_templates(
+    category:   Optional[str] = None,
+    slide_type: Optional[str] = None,
+    q:          str = "",
+    user_id:    str = Depends(get_current_user_id),
+):
+    """
+    List all available slide templates, grouped by category.
+
+    Templates are pre-built, Potomac-branded slide specs that can be inserted
+    into any presentation. Built-in templates cover 15+ common slide types.
+
+    Users can also save their own custom templates via POST /pptx/templates.
+
+    category   : filter by category (intro|content|data|visual|strategy|closing|section)
+    slide_type : filter by pptxgenjs slide type
+    q          : keyword search in name/description/tags
+    """
+    reg     = get_template_registry()
+    catalog = reg.get_catalog(user_id=user_id)
+
+    if category or slide_type or q:
+        results = reg.search(query=q, category=category, slide_type=slide_type, user_id=user_id)
+        return {
+            "total":   len(results),
+            "results": [t.to_dict(include_spec=False) for t in results],
+        }
+
+    return catalog
+
+
+# =============================================================================
+# GET /pptx/templates/{template_id}  — Get a specific template with spec
+# =============================================================================
+
+@router.get("/templates/{template_id}")
+async def get_template(
+    template_id: str,
+    user_id:     str = Depends(get_current_user_id),
+):
+    """
+    Get a specific slide template including its full pptx_sandbox spec.
+
+    The spec can be passed directly to any endpoint that accepts slide specs,
+    or used to pre-populate a slide editor.
+    """
+    reg      = get_template_registry()
+    template = reg.get_template(template_id, user_id=user_id)
+    if not template:
+        raise HTTPException(status_code=404, detail=f"Template {template_id} not found.")
+    return template.to_dict(include_spec=True)
+
+
+# =============================================================================
+# POST /pptx/templates  — Save a custom user template
+# =============================================================================
+
+@router.post("/templates")
+async def save_template(
+    name:        str = Form(...),
+    category:    str = Form(default="content"),
+    slide_type:  str = Form(default="content"),
+    spec:        str = Form(...),        # JSON pptx_sandbox spec
+    description: str = Form(default=""),
+    tags:        str = Form(default=""),
+    user_id:     str = Depends(get_current_user_id),
+):
+    """
+    Save a custom slide template to your personal template library.
+
+    spec      : JSON pptx_sandbox slide spec (e.g., from /pptx/content output)
+    category  : intro|content|data|visual|strategy|closing|section
+    slide_type: pptxgenjs slide type
+    tags      : comma-separated tags
+
+    The saved template can be retrieved by template_id and reused across decks.
+    """
+    spec_dict = _safe_json(spec, {})
+    if not spec_dict:
+        raise HTTPException(status_code=400, detail="Invalid spec JSON.")
+
+    tag_list = [t.strip() for t in tags.split(",") if t.strip()]
+    reg      = get_template_registry()
+    entry    = reg.save_user_template(
+        user_id=user_id,
+        name=name,
+        category=category,
+        slide_type=slide_type,
+        spec=spec_dict,
+        description=description,
+        tags=tag_list,
+    )
+    return {
+        "saved":       True,
+        "template_id": entry.template_id,
+        "name":        entry.name,
+        "category":    entry.category,
+        "slide_type":  entry.slide_type,
+    }
+
+
+# =============================================================================
+# DELETE /pptx/templates/{template_id}  — Delete a custom template
+# =============================================================================
+
+@router.delete("/templates/{template_id}")
+async def delete_template(
+    template_id: str,
+    user_id:     str = Depends(get_current_user_id),
+):
+    """Delete a custom user template (built-in templates cannot be deleted)."""
+    reg = get_template_registry()
+    ok  = reg.delete_user_template(template_id, user_id)
+    if not ok:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Template {template_id} not found or is a built-in template.",
+        )
+    return {"deleted": True, "template_id": template_id}
+
+
+# =============================================================================
+# POST /pptx/templates/{template_id}/generate  — Generate slide from template
+# =============================================================================
+
+@router.post("/templates/{template_id}/generate")
+async def generate_from_template(
+    template_id:     str,
+    output_filename: str = Form(default="template_slide.pptx"),
+    overrides:       str = Form(default="{}"),   # JSON partial spec overrides
+    user_id:         str = Depends(get_current_user_id),
+):
+    """
+    Instantly generate a single-slide PPTX from a template.
+
+    overrides : optional JSON to override specific spec fields
+                e.g., {"title": "MY CUSTOM TITLE", "metrics": [...]}
+
+    Returns a download URL for the generated single-slide PPTX
+    and a preview URL.
+    """
+    start = time.time()
+    reg   = get_template_registry()
+
+    template = reg.get_template(template_id, user_id=user_id)
+    if not template:
+        raise HTTPException(status_code=404, detail=f"Template {template_id} not found.")
+
+    # Apply overrides
+    spec = {**template.spec}
+    overrides_dict = _safe_json(overrides, {})
+    if overrides_dict:
+        spec.update(overrides_dict)
+
+    # Generate PPTX
+    sandbox  = PptxSandbox()
+    loop     = asyncio.get_event_loop()
+    pptx_res = await loop.run_in_executor(
+        None, sandbox.generate,
+        {"title": template.name, "slides": [spec]}
+    )
+
+    if not pptx_res.success:
+        return {"success": False, "error": pptx_res.error}
+
+    gen_job_id = _new_job_id()
+    _save_output_pptx(gen_job_id, pptx_res.data, output_filename)
+
+    manifest = await _renderer.render(
+        file_bytes=pptx_res.data, file_type="pptx", filename=output_filename
+    )
+    for slide in manifest.slides:
+        _save_slide_preview(gen_job_id, slide.index, slide.image_bytes)
+
+    return {
+        "success":       True,
+        "template_id":   template_id,
+        "template_name": template.name,
+        "job_id":        gen_job_id,
+        "output_filename": output_filename,
+        "download_url":  f"/pptx/download/{gen_job_id}",
+        "preview_url":   f"/pptx/preview/{gen_job_id}/1",
+        "spec_used":     spec,
+        "elapsed_ms":    round((time.time() - start) * 1000),
     }
