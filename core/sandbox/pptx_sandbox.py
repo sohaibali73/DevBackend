@@ -70,15 +70,14 @@ const GRAY_60   = '999999';
 const GRAY_20   = 'DDDDDD';
 const YELLOW_20 = 'FEF7D8';
 
-// ── Brand fonts ───────────────────────────────────────────────────────────────
-// FONT_H: Potomac headline font. 'Trebuchet MS' is pre-installed on all
-//         Windows/Mac systems and has a clean geometric look for slide titles.
-//         Switch to 'Rajdhani' if the Potomac brand font is installed on client
-//         machines (it will render correctly when opened in PowerPoint).
-// FONT_B: Body/body text. 'Calibri' is the Microsoft Office default —
-//         always available, clean, modern, professional.
-const FONT_H = 'Trebuchet MS';   // slide titles, section headers, KPI values
-const FONT_B = 'Calibri';        // bullets, body text, captions, labels, tables
+// ── Brand fonts (Potomac Brand Guidelines) ───────────────────────────────────
+// Rajdhani  — Potomac headline font, ALWAYS ALL CAPS. Google Font, embedded in
+//             PPTX by name. PowerPoint renders it correctly when the font is
+//             installed on the client machine (Potomac distributes it to staff).
+// Quicksand — Potomac body font. Google Font. Renders in Quicksand on machines
+//             that have it; PowerPoint substitutes otherwise.
+const FONT_H = 'Rajdhani';    // ALL slide titles, section headers, KPI values
+const FONT_B = 'Quicksand';   // bullets, body text, captions, labels, tables
 
 // ── Spec ──────────────────────────────────────────────────────────────────────
 const spec = JSON.parse(fs.readFileSync('spec.json', 'utf8'));

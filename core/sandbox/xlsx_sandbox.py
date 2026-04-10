@@ -7,7 +7,7 @@ Generates Potomac-branded Excel workbooks (.xlsx) entirely in Python using
 The sandbox implements the full Potomac brand palette and spreadsheet standards
 from ``ClaudeSkills/potomac-xlsx/SKILL.md``:
   - Yellow (#FEC00F) column headers, title block, and accent fills
-  - Dark-gray (#212121) body text, Calibri font
+  - Dark-gray (#212121) body text, Rajdhani (headings) / Quicksand (body) fonts
   - Zebra-striped data rows, thin borders, yellow footers
   - Optional DISCLOSURES sheet
 
@@ -397,13 +397,15 @@ class XlsxSandbox:
 
     @staticmethod
     def _header_font(size: int = 11) -> "Font":
+        """Rajdhani Bold — Potomac headline font for column headers and titles."""
         from openpyxl.styles import Font
-        return Font(name="Calibri", bold=True, color=_DARK_GRAY, size=size)
+        return Font(name="Rajdhani", bold=True, color=_DARK_GRAY, size=size)
 
     @staticmethod
     def _body_font(size: int = 10) -> "Font":
+        """Quicksand — Potomac body font for data rows and body text."""
         from openpyxl.styles import Font
-        return Font(name="Calibri", color=_DARK_GRAY, size=size)
+        return Font(name="Quicksand", color=_DARK_GRAY, size=size)
 
     def _write_title_block(
         self,
@@ -419,18 +421,18 @@ class XlsxSandbox:
         ws.row_dimensions[2].height = 18
         ws.row_dimensions[3].height = 6   # spacer
 
-        # Row 1: main title
+        # Row 1: main title — Rajdhani Bold (Potomac headline font, ALL CAPS)
         cell       = ws.cell(row=1, column=1)
         cell.value = title.upper()
-        cell.font  = Font(name="Calibri", bold=True, size=16, color=_DARK_GRAY)
+        cell.font  = Font(name="Rajdhani", bold=True, size=16, color=_DARK_GRAY)
         cell.fill  = self._yellow_fill()
         cell.alignment = Alignment(horizontal="left", vertical="center", indent=1)
 
-        # Row 2: subtitle (if any)
+        # Row 2: subtitle (if any) — Quicksand (Potomac body font)
         if subtitle:
             cell2       = ws.cell(row=2, column=1)
             cell2.value = subtitle
-            cell2.font  = Font(name="Calibri", size=10, color=_DARK_GRAY)
+            cell2.font  = Font(name="Quicksand", size=10, color=_DARK_GRAY)
             cell2.fill  = self._light_yellow_fill()
             cell2.alignment = Alignment(horizontal="left", vertical="center", indent=1)
 
@@ -464,7 +466,7 @@ class XlsxSandbox:
         )
         cell       = ws.cell(row=footer_row, column=1)
         cell.value = text
-        cell.font  = Font(name="Calibri", size=8, italic=True, color=_DARK_GRAY)
+        cell.font  = Font(name="Quicksand", size=8, italic=True, color=_DARK_GRAY)
         cell.fill  = self._light_yellow_fill()
         cell.alignment = Alignment(horizontal="left", vertical="center", indent=1)
         ws.row_dimensions[footer_row].height = 14
@@ -481,11 +483,11 @@ class XlsxSandbox:
 
         title_cell       = ws.cell(row=1, column=1)
         title_cell.value = "DISCLOSURES"
-        title_cell.font  = Font(name="Calibri", bold=True, size=14, color=_DARK_GRAY)
+        title_cell.font  = Font(name="Rajdhani", bold=True, size=14, color=_DARK_GRAY)
         title_cell.fill  = PatternFill("solid", fgColor=_YELLOW)
         title_cell.alignment = Alignment(horizontal="left", vertical="center", indent=1)
 
         body_cell       = ws.cell(row=2, column=1)
         body_cell.value = text
-        body_cell.font  = Font(name="Calibri", size=9, color=_DARK_GRAY)
+        body_cell.font  = Font(name="Quicksand", size=9, color=_DARK_GRAY)
         body_cell.alignment = Alignment(wrap_text=True, vertical="top")
