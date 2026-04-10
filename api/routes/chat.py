@@ -384,56 +384,94 @@ class ChatAgentRequest(BaseModel):
 
 async def _fetch_file_context(db, conversation_id: str) -> str:
     """
-    Fetch file metadata attached to this conversation via the junction table.
+    Fetch file context for this conversation:
+    1. User-uploaded files (via conversation_files junction table)
+    2. Previously generated files (via tool_results table) — enables session
+       memory so the LLM can revise/edit documents without regenerating them.
 
-    CRITICAL: The file_id (UUID) MUST be included in the context so the LLM
-    can pass the correct UUID to tools like analyze_xlsx, transform_xlsx,
-    analyze_pptx, revise_pptx, etc. Without the UUID, the LLM will fall back
-    to using the filename, which causes 'File not found' errors.
+    CRITICAL: The file_id UUID MUST be included so the LLM passes the correct
+    UUID to tools (analyze_xlsx, transform_xlsx, revise_pptx, etc.).
+    Without the UUID the LLM uses the filename, causing 'File not found' errors.
     """
+    snippets = []
+    _TOOL_FILE_NAMES = {
+        "generate_pptx":  "PowerPoint",
+        "generate_docx":  "Word doc",
+        "generate_xlsx":  "Excel workbook",
+        "analyze_pptx":   "analyzed PPTX",
+        "revise_pptx":    "revised PPTX",
+        "transform_xlsx": "transformed XLSX",
+        "analyze_xlsx":   "analyzed XLSX",
+    }
+
+    # ── 1. User-uploaded files ─────────────────────────────────────────────
     try:
-        # conversation_files links conversations to file_uploads
         conv_files = db.table("conversation_files").select(
             "file_id, file_uploads(id, original_filename, extracted_text, content_type, file_size)"
         ).eq("conversation_id", conversation_id).execute()
 
-        if not conv_files.data:
-            return ""
-
-        snippets = []
-        for cf in conv_files.data:
+        for cf in (conv_files.data or []):
             fu = cf.get("file_uploads")
             if not fu:
                 continue
-            # Use the file_id from the junction table (most reliable)
-            fid = cf.get("file_id") or fu.get("id", "")
-            fname = fu.get("original_filename", "unknown")
+            fid          = cf.get("file_id") or fu.get("id", "")
+            fname        = fu.get("original_filename", "unknown")
             content_type = fu.get("content_type", "")
-            file_size_kb = round((fu.get("file_size") or 0) / 1024, 1)
-            snippet = (fu.get("extracted_text") or "")[:200]
-
-            # Build a rich context line with the UUID prominently included
-            line = f'📎 FILE: "{fname}" | file_id: {fid} | type: {content_type} | size: {file_size_kb} KB'
+            size_kb      = round((fu.get("file_size") or 0) / 1024, 1)
+            snippet      = (fu.get("extracted_text") or "")[:200]
+            line = f'📎 UPLOADED: "{fname}" | file_id: {fid} | type: {content_type} | size: {size_kb} KB'
             if snippet:
                 line += f'\n   Preview: {snippet}...'
             snippets.append(line)
-
-        if not snippets:
-            return ""
-
-        header = (
-            "The following files are attached to this conversation. "
-            "When using file-processing tools (analyze_xlsx, transform_xlsx, "
-            "analyze_pptx, revise_pptx, etc.), you MUST pass the exact file_id "
-            "UUID shown below — NOT the filename."
-        )
-        return (
-            f"\n\n<file_context>\n{header}\n\n"
-            f"{chr(10).join(snippets)}\n</file_context>"
-        )
     except Exception:
-        # Don't let file context failures break the chat endpoint
+        pass
+
+    # ── 2. Previously generated files (session memory) ────────────────────
+    # Query tool_results for any file-generating tools run in this conversation.
+    # This gives the LLM the file_id so it can make targeted edits (revise_pptx,
+    # transform_xlsx, etc.) without regenerating the entire document.
+    try:
+        gen_results = db.table("tool_results").select(
+            "tool_name, output, created_at"
+        ).eq("conversation_id", conversation_id).in_(
+            "tool_name", list(_TOOL_FILE_NAMES.keys())
+        ).order("created_at", desc=False).limit(20).execute()
+
+        for tr in (gen_results.data or []):
+            output   = tr.get("output") or {}
+            if isinstance(output, str):
+                import json as _json
+                try:
+                    output = _json.loads(output)
+                except Exception:
+                    continue
+            fid      = output.get("file_id") or output.get("presentation_id") or output.get("document_id")
+            fname    = output.get("filename", "")
+            tool     = tr.get("tool_name", "")
+            label    = _TOOL_FILE_NAMES.get(tool, tool)
+            if not fid or not fname:
+                continue
+            size_kb  = output.get("size_kb", 0)
+            snippets.append(
+                f'📄 GENERATED ({label}): "{fname}" | file_id: {fid} | size: {size_kb} KB'
+                f'\n   To edit: use revise_pptx / transform_xlsx / analyze_pptx with this file_id'
+            )
+    except Exception:
+        pass
+
+    if not snippets:
         return ""
+
+    header = (
+        "Files available in this conversation. "
+        "ALWAYS pass the exact file_id UUID to tools — NEVER use the filename. "
+        "To edit a previously generated file use revise_pptx (PPTX), "
+        "transform_xlsx (XLSX), or generate_docx with table_from_xlsx sections (DOCX)."
+    )
+    return (
+        f"\n\n<file_context>\n{header}\n\n"
+        f"{chr(10).join(snippets)}\n</file_context>"
+    )
 
 
 async def _fetch_kb_context(db, user_content: str) -> str:

@@ -870,6 +870,219 @@ function buildImageContentSlide(d) {
   return slide;
 }
 
+// ── Theme / color helper ──────────────────────────────────────────────────────
+// Call at the top of any builder: const t = getTheme(d);
+// Supports:  d.background = 'dark' | 'light'  (default: light)
+function getTheme(d) {
+  const dark = d.background === 'dark' || d.theme === 'dark';
+  return {
+    dark,
+    bg:       dark ? DARK_GRAY : WHITE,
+    titleClr: dark ? WHITE     : DARK_GRAY,
+    bodyClr:  dark ? 'CCCCCC'  : DARK_GRAY,
+    muted:    dark ? '888888'  : GRAY_60,
+    cardBg:   dark ? '323232'  : 'F0F0F0',
+    border:   dark ? '505050'  : GRAY_20,
+    logo:     dark ? 'yellow'  : 'full',   // yellow icon on dark, full on light
+  };
+}
+
+// ── Section label (top-left category tag on any slide) ────────────────────────
+function addSectionLabel(slide, label, t) {
+  if (!label) return;
+  slide.addText(String(label).toUpperCase(), {
+    x: 0.35, y: 0.2, w: 4.5, h: 0.35,
+    fontFace: FONT_H, fontSize: 11, bold: true,
+    color: t ? t.muted : GRAY_60
+  });
+}
+
+// ── NEW: Card Grid Slide ──────────────────────────────────────────────────────
+// Flexible N-column colored card layout — perfect for feature lists / strategies
+// Fields: title, subtitle, section_label, background('dark'|'light'),
+//         columns(1-6), card_height, cards:[{title,text,subtitle,color,bold}]
+// Card colors: 'yellow' | 'dark' | 'white' | 'gray' | any hex string
+function buildCardGridSlide(d) {
+  const t = getTheme(d);
+  const slide = pres.addSlide();
+  slide.background = { color: t.bg };
+
+  addSectionLabel(slide, d.section_label, t);
+  addLogo(slide, 8.7, 0.15, 1.1, 0.5, t.logo);
+
+  const headY = d.section_label ? 0.65 : 0.8;
+  if (d.title) {
+    slide.addText(d.title.toUpperCase(), {
+      x: 0.5, y: headY, w: 9, h: 1.5,
+      fontFace: FONT_H, fontSize: 32, bold: true,
+      color: t.titleClr, align: 'center', valign: 'middle'
+    });
+  }
+
+  const subY = headY + 1.6;
+  if (d.subtitle) {
+    slide.addText(d.subtitle, {
+      x: 0.5, y: subY, w: 9, h: 0.55,
+      fontFace: FONT_B, fontSize: 15, italic: true,
+      color: YELLOW, align: 'center', valign: 'middle'
+    });
+  }
+
+  const cards  = d.cards || [];
+  if (!cards.length) return slide;
+  const cols   = Math.min(6, d.columns || Math.min(4, cards.length));
+  const gap    = 0.16;
+  const cardY  = d.subtitle ? subY + 0.8 : subY + 0.2;
+  const cardH  = d.card_height || Math.max(1.8, 7.1 - cardY);
+  const cardW  = (9.8 - gap * (cols + 1)) / cols;
+
+  cards.forEach((card, idx) => {
+    const col = idx % cols;
+    const row = Math.floor(idx / cols);
+    const cx  = 0.1 + gap + col * (cardW + gap);
+    const cy  = cardY + row * (cardH + 0.15);
+
+    const raw       = (card.color || 'yellow').replace('#', '');
+    const cardFill  = raw === 'yellow'  ? YELLOW      :
+                      raw === 'dark'    ? DARK_GRAY   :
+                      raw === 'white'   ? WHITE       :
+                      raw === 'gray'    ? t.cardBg    : raw;
+    const onYellow  = cardFill === YELLOW;
+    const onDark    = cardFill === DARK_GRAY;
+    const cardTxt   = onYellow ? DARK_GRAY : onDark ? WHITE : t.bodyClr;
+
+    slide.addShape(pres.shapes.RECTANGLE, {
+      x: cx, y: cy, w: cardW, h: cardH,
+      fill: { color: cardFill }, line: { color: cardFill }
+    });
+
+    const px = 0.18, textH = cardH - 0.6;
+    slide.addText(card.title || card.text || '', {
+      x: cx + px, y: cy + 0.3, w: cardW - px * 2, h: textH,
+      fontFace: FONT_B, fontSize: card.font_size || 14,
+      bold: !!card.bold,
+      color: cardTxt, align: 'center', valign: 'middle'
+    });
+
+    if (card.subtitle) {
+      slide.addText(card.subtitle, {
+        x: cx + px, y: cy + cardH - 0.5, w: cardW - px * 2, h: 0.38,
+        fontFace: FONT_B, fontSize: 10,
+        color: onYellow ? '555555' : YELLOW, align: 'center'
+      });
+    }
+  });
+  return slide;
+}
+
+// ── NEW: Hub-Spoke Slide ──────────────────────────────────────────────────────
+// Central hub column flanked by spoke boxes with connecting arrows.
+// Great for process / data-flow / input-output diagrams.
+// Fields: title, section_label, background, hub:{label,items,color},
+//         spokes:[{label,items,side('left'|'right'),row(0|1)}]
+function buildHubSpokeSlide(d) {
+  const t = getTheme(d);
+  const slide = pres.addSlide();
+  slide.background = { color: t.bg };
+
+  addSectionLabel(slide, d.section_label, t);
+  addLogo(slide, 8.7, 0.15, 1.1, 0.5, t.logo);
+
+  slide.addText((d.title || '').toUpperCase(), {
+    x: 0.5, y: 0.65, w: 9, h: 0.9,
+    fontFace: FONT_H, fontSize: 24, bold: true,
+    color: t.titleClr, align: 'center', valign: 'middle'
+  });
+
+  const hub       = d.hub || {};
+  const rawHubClr = (hub.color || 'yellow').replace('#', '');
+  const hubFill   = rawHubClr === 'yellow' ? YELLOW : rawHubClr;
+  const hubTxt    = hubFill === YELLOW ? DARK_GRAY : WHITE;
+  const hubX = 3.6, hubY = 1.7, hubW = 2.9, hubH = 5.5;
+
+  slide.addShape(pres.shapes.RECTANGLE, {
+    x: hubX, y: hubY, w: hubW, h: hubH,
+    fill: { color: hubFill }, line: { color: hubFill }
+  });
+
+  const hubLabel = hub.label || hub.title || '';
+  if (hubLabel) {
+    slide.addText(hubLabel.toUpperCase(), {
+      x: hubX + 0.15, y: hubY + 0.15, w: hubW - 0.3, h: 0.5,
+      fontFace: FONT_H, fontSize: 13, bold: true,
+      color: hubTxt, align: 'center'
+    });
+  }
+
+  const hubItems = hub.items || [];
+  if (hubItems.length > 0) {
+    const paras = hubItems.map(it => ({ text: String(it), options: { paraSpaceBef: 4, paraSpaceAft: 4 } }));
+    slide.addText(paras, {
+      x: hubX + 0.15, y: hubY + (hubLabel ? 0.75 : 0.3),
+      w: hubW - 0.3, h: hubH - (hubLabel ? 1.0 : 0.6),
+      fontFace: FONT_B, fontSize: 12.5,
+      color: hubTxt, align: 'center', valign: 'middle'
+    });
+  }
+
+  const spokes = d.spokes || [];
+  const boxW = 2.9;
+  const leftX = 0.3, rightX = hubX + hubW + 0.1;
+  const slots = { left: [], right: [] };
+  spokes.forEach(s => { (slots[(s.side || 'left').toLowerCase()] = slots[(s.side || 'left').toLowerCase()] || []).push(s); });
+
+  ['left', 'right'].forEach(side => {
+    const list = slots[side] || [];
+    if (!list.length) return;
+    const xs    = side === 'left' ? leftX : rightX;
+    const bH    = (hubH - 0.18 * (list.length - 1)) / list.length;
+
+    list.forEach((spoke, ri) => {
+      const by    = hubY + ri * (bH + 0.18);
+      const label = spoke.label || spoke.title || '';
+      const items = spoke.items || [];
+
+      slide.addShape(pres.shapes.RECTANGLE, {
+        x: xs, y: by, w: boxW, h: bH,
+        fill: { color: t.cardBg }, line: { color: t.border }
+      });
+
+      if (label) {
+        slide.addText(label.toUpperCase(), {
+          x: xs + 0.15, y: by + 0.1, w: boxW - 0.3, h: 0.42,
+          fontFace: FONT_H, fontSize: 12, bold: true,
+          color: t.dark ? YELLOW : DARK_GRAY, align: 'center'
+        });
+      }
+
+      if (items.length > 0) {
+        slide.addText(items.join('\n'), {
+          x: xs + 0.15, y: by + (label ? 0.57 : 0.2),
+          w: boxW - 0.3, h: bH - (label ? 0.75 : 0.4),
+          fontFace: FONT_B, fontSize: 12, color: t.muted,
+          align: 'center', valign: 'middle'
+        });
+      }
+
+      // Connector line + arrowhead
+      const arY    = by + bH / 2 - 0.02;
+      const connX  = side === 'left' ? (xs + boxW) : (hubX + hubW);
+      const connW  = Math.abs(side === 'left' ? (hubX - xs - boxW) : (xs - hubX - hubW)) - 0.22;
+      slide.addShape(pres.shapes.RECTANGLE, {
+        x: connX, y: arY, w: connW, h: 0.04,
+        fill: { color: t.border }
+      });
+      slide.addText(side === 'left' ? '▶' : '◀', {
+        x: side === 'left' ? (hubX - 0.28) : (xs - 0.06),
+        y: arY - 0.14, w: 0.28, h: 0.28,
+        fontFace: FONT_B, fontSize: 11, color: t.border, align: 'center'
+      });
+    });
+  });
+
+  return slide;
+}
+
 // ── Build all slides ──────────────────────────────────────────────────────────
 for (const s of (spec.slides || [])) {
   try {
@@ -893,6 +1106,8 @@ for (const s of (spec.slides || [])) {
       case 'icon_grid':         buildIconGridSlide(s);        break;
       case 'executive_summary': buildExecutiveSummarySlide(s);break;
       case 'image_content':     buildImageContentSlide(s);    break;
+      case 'card_grid':         buildCardGridSlide(s);        break;
+      case 'hub_spoke':         buildHubSpokeSlide(s);        break;
       default:                  buildContentSlide(s);         break;
     }
   } catch (err) {
