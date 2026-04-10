@@ -97,8 +97,12 @@ from typing import Any, Dict, List, Optional
 logger = logging.getLogger(__name__)
 
 # ── Paths ──────────────────────────────────────────────────────────────────────
-_SANDBOX_HOME    = Path(os.environ.get("SANDBOX_DATA_DIR", Path.home() / ".sandbox"))
-_AUTOMIZER_CACHE = _SANDBOX_HOME / "automizer_cache"
+_SANDBOX_HOME = Path(os.environ.get("SANDBOX_DATA_DIR", Path.home() / ".sandbox"))
+
+# Shared npm cache — pptxgenjs + pptx-automizer live together here.
+# This is the SAME directory used by pptx_sandbox.py so both packages
+# share one node_modules, halving disk usage and first-time install time.
+_UNIFIED_CACHE = _SANDBOX_HOME / "pptx_cache"
 
 # Built-in Potomac slide templates (committed to repo at this path)
 _THIS_DIR        = Path(__file__).parent                              # core/sandbox/
@@ -453,37 +457,47 @@ class AutomizerResult:
 
 def _ensure_automizer_modules() -> Optional[Path]:
     """
-    Ensure pptx-automizer npm package is installed in the persistent cache dir.
+    Ensure pptx-automizer is available in the unified npm cache dir.
 
-    First call installs once (~60–120 s). Subsequent calls return instantly
-    after confirming node_modules/pptx-automizer exists.
+    Shares ``~/.sandbox/pptx_cache/`` with ``pptx_sandbox.py`` so pptxgenjs
+    and pptx-automizer live in one node_modules, halving disk usage.
+
+    Strategy:
+    - If ``pptx-automizer`` already exists in the cache → instant return.
+    - If only ``pptxgenjs`` exists (pptx_sandbox already ran) → add
+      pptx-automizer via ``npm install`` (~30 s, additive).
+    - If neither exists → install both together (~90 s).
 
     Returns the ``node_modules`` Path, or ``None`` on failure.
     """
-    modules       = _AUTOMIZER_CACHE / "node_modules"
+    modules       = _UNIFIED_CACHE / "node_modules"
     automizer_pkg = modules / "pptx-automizer"
 
     if automizer_pkg.exists():
-        logger.debug("pptx-automizer cache hit: %s", modules)
+        logger.debug("pptx-automizer unified-cache hit: %s", modules)
         return modules
 
-    logger.info("First-time pptx-automizer install — this takes ~90 s…")
-    _AUTOMIZER_CACHE.mkdir(parents=True, exist_ok=True)
+    logger.info("pptx-automizer not in cache — installing into unified cache…")
+    _UNIFIED_CACHE.mkdir(parents=True, exist_ok=True)
 
-    pkg = {
-        "name":    "automizer-cache",
-        "version": "1.0.0",
-        "dependencies": {
-            "pptx-automizer": "latest",
-        },
-    }
-    (_AUTOMIZER_CACHE / "package.json").write_text(
-        json.dumps(pkg, indent=2), encoding="utf-8"
-    )
+    # Read (or create) the shared package.json and add pptx-automizer
+    pkg_path = _UNIFIED_CACHE / "package.json"
+    try:
+        pkg = json.loads(pkg_path.read_text(encoding="utf-8")) if pkg_path.exists() else {}
+    except Exception:
+        pkg = {}
+
+    pkg.setdefault("name",    "pptx-unified-cache")
+    pkg.setdefault("version", "1.0.0")
+    pkg.setdefault("dependencies", {})
+    pkg["dependencies"]["pptxgenjs"]     = "^3.12.0"
+    pkg["dependencies"]["pptx-automizer"] = "latest"
+
+    pkg_path.write_text(json.dumps(pkg, indent=2), encoding="utf-8")
 
     proc = subprocess.run(
         ["npm", "install", "--prefer-offline", "--no-audit", "--no-fund"],
-        cwd=str(_AUTOMIZER_CACHE),
+        cwd=str(_UNIFIED_CACHE),
         capture_output=True,
         timeout=360,
     )
@@ -495,7 +509,7 @@ def _ensure_automizer_modules() -> Optional[Path]:
         )
         return None
 
-    logger.info("pptx-automizer installed → %s", modules)
+    logger.info("pptx-automizer installed into unified cache → %s", modules)
     return modules
 
 
