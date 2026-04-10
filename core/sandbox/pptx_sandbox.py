@@ -1128,6 +1128,85 @@ pres.writeFile({ fileName: outName })
 """.strip()
 
 
+# ── Embedded Node.js freestyle wrapper ───────────────────────────────────────
+# Python substitutes __PRES_TITLE__, __OUTPUT_FILENAME__, __LLM_CODE__ before
+# writing the script to disk.  The LLM code runs inside a fully-provisioned
+# environment: pptxgenjs loaded, brand constants defined, logo helpers ready.
+_FREESTYLE_WRAPPER = r"""
+'use strict';
+const fs      = require('fs');
+const path    = require('path');
+const pptxgen = require('pptxgenjs');
+
+// ── Brand palette ─────────────────────────────────────────────────────────
+const YELLOW    = 'FEC00F';
+const DARK_GRAY = '212121';
+const WHITE     = 'FFFFFF';
+const GRAY_60   = '999999';
+const GRAY_20   = 'DDDDDD';
+const YELLOW_20 = 'FEF7D8';
+
+// ── Brand fonts (Potomac Brand Guidelines) ───────────────────────────────
+const FONT_H = 'Rajdhani';    // headline font — ALL CAPS per brand
+const FONT_B = 'Quicksand';   // body / caption font
+
+// ── Logos ─────────────────────────────────────────────────────────────────
+const assetsDir = path.join(__dirname, 'assets');
+function loadLogoData(name) {
+  const p = path.join(assetsDir, name);
+  if (fs.existsSync(p)) return 'data:image/png;base64,' + fs.readFileSync(p).toString('base64');
+  return null;
+}
+const LOGOS = {
+  full:   loadLogoData('potomac-full-logo.png'),
+  black:  loadLogoData('potomac-icon-black.png'),
+  yellow: loadLogoData('potomac-icon-yellow.png'),
+};
+
+// ── Logo helper ───────────────────────────────────────────────────────────
+// addLogo(slide, x, y, w, h, variant='full'|'black'|'yellow')
+// sizing:'contain' preserves aspect ratio — logo is never stretched.
+function addLogo(slide, x, y, w, h, variant) {
+  const data = variant === 'black'  ? LOGOS.black  :
+               variant === 'yellow' ? LOGOS.yellow :
+               LOGOS.full;
+  if (data) {
+    slide.addImage({ data, x, y, w, h, sizing: { type: 'contain', w, h } });
+  } else {
+    slide.addText('POTOMAC', {
+      x, y, w, h, fontFace: FONT_H, fontSize: 14, bold: true,
+      color: DARK_GRAY, align: 'center', valign: 'middle'
+    });
+  }
+}
+
+// ── Presentation ──────────────────────────────────────────────────────────
+const pres = new pptxgen();
+pres.author  = 'Potomac';
+pres.company = 'Potomac';
+pres.title   = __PRES_TITLE__;
+
+// ═══════════════════════════════════════════════════════════════════════════
+// LLM FREESTYLE CODE
+// Available: pres, YELLOW, DARK_GRAY, WHITE, GRAY_60, GRAY_20, YELLOW_20,
+//            FONT_H, FONT_B, LOGOS, addLogo(slide,x,y,w,h,variant)
+// Canvas: 10" wide × 7.5" tall (LAYOUT_WIDE). Coords in inches.
+// ═══════════════════════════════════════════════════════════════════════════
+
+__LLM_CODE__
+
+// ═══════════════════════════════════════════════════════════════════════════
+// END OF LLM CODE
+// ═══════════════════════════════════════════════════════════════════════════
+
+// ── Write output ──────────────────────────────────────────────────────────
+const __outFile__ = __OUTPUT_FILENAME__;
+pres.writeFile({ fileName: __outFile__ })
+  .then(() => { process.stdout.write('SUCCESS:' + __outFile__ + '\n'); })
+  .catch(err => { process.stderr.write('ERROR:' + err.message + '\n'); process.exit(1); });
+""".strip()
+
+
 # =============================================================================
 # Result dataclass
 # =============================================================================
@@ -1414,6 +1493,137 @@ class PptxSandbox:
             )
         except Exception as exc:
             logger.error("PptxSandbox error: %s", exc, exc_info=True)
+            return PptxResult(
+                False,
+                error=str(exc),
+                exec_time_ms=round((time.time() - start) * 1000, 2),
+            )
+        finally:
+            if temp_dir and temp_dir.exists():
+                shutil.rmtree(temp_dir, ignore_errors=True)
+
+    def generate_freestyle(
+        self,
+        code: str,
+        title: str = "Potomac Presentation",
+        filename: str = "output.pptx",
+        timeout: int = 120,
+    ) -> PptxResult:
+        """
+        Generate a .pptx from raw pptxgenjs v3 JavaScript code.
+
+        The caller supplies the slide-building logic (``pres.addSlide()`` calls
+        etc.).  Python wraps it with brand constants, logo loading, ``pres``
+        object creation, and ``pres.writeFile()``.  The LLM must NOT include
+        ``require()``, ``new pptxgen()``, or ``pres.writeFile()``.
+
+        Parameters
+        ----------
+        code : str
+            Raw pptxgenjs JavaScript (just the slide-building logic).
+        title : str
+            Presentation title embedded in ``pres.title`` metadata.
+        filename : str
+            Output ``.pptx`` filename.
+        timeout : int
+            Max seconds allowed for Node.js execution (default 120).
+        """
+        import json as _json
+
+        start    = time.time()
+        temp_dir: Optional[Path] = None
+
+        try:
+            # ── 1. npm cache ────────────────────────────────────────────
+            modules_path = _ensure_pptx_modules()
+            if modules_path is None:
+                return PptxResult(False, error="pptxgenjs npm package unavailable — npm install failed")
+
+            # ── 2. Isolated temp workspace ──────────────────────────────
+            temp_dir    = Path(tempfile.mkdtemp(prefix="pptx_free_"))
+            assets_temp = temp_dir / "assets"
+            assets_temp.mkdir()
+
+            # ── 3. Mount Potomac logos ──────────────────────────────────
+            for logo_file in _LOGO_FILES:
+                src = _ASSETS_DIR / logo_file
+                if src.exists():
+                    shutil.copy2(src, assets_temp / logo_file)
+
+            # ── 4. Build script: inject title, filename, LLM code ───────
+            safe_fn = filename if filename.lower().endswith(".pptx") else filename + ".pptx"
+            script  = _FREESTYLE_WRAPPER
+            script  = script.replace("__PRES_TITLE__",     _json.dumps(title))
+            script  = script.replace("__OUTPUT_FILENAME__", _json.dumps(safe_fn))
+            script  = script.replace("__LLM_CODE__",       code)
+
+            (temp_dir / "freestyle_builder.js").write_text(script, encoding="utf-8")
+            (temp_dir / "package.json").write_text(
+                _json.dumps({"name": "pptx-free", "version": "1.0.0"}),
+                encoding="utf-8",
+            )
+
+            # ── 5. Symlink node_modules from cache (O(1)) ───────────────
+            nm_link = temp_dir / "node_modules"
+            try:
+                os.symlink(str(modules_path), str(nm_link))
+            except OSError:
+                shutil.copytree(str(modules_path), str(nm_link))
+
+            # ── 6. Execute Node.js ──────────────────────────────────────
+            proc = subprocess.run(
+                ["node", "freestyle_builder.js"],
+                cwd=str(temp_dir),
+                capture_output=True,
+                timeout=timeout,
+            )
+
+            stdout = proc.stdout.decode(errors="replace").strip()
+            stderr = proc.stderr.decode(errors="replace").strip()
+
+            if proc.returncode != 0:
+                return PptxResult(
+                    False,
+                    error=f"Node.js freestyle builder failed:\n{stderr or stdout}",
+                    exec_time_ms=round((time.time() - start) * 1000, 2),
+                )
+
+            # ── 7. Retrieve generated file ──────────────────────────────
+            out_path = temp_dir / safe_fn
+            if not out_path.exists():
+                pptx_files = sorted(temp_dir.glob("*.pptx"))
+                if pptx_files:
+                    out_path = pptx_files[0]
+                    safe_fn  = out_path.name
+                else:
+                    return PptxResult(
+                        False,
+                        error=f"Output .pptx not found. stdout={stdout!r}  stderr={stderr!r}",
+                        exec_time_ms=round((time.time() - start) * 1000, 2),
+                    )
+
+            data    = out_path.read_bytes()
+            elapsed = round((time.time() - start) * 1000, 2)
+            logger.info(
+                "PptxSandbox.freestyle ✓  %s  (%.1f KB, %.0f ms)",
+                safe_fn, len(data) / 1024, elapsed,
+            )
+            return PptxResult(True, data=data, filename=safe_fn, exec_time_ms=elapsed)
+
+        except subprocess.TimeoutExpired:
+            return PptxResult(
+                False,
+                error=f"Node.js timed out after {timeout} s",
+                exec_time_ms=round((time.time() - start) * 1000, 2),
+            )
+        except FileNotFoundError:
+            return PptxResult(
+                False,
+                error="Node.js not found — ensure node is installed and on PATH",
+                exec_time_ms=round((time.time() - start) * 1000, 2),
+            )
+        except Exception as exc:
+            logger.error("PptxSandbox.freestyle error: %s", exc, exc_info=True)
             return PptxResult(
                 False,
                 error=str(exc),

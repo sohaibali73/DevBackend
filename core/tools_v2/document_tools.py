@@ -482,6 +482,137 @@ def handle_generate_pptx(
 
 
 # =============================================================================
+# ── PPTX FREESTYLE ────────────────────────────────────────────────────────────
+# =============================================================================
+
+GENERATE_PPTX_FREESTYLE_TOOL_DEF: Dict[str, Any] = {
+    "name": "generate_pptx_freestyle",
+    "description": (
+        "Generate ANY Potomac-branded PowerPoint presentation by writing raw pptxgenjs v3 "
+        "JavaScript code. Unlike generate_pptx (limited to 21 predefined slide templates), "
+        "this tool lets you build any slide design imaginable — fully custom layouts, shapes, "
+        "diagrams, infographics, mixed content, pixel-perfect positioning, and anything else "
+        "the pptxgenjs v3 API supports.\n\n"
+        "Use this when:\n"
+        "- The user wants a unique visual design not covered by the standard templates\n"
+        "- You need pixel-perfect control over every element's x/y position\n"
+        "- Building complex custom diagrams (flowcharts, org charts, custom infographics)\n"
+        "- Combining chart + table + text on one slide in a non-standard arrangement\n"
+        "- The user references a specific design or says 'make it look like...'\n"
+        "- Any request for a slide type not in generate_pptx's template list\n\n"
+        "What's pre-loaded in your code environment (do NOT redefine these):\n"
+        "  const pres         — pptxgenjs Presentation object (already created)\n"
+        "  const YELLOW       = 'FEC00F'  — Potomac yellow\n"
+        "  const DARK_GRAY    = '212121'  — Potomac dark gray\n"
+        "  const WHITE        = 'FFFFFF'\n"
+        "  const GRAY_60      = '999999'\n"
+        "  const GRAY_20      = 'DDDDDD'\n"
+        "  const YELLOW_20    = 'FEF7D8'  — light yellow tint\n"
+        "  const FONT_H       = 'Rajdhani'   — Potomac headline font (use ALL CAPS)\n"
+        "  const FONT_B       = 'Quicksand'  — Potomac body / caption font\n"
+        "  const LOGOS        = { full, black, yellow }  — base64 PNG data URIs\n"
+        "  function addLogo(slide, x, y, w, h, variant)  — logo convenience helper\n\n"
+        "Your `code` field is just the slide-building logic. Do NOT include:\n"
+        "  - require() statements (pptxgenjs is already loaded)\n"
+        "  - new pptxgen() (pres is already created for you)\n"
+        "  - pres.writeFile() (called automatically after your code)\n\n"
+        "pptxgenjs v3 quick reference:\n"
+        "  const slide = pres.addSlide();\n"
+        "  slide.background = { color: DARK_GRAY };\n"
+        "  slide.addText('HELLO', { x:1, y:1, w:8, h:1, fontFace:FONT_H, fontSize:40, bold:true, color:YELLOW });\n"
+        "  slide.addShape(pres.shapes.RECTANGLE, { x:0, y:0, w:0.2, h:7.5, fill:{color:YELLOW} });\n"
+        "  slide.addImage({ data:LOGOS.full, x:8.5, y:0.15, w:1.25, h:0.5, sizing:{type:'contain',w:1.25,h:0.5} });\n"
+        "  slide.addChart(pres.charts.BAR, [{name:'S1',labels:['A','B'],values:[10,20]}], { x:1,y:2,w:8,h:4 });\n"
+        "  slide.addTable([[{text:'H1',options:{bold:true,fill:{color:YELLOW}}}]], { x:0.5, y:2, w:9 });\n\n"
+        "Canvas is 10\" wide × 7.5\" tall (LAYOUT_WIDE). Coordinates are in inches. "
+        "Always keep x≥0 and y≥0. Place Potomac logo top-right on every slide: "
+        "addLogo(slide, 8.55, 0.15, 1.25, 0.5, 'full') unless intentionally omitted."
+    ),
+    "input_schema": {
+        "type": "object",
+        "properties": {
+            "title": {
+                "type": "string",
+                "description": "Presentation title (stored in file metadata).",
+            },
+            "filename": {
+                "type": "string",
+                "description": "Output filename e.g. 'Custom_Deck.pptx'. Use underscores.",
+            },
+            "code": {
+                "type": "string",
+                "description": (
+                    "Raw pptxgenjs v3 JavaScript — just the slide-building logic. "
+                    "Use pres.addSlide(), slide.addText(), slide.addShape(), "
+                    "slide.addChart(), slide.addImage(), slide.addTable(). "
+                    "Brand constants (YELLOW, DARK_GRAY, FONT_H, FONT_B, LOGOS, addLogo) "
+                    "are pre-defined. Do NOT include require(), new pptxgen(), or pres.writeFile()."
+                ),
+            },
+        },
+        "required": ["title", "code"],
+    },
+}
+
+
+def handle_generate_pptx_freestyle(
+    tool_input: Dict[str, Any],
+    api_key: str = None,
+    supabase_client=None,
+) -> str:
+    """Generate a Potomac .pptx from raw pptxgenjs JavaScript code."""
+    start = time.time()
+    try:
+        from core.sandbox.pptx_sandbox import PptxSandbox
+        from core.file_store import store_file
+
+        title = (tool_input.get("title") or "Potomac Presentation").strip() or "Potomac Presentation"
+        code  = (tool_input.get("code") or "").strip()
+        if not code:
+            return json.dumps({"status": "error", "error": "Missing required field: 'code'"})
+
+        filename = _safe_filename(
+            tool_input.get("filename") or f"{title}.pptx", ".pptx"
+        )
+
+        logger.info("generate_pptx_freestyle: title=%r  code_len=%d", title, len(code))
+
+        result = PptxSandbox().generate_freestyle(
+            code=code, title=title, filename=filename, timeout=120
+        )
+        if not result.success:
+            return json.dumps({"status": "error", "error": result.error or "PptxSandbox freestyle error"})
+
+        entry = store_file(
+            data=result.data, filename=result.filename,
+            file_type="pptx", tool_name="generate_pptx_freestyle",
+        )
+        elapsed_ms = round((time.time() - start) * 1000, 2)
+        logger.info(
+            "generate_pptx_freestyle ✓  %s  %.1f KB  → /files/%s/download",
+            entry.filename, entry.size_kb, entry.file_id,
+        )
+
+        return json.dumps({
+            "status":       "success",
+            "file_id":      entry.file_id,
+            "filename":     entry.filename,
+            "size_kb":      entry.size_kb,
+            "download_url": f"/files/{entry.file_id}/download",
+            "exec_time_ms": elapsed_ms,
+            "message": (
+                f"✅ Custom presentation '{entry.filename}' generated successfully "
+                f"({entry.size_kb:.1f} KB). "
+                f"Download: /files/{entry.file_id}/download"
+            ),
+        })
+
+    except Exception as exc:
+        logger.error("handle_generate_pptx_freestyle error: %s", exc, exc_info=True)
+        return json.dumps({"status": "error", "error": str(exc)})
+
+
+# =============================================================================
 # ── XLSX ──────────────────────────────────────────────────────────────────────
 # =============================================================================
 
@@ -1061,9 +1192,10 @@ def _auto_register() -> None:
         from core.tools_v2.registry import ToolRegistry
         reg = ToolRegistry()
         reg.register_tool(GENERATE_DOCX_TOOL_DEF, handler=handle_generate_docx)
-        reg.register_tool(GENERATE_PPTX_TOOL_DEF, handler=handle_generate_pptx)
-        reg.register_tool(ANALYZE_PPTX_TOOL_DEF,  handler=handle_analyze_pptx)
-        reg.register_tool(REVISE_PPTX_TOOL_DEF,   handler=handle_revise_pptx)
+        reg.register_tool(GENERATE_PPTX_TOOL_DEF,           handler=handle_generate_pptx)
+        reg.register_tool(GENERATE_PPTX_FREESTYLE_TOOL_DEF, handler=handle_generate_pptx_freestyle)
+        reg.register_tool(ANALYZE_PPTX_TOOL_DEF,            handler=handle_analyze_pptx)
+        reg.register_tool(REVISE_PPTX_TOOL_DEF,             handler=handle_revise_pptx)
         reg.register_tool(GENERATE_TRANSFORM_XLSX_TOOL_DEF, handler=handle_transform_xlsx)
         reg.register_tool(GENERATE_ANALYZE_XLSX_TOOL_DEF,   handler=handle_analyze_xlsx)
         reg.register_tool(GENERATE_XLSX_TOOL_DEF,  handler=handle_generate_xlsx)

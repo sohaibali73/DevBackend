@@ -1466,6 +1466,57 @@ TOOL_DEFINITIONS = [
             "required": ["title", "slides"],
         },
     },
+    # ── PPTX Freestyle — LLM writes raw pptxgenjs JS ─────────────────────────
+    # Zero predefined templates; LLM has full pptxgenjs v3 API access.
+    # Brand constants (YELLOW, DARK_GRAY, FONT_H, FONT_B, LOGOS, addLogo) are
+    # pre-loaded in the Node.js execution wrapper — LLM only writes slide logic.
+    {
+        "name": "generate_pptx_freestyle",
+        "description": (
+            "Generate ANY Potomac-branded PowerPoint presentation by writing raw pptxgenjs v3 JavaScript. "
+            "Unlike generate_pptx (21 fixed templates), this gives full creative freedom: "
+            "custom layouts, complex diagrams, org charts, infographics, pixel-perfect positioning, "
+            "mixed content per slide — anything the pptxgenjs API supports.\n\n"
+            "Pre-loaded in code environment (do NOT redefine):\n"
+            "  pres (Presentation), YELLOW='FEC00F', DARK_GRAY='212121', WHITE='FFFFFF',\n"
+            "  GRAY_60='999999', GRAY_20='DDDDDD', YELLOW_20='FEF7D8',\n"
+            "  FONT_H='Rajdhani' (headline), FONT_B='Quicksand' (body),\n"
+            "  LOGOS={full,black,yellow}, addLogo(slide,x,y,w,h,variant)\n\n"
+            "Your `code` field = slide-building JS only. Do NOT include require(), "
+            "new pptxgen(), or pres.writeFile() — those are handled automatically.\n\n"
+            "Quick ref (canvas is 10\"×7.5\", coords in inches):\n"
+            "  const slide = pres.addSlide();\n"
+            "  slide.background = { color: DARK_GRAY };\n"
+            "  slide.addText('TITLE', { x:1, y:1, w:8, h:1, fontFace:FONT_H, fontSize:40, bold:true, color:YELLOW });\n"
+            "  slide.addShape(pres.shapes.RECTANGLE, { x:0, y:0, w:0.2, h:7.5, fill:{color:YELLOW} });\n"
+            "  addLogo(slide, 8.55, 0.15, 1.25, 0.5, 'full');\n"
+            "  slide.addChart(pres.charts.BAR, [{name:'S1',labels:['A','B'],values:[10,20]}], {x:1,y:2,w:8,h:4});\n"
+            "  slide.addTable([[{text:'H',options:{bold:true,fill:{color:YELLOW}}}]], {x:0.5,y:2,w:9});"
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "title": {
+                    "type": "string",
+                    "description": "Presentation title (stored in file metadata).",
+                },
+                "filename": {
+                    "type": "string",
+                    "description": "Output filename e.g. 'Custom_Deck.pptx'.",
+                },
+                "code": {
+                    "type": "string",
+                    "description": (
+                        "Raw pptxgenjs v3 JavaScript — just the slide-building logic. "
+                        "Use pres.addSlide(), slide.addText/addShape/addChart/addImage/addTable. "
+                        "Brand constants and addLogo() are pre-defined. "
+                        "Do NOT include require(), new pptxgen(), or pres.writeFile()."
+                    ),
+                },
+            },
+            "required": ["title", "code"],
+        },
+    },
     # ── PPTX Intelligence Tools ──────────────────────────────────────────────
     {
         "name": "analyze_pptx",
@@ -4865,6 +4916,14 @@ def handle_tool_call(
                 result = json.loads(_pptx_json)
             except Exception as _pptx_err:
                 result = {"status": "error", "error": str(_pptx_err)}
+        elif tool_name == "generate_pptx_freestyle":
+            # Freestyle PPTX: LLM writes raw pptxgenjs JS; wrapper provides brand env.
+            try:
+                from core.tools_v2.document_tools import handle_generate_pptx_freestyle
+                _pptx_free_json = handle_generate_pptx_freestyle(tool_input, api_key=api_key)
+                result = json.loads(_pptx_free_json)
+            except Exception as _pptx_free_err:
+                result = {"status": "error", "error": str(_pptx_free_err)}
         elif tool_name == "analyze_pptx":
             # Read and profile any uploaded .pptx — slide count, titles, text, brand compliance.
             try:
