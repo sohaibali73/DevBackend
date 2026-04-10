@@ -53,6 +53,7 @@ from core.vision.diff_engine import DiffEngine
 from core.vision.element_matcher import ElementMatcher, get_element_matcher
 from core.vision.export_pipeline import ExportPipeline
 from core.vision.job_manager import JobManager
+from core.vision.pptx_orchestrator import PptxOrchestrator
 from core.vision.reconstruction_engine import ReconstructionEngine
 from core.vision.render_cache import RenderCache, get_render_cache
 from core.vision.revision_engine import RevisionEngine
@@ -4136,4 +4137,167 @@ async def generate_from_template(
         "preview_url":   f"/pptx/preview/{gen_job_id}/1",
         "spec_used":     spec,
         "elapsed_ms":    round((time.time() - start) * 1000),
+    }
+
+
+# =============================================================================
+#  █████╗ ██╗    ███████╗██╗   ██╗██████╗ ███████╗██████╗  ██████╗██╗  ██╗
+# ██╔══██╗██║    ██╔════╝██║   ██║██╔══██╗██╔════╝██╔══██╗██╔════╝██║  ██║
+# ███████║██║    ███████╗██║   ██║██████╔╝█████╗  ██████╔╝██║     ███████║
+# ██╔══██║██║    ╚════██║██║   ██║██╔═══╝ ██╔══╝  ██╔══██╗██║     ██╔══██║
+# ██║  ██║██║    ███████║╚██████╔╝██║     ███████╗██║  ██║╚██████╗██║  ██║
+# ╚═╝  ╚═╝╚═╝    ╚══════╝ ╚═════╝ ╚═╝     ╚══════╝╚═╝  ╚═╝ ╚═════╝╚═╝  ╚═╝
+# POST /pptx/ai  — THE SUPERCHARGED UNIFIED ENDPOINT
+# Accepts any prompt + files → AI classifies intent → executes right pipeline
+# =============================================================================
+
+@router.post("/ai")
+async def pptx_ai(
+    files:        List[UploadFile] = File(default=[]),
+    file_ids:     str = Form(default="[]"),
+    prompt:       str = Form(...),
+    extra_params: str = Form(default="{}"),   # JSON overrides
+    stream:       bool = Form(default=False),  # stream SSE events (future)
+    user_id:      str = Depends(get_current_user_id),
+):
+    """
+    ⚡ THE SUPERCHARGED UNIFIED PPTX ENDPOINT ⚡
+
+    Send any natural language prompt + optional files.
+    The AI automatically:
+      1. Classifies your intent (merge / generate / analyze / export / revise / ...)
+      2. Executes the right combination of sub-pipelines
+      3. Returns previews + download URL + explanation
+
+    This is the ONE endpoint you need. No need to know which of the 60+
+    specific endpoints to call — just describe what you want in plain English.
+
+    ── Examples ────────────────────────────────────────────────────────────────
+    "Take slides 15-19 from meet_potomac.pptx and add them to composite.pptx"
+    → merge action: extracts slides 15-19, assembles new deck, returns preview
+
+    "Turn this annual report PDF into a 10-slide executive summary deck"
+    → generate_from_doc: extracts text → AI plans slides → generates PPTX
+
+    "Create a 12-slide investor pitch about Potomac's Q2 2026 fund strategy"
+    → generate_from_brief: pure AI generation, no source document needed
+
+    "What's wrong with this deck's branding? Fix it."
+    → brand_audit + brand_fix: scores each slide, auto-corrects violations
+
+    "Export this to PDF"
+    → export_pdf: LibreOffice conversion, download link returned
+
+    "Delete slide 7 and change all references from Q1 to Q2"
+    → revise: NLP → PptxReviser operations, diff-aware preview update
+
+    "Write speaker notes for every slide"
+    → speaker_notes: AI generates 150-250 word scripts per slide
+
+    "What does this 50-page report actually say? Give me 5 bullets."
+    → summarize: extracts text → executive bullet distillation
+
+    "Compare these two decks and find duplicate slides"
+    → compare: perceptual hash similarity matrix
+
+    "Start an editing session so I can make multiple revisions with undo/redo"
+    → session_create: stateful session with diff-aware re-rendering
+
+    ── Response ────────────────────────────────────────────────────────────────
+    {
+      "success": true,
+      "job_id": "uuid",
+      "action": "merge",           ← what was actually done
+      "explanation": "Merged slides 15-19 from meet_potomac into composite deck",
+      "preview_urls": ["/pptx/preview/{job_id}/1", ...],
+      "download_url": "/pptx/download/{job_id}",
+      "slide_count": 37,
+      "plan": {...},               ← DeckPlan if generated
+      "analyses": [...],           ← Vision analyses if analyzed
+      "transcript": "...",         ← extracted text if text operation
+      "audit": {...},              ← brand audit report if checked
+      "speaker_notes": [...],      ← if speaker notes generated
+      "session_id": "uuid",        ← if editing session started
+      "elapsed_ms": 12340
+    }
+
+    ── Claude Tool Usage ────────────────────────────────────────────────────────
+    Claude should call this endpoint whenever the user wants to work with
+    presentations. Pass the user's message as `prompt` and any uploaded files
+    as `files`. The endpoint handles ALL classification and routing internally.
+
+    Tool name  : pptx_intelligence
+    Endpoint   : POST /pptx/ai
+    Auth       : Bearer token (same as other endpoints)
+    """
+    start = time.time()
+    fid_list = _safe_json(file_ids, [])
+    extra    = _safe_json(extra_params, {})
+
+    ingested = await _ingest_uploads(files, fid_list, user_id)
+
+    job_id = _new_job_id()
+    _write_job_meta(job_id, {
+        "status":     "running",
+        "action":     "ai_orchestrate",
+        "user_id":    user_id,
+        "prompt":     prompt[:200],
+        "files":      [f["filename"] for f in ingested],
+        "created_at": time.time(),
+    })
+
+    orchestrator = PptxOrchestrator()
+    result = await orchestrator.execute(
+        prompt=prompt,
+        ingested=ingested,
+        user_id=user_id,
+        job_id=job_id,
+        extra_params=extra,
+    )
+
+    _update_job_status(job_id, "complete" if result.success else "error",
+                       action=result.action,
+                       explanation=result.explanation)
+
+    response = result.to_dict()
+    response["elapsed_ms"] = round((time.time() - start) * 1000)
+    return response
+
+
+# =============================================================================
+# GET /pptx/ai/intents  — List all supported AI intent types
+# =============================================================================
+
+@router.get("/ai/intents")
+async def list_ai_intents(
+    user_id: str = Depends(get_current_user_id),
+):
+    """
+    Return all supported intent types for the /pptx/ai endpoint.
+
+    Useful for building autocomplete / suggestion UI that shows users
+    what they can ask for.
+    """
+    from core.vision.pptx_orchestrator import INTENT_TYPES
+    return {
+        "total":   len(INTENT_TYPES),
+        "intents": INTENT_TYPES,
+        "examples": {
+            "merge":               "Take slides 15-19 from deck A and add to deck B",
+            "analyze":             "What's on each slide of this presentation?",
+            "reconstruct":         "Convert these static image slides to editable elements",
+            "generate_from_doc":   "Turn this PDF into a 10-slide presentation",
+            "generate_from_brief": "Create an investor pitch about our Q2 strategy",
+            "export_pdf":          "Export this deck as a PDF",
+            "export_images":       "Export all slides as PNG images",
+            "summarize":           "What are the 5 key points of this report?",
+            "compare":             "Find duplicate slides between these two decks",
+            "brand_audit":         "Check this deck for Potomac brand compliance",
+            "brand_fix":           "Auto-fix all brand violations",
+            "extract_text":        "Get all the text from this presentation",
+            "speaker_notes":       "Write speaker notes for every slide",
+            "revise":              "Delete slide 7 and change Q1 to Q2",
+            "plan":                "Plan a 12-slide board presentation structure",
+            "session_create":      "Start an editing session with undo/redo",
+        },
     }

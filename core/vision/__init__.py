@@ -28,6 +28,7 @@ from .content_writer import ContentWriter, SpeakerNote, ContentSuggestion
 from .job_manager import JobManager, JobInfo, StorageStats
 from .render_cache import RenderCache, CacheStats, get_render_cache
 from .template_registry import TemplateRegistry, TemplateEntry, get_template_registry
+from .pptx_orchestrator import PptxOrchestrator, OrchestratorResult, INTENT_TYPES
 
 __all__ = [
     # Phase 1
@@ -53,4 +54,6 @@ __all__ = [
     "JobManager", "JobInfo", "StorageStats",
     "RenderCache", "CacheStats", "get_render_cache",
     "TemplateRegistry", "TemplateEntry", "get_template_registry",
+    # Supercharged AI Orchestrator
+    "PptxOrchestrator", "OrchestratorResult", "INTENT_TYPES",
 ]

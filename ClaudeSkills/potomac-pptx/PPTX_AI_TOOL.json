@@ -1,0 +1,126 @@
+{
+  "name": "pptx_intelligence",
+  "description": "Complete PPTX Intelligence Suite for Potomac. Use this tool whenever the user wants to work with presentations — merge decks, generate new presentations, analyze slides, export to PDF, revise content, check brand compliance, extract text, generate speaker notes, or any other presentation task. This single tool handles ALL presentation intelligence automatically — just pass the user's request and any uploaded files. The AI classifies the intent and executes the right pipeline.",
+  "input_schema": {
+    "type": "object",
+    "properties": {
+      "prompt": {
+        "type": "string",
+        "description": "The user's natural language request. Examples: 'Take slides 15-19 from deck A and add to composite deck', 'Create a 10-slide investor pitch about Q2 strategy', 'Export this to PDF', 'Delete slide 7 and change Q1 to Q2', 'Check this deck for brand compliance', 'Write speaker notes for every slide', 'What does this report say? Give me 5 bullets'"
+      },
+      "file_ids": {
+        "type": "array",
+        "items": {"type": "string"},
+        "description": "Optional array of previously-uploaded file IDs to include. Use when the user has already uploaded files to the system.",
+        "default": []
+      },
+      "extra_params": {
+        "type": "object",
+        "description": "Optional parameter overrides. Examples: {\"slide_count\": 12, \"audience\": \"investors\", \"tone\": \"executive\", \"slide_range\": [15, 19]}",
+        "properties": {
+          "slide_count": {"type": "integer", "description": "Number of slides to generate (default: 10)"},
+          "audience": {"type": "string", "description": "Target audience: general | investors | board | clients"},
+          "tone": {"type": "string", "description": "Presentation tone: professional | executive | formal | casual"},
+          "slide_range": {"type": "array", "items": {"type": "integer"}, "description": "Slide range [start, end] for merge operations (1-based inclusive)"},
+          "output_filename": {"type": "string", "description": "Desired output filename (e.g., 'Q2_Strategy.pptx')"},
+          "generate_notes": {"type": "boolean", "description": "Also generate speaker notes for every slide"},
+          "quick_mode": {"type": "boolean", "description": "Use fast heuristic outline instead of AI planning"}
+        }
+      }
+    },
+    "required": ["prompt"]
+  },
+  "endpoint": "POST /pptx/ai",
+  "auth": "Bearer token",
+  "response_schema": {
+    "success": "boolean",
+    "job_id": "string — use for follow-up calls",
+    "action": "string — what was actually executed (merge|analyze|generate_from_doc|...)",
+    "explanation": "string — human-readable description of what was done",
+    "preview_urls": "array of /pptx/preview/{job_id}/{slide_index} URLs",
+    "download_url": "string — /pptx/download/{job_id} to get the output PPTX/PDF",
+    "slide_count": "integer",
+    "plan": "object — DeckPlan if a deck was generated",
+    "analyses": "array — Vision analyses if slides were analyzed",
+    "transcript": "string — extracted text if text operation",
+    "audit": "object — brand compliance report",
+    "speaker_notes": "array — per-slide speaker notes",
+    "session_id": "string — editing session ID if session was created",
+    "elapsed_ms": "float"
+  },
+  "supported_intents": {
+    "merge": "Take slides from one deck and add to another — 'Take slides 15-19 from meet_potomac.pptx and incorporate into composite.pptx'",
+    "analyze": "Visual analysis of all slides — 'What's on each slide of this deck?'",
+    "reconstruct": "Convert static image slides to native editable elements — 'Make these image slides editable'",
+    "generate_from_doc": "Upload a document → AI builds a presentation — 'Turn this annual report into a 10-slide deck'",
+    "generate_from_brief": "Pure AI generation from a text description — 'Create a 12-slide board deck about Q2 strategy'",
+    "export_pdf": "Convert PPTX to PDF — 'Export this as a PDF'",
+    "export_images": "Export slides as PNG images — 'Export all slides as images'",
+    "summarize": "Distill document content to bullets — 'What are the 5 key points of this report?'",
+    "compare": "Find duplicate/similar slides between decks — 'Find duplicate slides between these two decks'",
+    "brand_audit": "Score brand compliance — 'Check this deck for Potomac brand compliance'",
+    "brand_fix": "Auto-correct brand violations — 'Fix all the branding issues in this deck'",
+    "extract_text": "OCR + text extraction — 'Get all the text from these slides'",
+    "speaker_notes": "Generate speaker notes — 'Write speaker notes for every slide'",
+    "revise": "NLP-driven revision — 'Delete slide 7 and change all Q1 references to Q2'",
+    "plan": "Get deck structure without generating — 'Plan a 12-slide investor deck structure'",
+    "session_create": "Start stateful editing session — 'Start editing this deck (I want undo/redo)'"
+  },
+  "usage_examples": [
+    {
+      "user_says": "Hey, can you take slides 15-19 from the Meet Potomac deck and add them to the Composite Details deck?",
+      "tool_call": {
+        "prompt": "Take slides 15-19 from the Meet Potomac deck and incorporate them into the Composite Details deck",
+        "file_ids": ["meet_potomac_file_id", "composite_details_file_id"]
+      },
+      "expected_action": "merge",
+      "expected_result": "Merged PPTX with download_url and preview_urls for all slides"
+    },
+    {
+      "user_says": "Create a 10-slide investor pitch about Potomac's Q2 2026 fund strategy, covering market environment, our 4 strategies, risk metrics, and next steps",
+      "tool_call": {
+        "prompt": "Create a 10-slide investor pitch about Potomac's Q2 2026 fund strategy, covering market environment, our 4 strategies, risk metrics, and next steps",
+        "extra_params": {"audience": "investors", "slide_count": 10}
+      },
+      "expected_action": "generate_from_brief",
+      "expected_result": "Generated PPTX with download_url, preview_urls, and deck plan"
+    },
+    {
+      "user_says": "Turn this annual report PDF into a presentation",
+      "tool_call": {
+        "prompt": "Turn this annual report into a 10-slide executive summary presentation",
+        "file_ids": ["annual_report_pdf_file_id"],
+        "extra_params": {"slide_count": 10, "audience": "board"}
+      },
+      "expected_action": "generate_from_doc",
+      "expected_result": "Generated PPTX extracted from PDF content"
+    },
+    {
+      "user_says": "What does this report say? Give me the key points",
+      "tool_call": {
+        "prompt": "Summarize this report and give me the 5 most important points",
+        "file_ids": ["report_file_id"]
+      },
+      "expected_action": "summarize",
+      "expected_result": "Executive bullets and one-liner summary"
+    },
+    {
+      "user_says": "Delete slide 5 and change all Q1 references to Q2",
+      "tool_call": {
+        "prompt": "Delete slide 5 and replace all references to Q1 2025 with Q2 2025",
+        "file_ids": ["presentation_file_id"]
+      },
+      "expected_action": "revise",
+      "expected_result": "Revised PPTX with diff report showing changed slides"
+    }
+  ],
+  "follow_up_endpoints": {
+    "preview": "GET /pptx/preview/{job_id}/{slide_index} — Get slide preview image",
+    "download": "GET /pptx/download/{job_id} — Download generated PPTX",
+    "status": "GET /pptx/status/{job_id} — Check job status",
+    "session_revise": "POST /pptx/session/{session_id}/revise — Apply further revisions",
+    "session_undo": "POST /pptx/session/{session_id}/undo — Undo last revision",
+    "templates": "GET /pptx/templates — Browse 16+ built-in slide templates",
+    "library_search": "GET /pptx/library/search?q=... — Search corporate slide library"
+  }
+}
