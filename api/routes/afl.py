@@ -664,7 +664,7 @@ async def upload_afl_file(
     db = get_supabase()
 
     # Validate file size (max 50MB)
-    max_size = 50 * 1024 * 1024  # 50MB
+    max_size = 10 * 1024 * 1024 * 1024  # 10 GB (no practical limit)
     content = await file.read()
 
     if len(content) > max_size:

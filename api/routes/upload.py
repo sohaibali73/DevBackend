@@ -38,7 +38,7 @@ logger = logging.getLogger(__name__)
 # ============================================================================
 
 STORAGE_ROOT = os.getenv("STORAGE_ROOT", "/data")
-MAX_FILE_SIZE = 10 * 1024 * 1024  # 10 MB
+MAX_FILE_SIZE = 10 * 1024 * 1024 * 1024  # 10 GB (no practical limit)
 
 ALLOWED_MIME_TYPES = {
     # Documents

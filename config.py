@@ -52,7 +52,7 @@ class Settings(BaseSettings):
     frontend_url: str = "https://potomacdeveloper.vercel.app"
 
     # Storage settings
-    max_upload_size_mb: int = 50
+    max_upload_size_mb: int = 10240  # 10 GB (no practical limit)
     allowed_upload_types: str = "pdf,txt,csv,json,pptx,xlsx,png,jpg,jpeg,gif,webp"
 
     # Feature flags

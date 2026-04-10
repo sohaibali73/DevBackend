@@ -42,11 +42,11 @@ ALLOWED_MIME_TYPES = {
     "brain-docs": None,  # Allow all types
 }
 
-# Max file sizes per bucket (in bytes)
+# Max file sizes per bucket (in bytes) — no practical limit
 MAX_FILE_SIZES = {
-    "user-uploads": 50 * 1024 * 1024,  # 50MB
-    "presentations": 100 * 1024 * 1024,  # 100MB
-    "brain-docs": 50 * 1024 * 1024,  # 50MB
+    "user-uploads": 10 * 1024 * 1024 * 1024,   # 10 GB
+    "presentations": 10 * 1024 * 1024 * 1024,  # 10 GB
+    "brain-docs": 10 * 1024 * 1024 * 1024,     # 10 GB
 }
 
 # Magic bytes for file type validation (first 4-8 bytes)

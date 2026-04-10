@@ -38,7 +38,7 @@ from typing import Dict, List, Optional, Tuple
 logger = logging.getLogger(__name__)
 
 # Max file size allowed into the sandbox (50 MB)
-_MAX_SANDBOX_FILE_BYTES = 50 * 1024 * 1024
+_MAX_SANDBOX_FILE_BYTES = 10 * 1024 * 1024 * 1024  # 10 GB (no practical limit)
 
 
 # ---------------------------------------------------------------------------

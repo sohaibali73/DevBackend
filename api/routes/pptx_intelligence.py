@@ -73,7 +73,7 @@ _JOB_STORE    = _STORAGE_ROOT / "pptx_jobs"
 _JOB_STORE.mkdir(parents=True, exist_ok=True)
 
 # ── File size limit for intelligence endpoints (100 MB) ───────────────────────
-_MAX_UPLOAD_BYTES = 100 * 1024 * 1024
+_MAX_UPLOAD_BYTES = 10 * 1024 * 1024 * 1024  # 10 GB (no practical limit)
 
 # ── Supported upload types ────────────────────────────────────────────────────
 _SUPPORTED_TYPES = {

@@ -1801,8 +1801,8 @@ async def upload_chat_attachment(
     db = get_supabase()
 
     content = await file.read()
-    if len(content) > 50 * 1024 * 1024:
-        raise HTTPException(status_code=413, detail="File too large — maximum 50 MB")
+    if len(content) > 10 * 1024 * 1024 * 1024:
+        raise HTTPException(status_code=413, detail="File too large — maximum 10 GB")
 
     file_id = str(_uuid.uuid4())
 

@@ -187,7 +187,7 @@ def _ensure_bucket():
             try:
                 storage.create_bucket(
                     _BUCKET_NAME,
-                    options={"public": False, "file_size_limit": 104857600},
+                    options={"public": False, "file_size_limit": 10737418240},
                 )
                 _bucket_verified = True
                 logger.info("✓ Created Supabase Storage bucket '%s'", _BUCKET_NAME)

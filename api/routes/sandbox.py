@@ -162,7 +162,7 @@ _SANDBOX_UPLOAD_ALLOWED = {
     "application/vnd.openxmlformats-officedocument.presentationml.presentation",
 }
 
-_SANDBOX_UPLOAD_MAX_BYTES = 50 * 1024 * 1024   # 50 MB
+_SANDBOX_UPLOAD_MAX_BYTES = 10 * 1024 * 1024 * 1024   # 10 GB (no practical limit)
 
 
 @router.post("/upload", response_model=SandboxUploadResponse)
