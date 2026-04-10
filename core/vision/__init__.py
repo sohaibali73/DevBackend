@@ -14,6 +14,12 @@ Phase 2 Modules
 ---------------
 streaming_pipeline  : SSE async generator — real-time per-slide preview streaming
 revision_engine     : NLP instruction → PptxReviser + AutomizerSandbox operations
+
+Phase 3 Modules
+---------------
+brand_enforcer      : Potomac brand compliance scoring + auto-correction
+slide_library       : Persistent corporate slide library (Supabase + semantic search)
+export_pipeline     : PPTX → PDF / images / HTML + batch ZIP processing
 """
 
 from .slide_renderer import SlideRenderer, SlideManifest, SlideImageInfo
@@ -22,6 +28,9 @@ from .element_matcher import ElementMatcher, ElementMatch, LibraryElement, get_e
 from .reconstruction_engine import ReconstructionEngine
 from .streaming_pipeline import StreamingPipeline
 from .revision_engine import RevisionEngine, RevisionResult
+from .brand_enforcer import BrandEnforcer, BrandReport, BrandAudit, BrandViolation
+from .slide_library import SlideLibrary, LibrarySlide, SearchResult
+from .export_pipeline import ExportPipeline, ExportResult
 
 __all__ = [
     # Phase 1
@@ -40,4 +49,14 @@ __all__ = [
     "StreamingPipeline",
     "RevisionEngine",
     "RevisionResult",
+    # Phase 3
+    "BrandEnforcer",
+    "BrandReport",
+    "BrandAudit",
+    "BrandViolation",
+    "SlideLibrary",
+    "LibrarySlide",
+    "SearchResult",
+    "ExportPipeline",
+    "ExportResult",
 ]

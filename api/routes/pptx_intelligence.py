@@ -43,9 +43,12 @@ from api.dependencies import get_current_user_id
 from core.sandbox.automizer_sandbox import AutomizerSandbox
 from core.sandbox.pptx_sandbox import PptxSandbox
 from core.sandbox.pptx_reviser import PptxReviser
+from core.vision.brand_enforcer import BrandEnforcer
 from core.vision.element_matcher import ElementMatcher, get_element_matcher
+from core.vision.export_pipeline import ExportPipeline
 from core.vision.reconstruction_engine import ReconstructionEngine
 from core.vision.revision_engine import RevisionEngine
+from core.vision.slide_library import SlideLibrary
 from core.vision.slide_renderer import SlideRenderer
 from core.vision.streaming_pipeline import StreamingPipeline
 from core.vision.vision_engine import VisionEngine
@@ -1793,3 +1796,598 @@ async def revision_preview(
         "operation_count": len(ops),
         "human_summary":   human_summary,
     }
+
+
+# =============================================================================
+# ██████╗ ██╗  ██╗ █████╗ ███████╗███████╗    ██████╗
+# ██╔══██╗██║  ██║██╔══██╗██╔════╝██╔════╝        ╚═╝
+# ██████╔╝███████║███████║███████╗█████╗          ██╔╝
+# ██╔═══╝ ██╔══██║██╔══██║╚════██║██╔══╝         ╚═╝
+# ██║     ██║  ██║██║  ██║███████║███████╗       ██╗
+# ╚═╝     ╚═╝  ╚═╝╚═╝  ╚═╝╚══════╝╚══════╝       ╚═╝
+# PHASE 3 ENDPOINTS — Brand Audit, Export, Batch Processing, Slide Library
+# =============================================================================
+
+
+# =============================================================================
+# POST /pptx/brand-audit
+# =============================================================================
+
+@router.post("/brand-audit")
+async def brand_audit(
+    files:          List[UploadFile] = File(default=[]),
+    file_ids:       str = Form(default="[]"),
+    job_id:         str = Form(default=""),
+    auto_correct:   bool = Form(default=False),   # apply safe auto-corrections
+    run_vision:     bool = Form(default=True),    # run Claude Vision first
+    user_id:        str = Depends(get_current_user_id),
+):
+    """
+    Score a presentation against Potomac brand guidelines.
+
+    For each slide, returns:
+      - score (0–100)
+      - grade (A/B/C/D/F)
+      - violations (with severity, deduction, and suggestion)
+      - is_compliant (score ≥ 80)
+
+    Overall deck: avg_score, overall_grade, compliance_rate.
+
+    auto_correct=True: apply safe corrections (uppercase titles, normalize
+                       backgrounds, add logo hint) and return corrected analysis.
+
+    Requires Vision analysis to be run first. If run_vision=False and
+    a job_id is provided, uses previously-analyzed slides from that job.
+    """
+    start = time.time()
+
+    # ── Resolve PPTX ─────────────────────────────────────────────────────────
+    pptx_bytes: Optional[bytes] = None
+    source_filename = "presentation.pptx"
+
+    fid_list = _safe_json(file_ids, [])
+    if files or fid_list:
+        ingested = await _ingest_uploads(files, fid_list, user_id)
+        pptx_fi = next((fi for fi in ingested if fi["file_type"] in ("pptx", "ppt")), None)
+        if pptx_fi:
+            pptx_bytes = pptx_fi["bytes"]
+            source_filename = pptx_fi["filename"]
+
+    if pptx_bytes is None and job_id.strip():
+        job_pptx = sorted(_job_dir(job_id).glob("*.pptx"))
+        if job_pptx:
+            pptx_bytes = job_pptx[0].read_bytes()
+            source_filename = job_pptx[0].name
+
+    if pptx_bytes is None:
+        raise HTTPException(status_code=400, detail="Provide a PPTX file, file_id, or job_id.")
+
+    # ── Run Vision analysis ───────────────────────────────────────────────────
+    analyses = []
+    if run_vision:
+        audit_job_id = _new_job_id()
+        manifest = await _renderer.render(file_bytes=pptx_bytes, file_type="pptx", filename=source_filename)
+        if manifest.success:
+            for slide in manifest.slides:
+                _save_slide_preview(audit_job_id, slide.index, slide.image_bytes)
+            analyses = await _vision.analyze_manifest(manifest, fast_mode=True)
+        else:
+            return {"success": False, "error": f"Render failed: {manifest.error}"}
+    else:
+        return {"success": False, "error": "run_vision=True required for brand audit (no cached analyses)"}
+
+    # ── Score all slides ──────────────────────────────────────────────────────
+    enforcer = BrandEnforcer()
+    loop = asyncio.get_event_loop()
+    audit = await loop.run_in_executor(
+        None, enforcer.score_manifest_sync, analyses, source_filename
+    )
+
+    # ── Optional auto-correction ──────────────────────────────────────────────
+    corrected_analyses = None
+    if auto_correct:
+        corrected_analyses = [enforcer.auto_correct(a.to_dict()) for a in analyses]
+
+    return {
+        "success":      True,
+        "job_id":       audit_job_id,
+        "source":       source_filename,
+        "audit":        audit.to_dict(),
+        "preview_urls": [f"/pptx/preview/{audit_job_id}/{a.slide_index}" for a in analyses],
+        "corrected_analyses": corrected_analyses,
+        "elapsed_ms":   round((time.time() - start) * 1000),
+    }
+
+
+# =============================================================================
+# POST /pptx/export
+# =============================================================================
+
+@router.post("/export")
+async def export_presentation(
+    files:           List[UploadFile] = File(default=[]),
+    file_ids:        str = Form(default="[]"),
+    job_id:          str = Form(default=""),
+    formats:         str = Form(default="pdf"),        # comma-separated: "pdf,images,html"
+    dpi:             int = Form(default=150),
+    slide_range:     str = Form(default=""),
+    image_format:    str = Form(default="png"),        # "png" | "jpg"
+    thumbnail_width: int = Form(default=0),            # 0 = full size
+    user_id:         str = Depends(get_current_user_id),
+):
+    """
+    Export a PPTX to one or more formats.
+
+    formats (comma-separated):
+      pdf        → PPTX → PDF (LibreOffice, preserves design perfectly)
+      images     → Per-slide PNG or JPG ZIP
+      html       → PPTX → HTML ZIP (LibreOffice, basic fidelity)
+      thumbnails → Small thumbnail PNG ZIP (fast, for gallery views)
+
+    dpi          : render resolution for images (72/150/200/300)
+    slide_range  : optional "15-19" to export only specific slides
+    image_format : "png" or "jpg" (for images/thumbnails formats)
+    thumbnail_width : max width in pixels for thumbnails (0 = default 240px)
+
+    Returns a JSON response with per-format download_url entries.
+    Files are stored in the job dir and available at /pptx/export/download/{job_id}/{format}.
+    """
+    start = time.time()
+
+    # ── Resolve PPTX ─────────────────────────────────────────────────────────
+    pptx_bytes: Optional[bytes] = None
+    source_filename = "presentation.pptx"
+
+    fid_list = _safe_json(file_ids, [])
+    if files or fid_list:
+        ingested = await _ingest_uploads(files, fid_list, user_id)
+        pptx_fi = next((fi for fi in ingested if fi["file_type"] in ("pptx", "ppt")), None)
+        if pptx_fi:
+            pptx_bytes = pptx_fi["bytes"]
+            source_filename = pptx_fi["filename"]
+
+    if pptx_bytes is None and job_id.strip():
+        job_pptx = sorted(_job_dir(job_id).glob("*.pptx"))
+        if job_pptx:
+            pptx_bytes = job_pptx[0].read_bytes()
+            source_filename = job_pptx[0].name
+
+    if pptx_bytes is None:
+        raise HTTPException(status_code=400, detail="Provide a PPTX file, file_id, or job_id.")
+
+    format_list = [f.strip() for f in formats.split(",") if f.strip()]
+    if not format_list:
+        raise HTTPException(status_code=400, detail="Specify at least one format.")
+
+    sr_tuple = _parse_slide_range(slide_range)
+    export_job_id = _new_job_id()
+    export_dir = _job_dir(export_job_id)
+
+    pipeline = ExportPipeline(default_dpi=dpi)
+
+    # ── Batch export all requested formats ────────────────────────────────────
+    batch_results = await pipeline.batch_export(
+        pptx_bytes=pptx_bytes,
+        source_filename=source_filename,
+        formats=format_list,
+        dpi=dpi,
+    )
+
+    # ── Save export files to job dir ──────────────────────────────────────────
+    output: Dict[str, Any] = {
+        "job_id":   export_job_id,
+        "source":   source_filename,
+        "formats":  {},
+        "elapsed_ms": 0,
+    }
+
+    for fmt, result in batch_results.items():
+        if result.success and result.data:
+            fname = result.filename or f"export.{fmt}"
+            (export_dir / fname).write_bytes(result.data)
+            output["formats"][fmt] = {
+                "success":    True,
+                "filename":   fname,
+                "file_size":  result.file_size,
+                "page_count": result.page_count,
+                "download_url": f"/pptx/export/download/{export_job_id}/{fmt}",
+            }
+        else:
+            output["formats"][fmt] = {
+                "success": False,
+                "error":   result.error,
+            }
+
+    output["elapsed_ms"] = round((time.time() - start) * 1000)
+    return output
+
+
+# =============================================================================
+# GET /pptx/export/download/{job_id}/{format}
+# =============================================================================
+
+@router.get("/export/download/{job_id}/{format}")
+async def download_export(
+    job_id:  str,
+    format:  str,
+    user_id: str = Depends(get_current_user_id),
+):
+    """Download a specific format export from a completed export job."""
+    export_dir = _job_dir(job_id)
+    # Find file matching the format
+    ext_map = {
+        "pdf":        ".pdf",
+        "images":     "_slides.zip",
+        "html":       "_html.zip",
+        "thumbnails": "_slides.zip",
+    }
+    ext = ext_map.get(format.lower(), f".{format}")
+    candidates = [p for p in export_dir.iterdir() if p.name.endswith(ext)]
+
+    if not candidates:
+        raise HTTPException(status_code=404, detail=f"No {format} export found in job {job_id}.")
+
+    out = candidates[0]
+    mime_map = {
+        ".pdf":  "application/pdf",
+        ".zip":  "application/zip",
+    }
+    media_type = mime_map.get(out.suffix.lower(), "application/octet-stream")
+
+    return Response(
+        content=out.read_bytes(),
+        media_type=media_type,
+        headers={
+            "Content-Disposition": f'attachment; filename="{out.name}"',
+            "Cache-Control":       "no-cache",
+        },
+    )
+
+
+# =============================================================================
+# POST /pptx/batch
+# =============================================================================
+
+@router.post("/batch")
+async def batch_process(
+    files:   List[UploadFile] = File(...),
+    action:  str = Form(default="analyze"),    # "analyze" | "export_pdf" | "brand_audit"
+    user_id: str = Depends(get_current_user_id),
+):
+    """
+    Batch process a ZIP file of presentations.
+
+    Upload a .zip containing any number of PPTX and PDF files.
+    The system extracts and processes each one according to the action.
+
+    action:
+      analyze    → render all slides, return slide counts + render metadata
+      export_pdf → convert each PPTX to PDF (stored on volume)
+      brand_audit → run brand compliance scoring on each file
+
+    Returns a summary with per-file results.
+    Supports up to 50 files per ZIP / 200 MB total.
+    """
+    start = time.time()
+
+    # Find the ZIP file in uploads
+    zip_file = next((f for f in files if f.filename and
+                     f.filename.lower().endswith(".zip")), None)
+
+    if zip_file is None:
+        # Try treating the uploads as individual files
+        ingested = await _ingest_uploads(files, [], user_id)
+        if not ingested:
+            raise HTTPException(status_code=400, detail="Upload a ZIP file or individual PPTX files.")
+
+        results = []
+        for fi in ingested:
+            if fi["file_type"] not in ("pptx", "ppt", "pdf"):
+                continue
+            manifest = await _renderer.render(
+                file_bytes=fi["bytes"], file_type=fi["file_type"], filename=fi["filename"]
+            )
+            results.append({
+                "filename": fi["filename"],
+                "file_type": fi["file_type"],
+                "slide_count": manifest.slide_count,
+                "render_success": manifest.success,
+                "error": manifest.error,
+            })
+        return {
+            "success": True,
+            "action": action,
+            "file_count": len(results),
+            "files": results,
+            "elapsed_ms": round((time.time() - start) * 1000),
+        }
+
+    zip_bytes = await zip_file.read()
+    if len(zip_bytes) > 200 * 1024 * 1024:
+        raise HTTPException(status_code=413, detail="ZIP file exceeds 200 MB limit.")
+
+    pipeline = ExportPipeline()
+    result = await pipeline.process_zip_upload(
+        zip_bytes=zip_bytes,
+        action=action,
+        user_id=user_id,
+    )
+
+    result["elapsed_ms"] = round((time.time() - start) * 1000)
+    return result
+
+
+# =============================================================================
+# POST /pptx/library/index  — Index a deck into the slide library
+# =============================================================================
+
+@router.post("/library/index")
+async def library_index(
+    files:           List[UploadFile] = File(default=[]),
+    file_ids:        str = Form(default="[]"),
+    job_id:          str = Form(default=""),
+    tags:            str = Form(default=""),
+    run_brand_audit: bool = Form(default=True),
+    user_id:         str = Depends(get_current_user_id),
+):
+    """
+    Analyze a deck and index all its slides into the corporate slide library.
+
+    After indexing, slides can be found via /pptx/library/search and
+    assembled into new decks via /pptx/library/build-deck.
+
+    tags : comma-separated tags to apply to all slides ("strategy,q1,investor")
+    run_brand_audit : score each slide for brand compliance (default True)
+    """
+    start = time.time()
+    tag_list = [t.strip() for t in tags.split(",") if t.strip()]
+
+    # ── Resolve source ────────────────────────────────────────────────────────
+    pptx_bytes: Optional[bytes] = None
+    source_filename = "presentation.pptx"
+
+    fid_list = _safe_json(file_ids, [])
+    if files or fid_list:
+        ingested = await _ingest_uploads(files, fid_list, user_id)
+        pptx_fi = next((fi for fi in ingested if fi["file_type"] in ("pptx", "ppt")), None)
+        if pptx_fi:
+            pptx_bytes = pptx_fi["bytes"]
+            source_filename = pptx_fi["filename"]
+
+    if pptx_bytes is None and job_id.strip():
+        job_pptx = sorted(_job_dir(job_id).glob("*.pptx"))
+        if job_pptx:
+            pptx_bytes = job_pptx[0].read_bytes()
+            source_filename = job_pptx[0].name
+
+    if pptx_bytes is None:
+        raise HTTPException(status_code=400, detail="Provide a PPTX file, file_id, or job_id.")
+
+    # ── Render + Vision analyze ───────────────────────────────────────────────
+    idx_job_id = _new_job_id()
+    manifest = await _renderer.render(file_bytes=pptx_bytes, file_type="pptx", filename=source_filename)
+    if not manifest.success:
+        return {"success": False, "error": f"Render failed: {manifest.error}"}
+
+    for slide in manifest.slides:
+        _save_slide_preview(idx_job_id, slide.index, slide.image_bytes)
+
+    analyses = await _vision.analyze_manifest(manifest, fast_mode=True)
+
+    # ── Brand audit scores ────────────────────────────────────────────────────
+    brand_scores: Dict[int, int] = {}
+    if run_brand_audit:
+        enforcer = BrandEnforcer()
+        loop = asyncio.get_event_loop()
+        audit = await loop.run_in_executor(None, enforcer.score_manifest_sync, analyses, source_filename)
+        brand_scores = {r.slide_index: r.score for r in audit.reports}
+
+    # ── Index all slides ──────────────────────────────────────────────────────
+    library = SlideLibrary()
+    slide_ids = await library.index_manifest(
+        user_id=user_id,
+        manifest=manifest,
+        analyses=analyses,
+        job_id=idx_job_id,
+        tags=tag_list,
+        brand_scores=brand_scores,
+    )
+
+    return {
+        "success":     True,
+        "job_id":      idx_job_id,
+        "source":      source_filename,
+        "indexed":     len(slide_ids),
+        "slide_ids":   slide_ids,
+        "brand_scores": brand_scores,
+        "preview_urls": [f"/pptx/preview/{idx_job_id}/{a.slide_index}" for a in analyses],
+        "elapsed_ms":  round((time.time() - start) * 1000),
+    }
+
+
+# =============================================================================
+# GET /pptx/library/search  — Semantic + text search
+# =============================================================================
+
+@router.get("/library/search")
+async def library_search(
+    q:             str,
+    layout:        Optional[str] = None,
+    tag:           Optional[str] = None,
+    top_k:         int = 10,
+    user_id:       str = Depends(get_current_user_id),
+):
+    """
+    Search the corporate slide library by text or semantic query.
+
+    Returns slides ranked by relevance.
+    Uses sentence-transformers semantic embedding if available,
+    falls back to keyword matching.
+
+    Examples:
+      /pptx/library/search?q=investment+strategy
+      /pptx/library/search?q=risk+management&layout=icon_grid&top_k=5
+    """
+    library = SlideLibrary()
+    results = await library.search(
+        query=q,
+        user_id=user_id,
+        top_k=top_k,
+        layout_filter=layout,
+        tag_filter=tag,
+    )
+    return {
+        "query":        q,
+        "result_count": len(results),
+        "results":      [r.to_dict() for r in results],
+    }
+
+
+# =============================================================================
+# POST /pptx/library/visual-search  — Find similar slides by image
+# =============================================================================
+
+@router.post("/library/visual-search")
+async def library_visual_search(
+    files:     List[UploadFile] = File(...),
+    top_k:     int = Form(default=5),
+    threshold: float = Form(default=0.70),
+    user_id:   str = Depends(get_current_user_id),
+):
+    """
+    Find slides in the library that look visually similar to an uploaded image.
+
+    Upload a PNG/JPG of a slide or screenshot.
+    Returns library slides sorted by visual similarity score.
+
+    threshold : minimum similarity score (0–1, default 0.70)
+    """
+    img_file = next((f for f in files if f.filename), None)
+    if not img_file:
+        raise HTTPException(status_code=400, detail="Upload an image file.")
+
+    img_bytes = await img_file.read()
+
+    # Normalize to PNG
+    from core.vision.slide_renderer import SlideRenderer
+    png_bytes = SlideRenderer._ensure_png(
+        SlideRenderer(), img_bytes, Path(img_file.filename or "img.png").suffix.lstrip(".")
+    )
+
+    library = SlideLibrary()
+    results = await library.find_similar(
+        image_bytes=png_bytes,
+        user_id=user_id,
+        top_k=top_k,
+        threshold=threshold,
+    )
+    return {
+        "query_file":   img_file.filename,
+        "result_count": len(results),
+        "threshold":    threshold,
+        "results":      [r.to_dict() for r in results],
+    }
+
+
+# =============================================================================
+# GET /pptx/library  — List all library slides
+# =============================================================================
+
+@router.get("/library")
+async def library_list(
+    layout:  Optional[str] = None,
+    tag:     Optional[str] = None,
+    limit:   int = 50,
+    offset:  int = 0,
+    user_id: str = Depends(get_current_user_id),
+):
+    """List all slides in the corporate slide library with optional filters."""
+    library = SlideLibrary()
+    slides = await library.list_slides(
+        user_id=user_id,
+        layout_filter=layout,
+        tag_filter=tag,
+        limit=limit,
+        offset=offset,
+    )
+    return {
+        "total":   len(slides),
+        "offset":  offset,
+        "limit":   limit,
+        "slides":  [s.to_dict() for s in slides],
+    }
+
+
+# =============================================================================
+# POST /pptx/library/build-deck  — Assemble a new deck from library slides
+# =============================================================================
+
+@router.post("/library/build-deck")
+async def library_build_deck(
+    slide_ids:       str = Form(...),   # JSON array of library slide IDs
+    output_filename: str = Form(default="custom_deck.pptx"),
+    user_id:         str = Depends(get_current_user_id),
+):
+    """
+    Assemble a new editable presentation from slides saved in the library.
+
+    slide_ids : JSON array of library slide IDs in the desired order
+                e.g. ["id1", "id3", "id7", "id2"]
+
+    Returns a download URL for the assembled .pptx.
+    """
+    start = time.time()
+
+    ids = _safe_json(slide_ids, [])
+    if not ids:
+        raise HTTPException(status_code=400, detail="Provide slide_ids as JSON array.")
+
+    library = SlideLibrary()
+    specs   = await library.build_deck_specs(ids)
+
+    if not specs:
+        raise HTTPException(status_code=404, detail="No matching slides found in library.")
+
+    sandbox  = PptxSandbox()
+    loop     = asyncio.get_event_loop()
+    pptx_res = await loop.run_in_executor(
+        None, sandbox.generate,
+        {"title": output_filename.replace(".pptx", ""), "slides": specs}
+    )
+
+    if not pptx_res.success:
+        return {"success": False, "error": pptx_res.error}
+
+    job_id = _new_job_id()
+    _save_output_pptx(job_id, pptx_res.data, output_filename)
+
+    manifest = await _renderer.render(file_bytes=pptx_res.data, file_type="pptx", filename=output_filename)
+    for slide in manifest.slides:
+        _save_slide_preview(job_id, slide.index, slide.image_bytes)
+
+    return {
+        "success":      True,
+        "job_id":       job_id,
+        "output_filename": output_filename,
+        "slide_count":  len(specs),
+        "download_url": f"/pptx/download/{job_id}",
+        "preview_urls": [f"/pptx/preview/{job_id}/{s.index}" for s in manifest.slides],
+        "elapsed_ms":   round((time.time() - start) * 1000),
+    }
+
+
+# =============================================================================
+# DELETE /pptx/library/{slide_id}  — Remove slide from library
+# =============================================================================
+
+@router.delete("/library/{slide_id}")
+async def library_delete(
+    slide_id: str,
+    user_id:  str = Depends(get_current_user_id),
+):
+    """Remove a slide from the corporate slide library."""
+    library = SlideLibrary()
+    ok = await library.delete(slide_id, user_id)
+    if not ok:
+        raise HTTPException(status_code=404, detail=f"Slide {slide_id} not found or access denied.")
+    return {"deleted": True, "slide_id": slide_id}
