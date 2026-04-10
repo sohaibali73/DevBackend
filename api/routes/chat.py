@@ -383,11 +383,18 @@ class ChatAgentRequest(BaseModel):
 # ---------------------------------------------------------------------------
 
 async def _fetch_file_context(db, conversation_id: str) -> str:
-    """Fetch file metadata attached to this conversation via the junction table."""
+    """
+    Fetch file metadata attached to this conversation via the junction table.
+
+    CRITICAL: The file_id (UUID) MUST be included in the context so the LLM
+    can pass the correct UUID to tools like analyze_xlsx, transform_xlsx,
+    analyze_pptx, revise_pptx, etc. Without the UUID, the LLM will fall back
+    to using the filename, which causes 'File not found' errors.
+    """
     try:
         # conversation_files links conversations to file_uploads
         conv_files = db.table("conversation_files").select(
-            "file_id, file_uploads(original_filename, extracted_text, content_type)"
+            "file_id, file_uploads(id, original_filename, extracted_text, content_type, file_size)"
         ).eq("conversation_id", conversation_id).execute()
 
         if not conv_files.data:
@@ -398,14 +405,32 @@ async def _fetch_file_context(db, conversation_id: str) -> str:
             fu = cf.get("file_uploads")
             if not fu:
                 continue
+            # Use the file_id from the junction table (most reliable)
+            fid = cf.get("file_id") or fu.get("id", "")
             fname = fu.get("original_filename", "unknown")
-            snippet = (fu.get("extracted_text") or "no content extracted")[:80]
-            snippets.append(f"📎 {fname}: {snippet}...")
+            content_type = fu.get("content_type", "")
+            file_size_kb = round((fu.get("file_size") or 0) / 1024, 1)
+            snippet = (fu.get("extracted_text") or "")[:200]
+
+            # Build a rich context line with the UUID prominently included
+            line = f'📎 FILE: "{fname}" | file_id: {fid} | type: {content_type} | size: {file_size_kb} KB'
+            if snippet:
+                line += f'\n   Preview: {snippet}...'
+            snippets.append(line)
 
         if not snippets:
             return ""
 
-        return f"\n\n<file_context>\n{chr(10).join(snippets)}\n</file_context>"
+        header = (
+            "The following files are attached to this conversation. "
+            "When using file-processing tools (analyze_xlsx, transform_xlsx, "
+            "analyze_pptx, revise_pptx, etc.), you MUST pass the exact file_id "
+            "UUID shown below — NOT the filename."
+        )
+        return (
+            f"\n\n<file_context>\n{header}\n\n"
+            f"{chr(10).join(snippets)}\n</file_context>"
+        )
     except Exception:
         # Don't let file context failures break the chat endpoint
         return ""

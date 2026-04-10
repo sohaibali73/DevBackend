@@ -296,6 +296,64 @@ def _upload_to_supabase(entry: FileEntry):
             logger.error("✗ Supabase Storage upload failed for %s: %s", entry.file_id, e)
 
 
+def _read_from_uploads(file_id: str) -> Optional[FileEntry]:
+    """
+    Read a user-uploaded file by file_id.
+
+    User-uploaded files (via /upload/direct or /upload/conversations/:id)
+    are stored in a SEPARATE system from generated files:
+      - Disk:     $STORAGE_ROOT/uploads/{user_id}/{file_id}_{filename}
+      - Database: Supabase `file_uploads` table (row id = file_id)
+
+    This lookup bridges the gap so that analyze_xlsx, transform_xlsx,
+    analyze_pptx, etc. can access files the user uploaded in chat.
+    """
+    try:
+        db = _get_supabase_client()
+        if not db:
+            return None
+
+        result = db.table("file_uploads").select(
+            "id, original_filename, storage_path, content_type, file_size"
+        ).eq("id", file_id).limit(1).execute()
+
+        if not result.data:
+            return None
+
+        row = result.data[0]
+        path = row.get("storage_path", "")
+
+        if not path or not os.path.exists(path):
+            logger.debug("User upload disk path not found for %s: %s", file_id, path)
+            return None
+
+        with open(path, "rb") as f:
+            data = f.read()
+
+        filename = row.get("original_filename") or f"upload_{file_id}"
+        ext = filename.rsplit(".", 1)[-1].lower() if "." in filename else "bin"
+
+        entry = FileEntry(
+            file_id=file_id,
+            filename=filename,
+            file_type=ext,
+            data=data,
+            size_kb=round(len(data) / 1024, 1),
+            tool_name="user_upload",
+        )
+        # Warm the memory cache so subsequent calls are instant
+        _file_cache[file_id] = entry
+        logger.info(
+            "✓ Retrieved user upload from disk: %s (%s, %.1f KB) [id=%s]",
+            filename, ext, entry.size_kb, file_id,
+        )
+        return entry
+
+    except Exception as e:
+        logger.debug("User uploads read failed for %s: %s", file_id, e)
+        return None
+
+
 def _download_from_supabase(file_id: str) -> Optional[FileEntry]:
     """Try to download a file from Supabase Storage by file_id."""
     try:
@@ -400,25 +458,32 @@ def store_file(
 
 def get_file(file_id: str) -> Optional[FileEntry]:
     """
-    Retrieve a file by ID.
+    Retrieve a file by ID — searches all 4 storage tiers.
 
     Priority:
         1. In-memory cache          (O(1) dict lookup)
-        2. Railway volume           (local disk read)
-        3. Supabase Storage         (persistent backup)
-        4. None                     (caller falls back to Claude Files API)
+        2. Railway volume /generated (tool-generated files)
+        3. User uploads             (files uploaded via /upload/* endpoints)
+                                    → Supabase file_uploads table + /data/uploads/
+        4. Supabase Storage         (cross-deployment backup for generated files)
+        5. None
     """
     # 1. Memory
     entry = _file_cache.get(file_id)
     if entry is not None:
         return entry
 
-    # 2. Railway volume
+    # 2. Railway volume (generated files: /data/generated/)
     entry = _read_from_volume(file_id)
     if entry is not None:
         return entry
 
-    # 3. Supabase Storage
+    # 3. User uploads (chat-attached files: /data/uploads/{user_id}/...)
+    entry = _read_from_uploads(file_id)
+    if entry is not None:
+        return entry
+
+    # 4. Supabase Storage (cross-deployment backup for generated files)
     entry = _download_from_supabase(file_id)
     if entry is not None:
         return entry
