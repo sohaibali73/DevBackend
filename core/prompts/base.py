@@ -188,9 +188,32 @@ def get_chat_prompt() -> str:
 1. FILE CREATION — CRITICAL ROUTING RULES. NEVER say you cannot create files:
 
    ══ POWERPOINT (.pptx) — ALWAYS use server-side tools. NEVER use invoke_skill for PowerPoint. ══
-   - Any PowerPoint / presentation / deck / slides → use `generate_pptx` tool directly
-   - Read/analyze an uploaded .pptx → use `analyze_pptx` tool
-   - Update/revise an existing .pptx (change numbers, add slides, find-replace) → use `revise_pptx` tool
+
+   CHOOSE THE RIGHT PPTX TOOL — this is critical:
+
+   ▶ `generate_pptx_freestyle`  ← USE THIS for ANY creative, unique, or design-driven request.
+     Triggers: "freestyle", "free style", "creative", "unique", "custom design", "make it pop",
+     "don't use the same template", "make it different", "design it yourself", "make it look like...",
+     "infographic style", "magazine style", "bold", "modern", "minimal", "dark theme", "colorful",
+     any request where the user expresses a design preference or wants something non-standard.
+     HOW TO USE: Write raw pptxgenjs v3 JavaScript in the `code` field. Build EVERY SLIDE FROM
+     SCRATCH with completely original designs. You MUST vary:
+       - Slide backgrounds (use DARK_GRAY, WHITE, YELLOW, gradients, full-bleed color blocks)
+       - Layouts (full-bleed headers, asymmetric columns, bold centered text, icon grids, etc.)
+       - Typography sizing (hero text at 60pt, subheads at 28pt, captions at 12pt — mix it up)
+       - Color usage (some slides yellow-dominant, some dark, some white/clean)
+       - Shape work (rectangles as dividers, circles as icons, diagonal bands, etc.)
+     NEVER produce the same "title top-left, bullets below" format for every slide.
+     Think like a real designer — each slide should have a distinct visual personality.
+
+   ▶ `generate_pptx`  ← USE THIS for straightforward business decks with no design preference.
+     Triggers: "make a presentation about X", "create slides on Y", "pitch deck for Z" with no
+     styling cues. Uses 21 predefined slide templates (title, content, metrics, table, chart, etc.)
+     Good for: standard quarterly updates, fact sheets, structured reports.
+     DO NOT use when the user says anything design-related.
+
+   ▶ `analyze_pptx`  ← Read/analyze/profile an uploaded .pptx file
+   ▶ `revise_pptx`   ← Update/edit an existing .pptx (change numbers, add slides, find-replace)
    - NEVER call invoke_skill with potomac-pptx, potomac-powerpoint-generator, or pptx slugs for any reason
 
    ══ EXCEL (.xlsx / .csv) — ALWAYS use server-side tools. NEVER use invoke_skill for Excel. ══
@@ -219,7 +242,9 @@ def get_chat_prompt() -> str:
    - Complex HTML artifacts → `invoke_skill` with `skill_slug="artifacts-builder"`
 
    DOCUMENT CREATION PRIORITY ORDER (MANDATORY):
-   1. PowerPoint → generate_pptx (or analyze_pptx / revise_pptx for existing files)
+   1. PowerPoint (creative/unique/freestyle) → generate_pptx_freestyle
+   1. PowerPoint (standard/no design pref)  → generate_pptx
+      (analyze/revise existing) → analyze_pptx / revise_pptx
    2. Excel → generate_xlsx (or analyze_xlsx / transform_xlsx for data work)
    3. Word → generate_docx
    4. invoke_skill → ONLY for PDF, AFL, research, and specialist skills listed above
