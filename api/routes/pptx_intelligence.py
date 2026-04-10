@@ -39,15 +39,19 @@ from typing import Any, Dict, List, Optional
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 from fastapi.responses import JSONResponse, Response, StreamingResponse
 
+from fastapi import WebSocket, WebSocketDisconnect
+
 from api.dependencies import get_current_user_id
 from core.sandbox.automizer_sandbox import AutomizerSandbox
 from core.sandbox.pptx_sandbox import PptxSandbox
 from core.sandbox.pptx_reviser import PptxReviser
 from core.vision.brand_enforcer import BrandEnforcer
+from core.vision.diff_engine import DiffEngine
 from core.vision.element_matcher import ElementMatcher, get_element_matcher
 from core.vision.export_pipeline import ExportPipeline
 from core.vision.reconstruction_engine import ReconstructionEngine
 from core.vision.revision_engine import RevisionEngine
+from core.vision.session_manager import SessionManager
 from core.vision.slide_library import SlideLibrary
 from core.vision.slide_renderer import SlideRenderer
 from core.vision.streaming_pipeline import StreamingPipeline
@@ -2391,3 +2395,667 @@ async def library_delete(
     if not ok:
         raise HTTPException(status_code=404, detail=f"Slide {slide_id} not found or access denied.")
     return {"deleted": True, "slide_id": slide_id}
+
+
+# =============================================================================
+# ██████╗ ██╗  ██╗ █████╗ ███████╗███████╗    ██╗  ██╗
+# ██╔══██╗██║  ██║██╔══██╗██╔════╝██╔════╝    ██║  ██║
+# ██████╔╝███████║███████║███████╗█████╗      ███████║
+# ██╔═══╝ ██╔══██║██╔══██║╚════██║██╔══╝      ╚════██║
+# ██║     ██║  ██║██║  ██║███████║███████╗         ██║
+# ╚═╝     ╚═╝  ╚═╝╚═╝  ╚═╝╚══════╝╚══════╝         ╚═╝
+# PHASE 4 — Real-Time Revision Loop: Sessions, Undo/Redo, WebSocket, Diff, Brand Fix
+# =============================================================================
+
+
+# =============================================================================
+# POST /pptx/session  — Create a stateful editing session
+# =============================================================================
+
+@router.post("/session")
+async def create_session(
+    files:           List[UploadFile] = File(default=[]),
+    file_ids:        str = Form(default="[]"),
+    job_id:          str = Form(default=""),
+    source_filename: str = Form(default="presentation.pptx"),
+    user_id:         str = Depends(get_current_user_id),
+):
+    """
+    Create a stateful PPTX editing session with full undo/redo support.
+
+    A session maintains a revision history stack. Each `POST /pptx/session/{id}/revise`
+    call applies a revision, only re-renders changed slides (diff-aware), and
+    supports undo/redo navigation.
+
+    File sources (pick one):
+      files[]    : upload a PPTX directly
+      file_ids   : JSON array of previously uploaded file IDs
+      job_id     : use the output PPTX from a previous /pptx/* job
+
+    Returns a session object with session_id for all subsequent operations.
+    Sessions are persisted to disk and survive server restarts.
+    """
+    start = time.time()
+
+    # ── Resolve PPTX ─────────────────────────────────────────────────────────
+    pptx_bytes: Optional[bytes] = None
+    fname = source_filename
+
+    fid_list = _safe_json(file_ids, [])
+    if files or fid_list:
+        ingested = await _ingest_uploads(files, fid_list, user_id)
+        pptx_fi = next((fi for fi in ingested if fi["file_type"] in ("pptx", "ppt")), None)
+        if pptx_fi:
+            pptx_bytes = pptx_fi["bytes"]
+            fname = pptx_fi["filename"]
+
+    if pptx_bytes is None and job_id.strip():
+        job_pptx = sorted(_job_dir(job_id).glob("*.pptx"))
+        if job_pptx:
+            pptx_bytes = job_pptx[0].read_bytes()
+            fname = job_pptx[0].name
+
+    if pptx_bytes is None:
+        raise HTTPException(status_code=400, detail="Provide a PPTX file, file_id, or job_id.")
+
+    mgr = SessionManager()
+    session = await mgr.create(
+        pptx_bytes=pptx_bytes,
+        user_id=user_id,
+        source_filename=fname,
+        render_previews=True,
+    )
+
+    # Get the job_id for initial previews
+    job_id_initial = mgr._get_job_id_for_revision(session.session_id, 0) or ""
+    slide_count = SlideRenderer.get_slide_count(pptx_bytes)
+
+    return {
+        "success":       True,
+        "session_id":    session.session_id,
+        "source":        fname,
+        "slide_count":   slide_count,
+        "preview_urls":  [f"/pptx/preview/{job_id_initial}/{i}" for i in range(1, slide_count + 1)],
+        "can_undo":      False,
+        "can_redo":      False,
+        "elapsed_ms":    round((time.time() - start) * 1000),
+    }
+
+
+# =============================================================================
+# GET /pptx/session/{session_id}
+# =============================================================================
+
+@router.get("/session/{session_id}")
+async def get_session(
+    session_id: str,
+    user_id:    str = Depends(get_current_user_id),
+):
+    """Get current state of a PPTX editing session."""
+    mgr = SessionManager()
+    session = mgr.get_session(session_id)
+    if not session or session.user_id != user_id:
+        raise HTTPException(status_code=404, detail=f"Session {session_id} not found.")
+
+    rev = session.current_revision
+    job_id_current = mgr._get_job_id_for_revision(session_id, session.current_rev) or ""
+    pptx_bytes = mgr.get_current_pptx(session_id) or b""
+    slide_count = SlideRenderer.get_slide_count(pptx_bytes) if pptx_bytes else 0
+
+    return {
+        **session.to_dict(),
+        "preview_urls": [f"/pptx/preview/{job_id_current}/{i}" for i in range(1, slide_count + 1)],
+        "current_job_id": job_id_current,
+        "slide_count": slide_count,
+    }
+
+
+# =============================================================================
+# POST /pptx/session/{session_id}/revise
+# =============================================================================
+
+@router.post("/session/{session_id}/revise")
+async def session_revise(
+    session_id:  str,
+    instruction: str = Form(...),
+    operations:  str = Form(default=""),   # optional pre-parsed JSON ops array
+    user_id:     str = Depends(get_current_user_id),
+):
+    """
+    Apply a revision to an editing session using diff-aware re-rendering.
+
+    Only slides that actually changed are re-rendered.  Unchanged slides
+    are served from cache — making this much faster than full re-render.
+
+    instruction : natural language revision ("delete slide 7 and change Q1 to Q2")
+    operations  : optional JSON array of pre-parsed operations (skips Claude parsing)
+
+    The cache_hit_rate in the response tells you what % of slides were cached.
+    E.g., "Cache hit rate: 90.0%" means only 10% of slides needed re-rendering.
+
+    Supports full undo/redo via POST /pptx/session/{id}/undo and /redo.
+    """
+    start = time.time()
+
+    parsed_ops = None
+    if operations.strip() and operations != "[]":
+        parsed_ops = _safe_json(operations, None)
+
+    mgr = SessionManager()
+    result = await mgr.apply_revision(
+        session_id=session_id,
+        instruction=instruction,
+        user_id=user_id,
+        operations=parsed_ops,
+    )
+
+    if not result.success:
+        raise HTTPException(status_code=400, detail=result.error or "Revision failed")
+
+    return {
+        **result.to_dict(),
+        "elapsed_ms": round((time.time() - start) * 1000),
+    }
+
+
+# =============================================================================
+# POST /pptx/session/{session_id}/undo
+# =============================================================================
+
+@router.post("/session/{session_id}/undo")
+async def session_undo(
+    session_id: str,
+    user_id:    str = Depends(get_current_user_id),
+):
+    """Undo the last revision in the session. Returns previews of the previous state."""
+    start = time.time()
+    mgr = SessionManager()
+    result = await mgr.undo(session_id, user_id)
+    if not result.success:
+        raise HTTPException(status_code=400, detail=result.error or "Nothing to undo")
+    return {**result.to_dict(), "elapsed_ms": round((time.time() - start) * 1000)}
+
+
+# =============================================================================
+# POST /pptx/session/{session_id}/redo
+# =============================================================================
+
+@router.post("/session/{session_id}/redo")
+async def session_redo(
+    session_id: str,
+    user_id:    str = Depends(get_current_user_id),
+):
+    """Redo the next revision in the session (after an undo)."""
+    start = time.time()
+    mgr = SessionManager()
+    result = await mgr.redo(session_id, user_id)
+    if not result.success:
+        raise HTTPException(status_code=400, detail=result.error or "Nothing to redo")
+    return {**result.to_dict(), "elapsed_ms": round((time.time() - start) * 1000)}
+
+
+# =============================================================================
+# GET /pptx/session/{session_id}/history
+# =============================================================================
+
+@router.get("/session/{session_id}/history")
+async def session_history(
+    session_id: str,
+    user_id:    str = Depends(get_current_user_id),
+):
+    """Return the full revision history for a session."""
+    mgr = SessionManager()
+    session = mgr.get_session(session_id)
+    if not session or session.user_id != user_id:
+        raise HTTPException(status_code=404, detail=f"Session {session_id} not found.")
+    return {
+        "session_id":    session_id,
+        "can_undo":      session.can_undo,
+        "can_redo":      session.can_redo,
+        "current_rev":   session.current_rev,
+        "history":       mgr.get_history(session_id),
+    }
+
+
+# =============================================================================
+# GET /pptx/session/{session_id}/download
+# =============================================================================
+
+@router.get("/session/{session_id}/download")
+async def session_download(
+    session_id:      str,
+    output_filename: str = "session_output.pptx",
+    user_id:         str = Depends(get_current_user_id),
+):
+    """Download the current PPTX from a session."""
+    mgr = SessionManager()
+    session = mgr.get_session(session_id)
+    if not session or session.user_id != user_id:
+        raise HTTPException(status_code=404, detail=f"Session {session_id} not found.")
+
+    pptx_bytes = mgr.get_current_pptx(session_id)
+    if not pptx_bytes:
+        raise HTTPException(status_code=404, detail="No PPTX in session.")
+
+    fname = output_filename or f"{session.source_filename}"
+    return Response(
+        content=pptx_bytes,
+        media_type="application/vnd.openxmlformats-officedocument.presentationml.presentation",
+        headers={
+            "Content-Disposition": f'attachment; filename="{fname}"',
+            "Cache-Control":       "no-cache",
+        },
+    )
+
+
+# =============================================================================
+# DELETE /pptx/session/{session_id}
+# =============================================================================
+
+@router.delete("/session/{session_id}")
+async def delete_session(
+    session_id: str,
+    user_id:    str = Depends(get_current_user_id),
+):
+    """Delete an editing session and all its cached files."""
+    mgr = SessionManager()
+    ok = mgr.delete_session(session_id, user_id)
+    if not ok:
+        raise HTTPException(status_code=404, detail=f"Session {session_id} not found.")
+    return {"deleted": True, "session_id": session_id}
+
+
+# =============================================================================
+# POST /pptx/diff  — Compare two PPTX versions (explicit diff)
+# =============================================================================
+
+@router.post("/diff")
+async def diff_presentations(
+    files:     List[UploadFile] = File(...),
+    file_ids:  str = Form(default="[]"),
+    user_id:   str = Depends(get_current_user_id),
+):
+    """
+    Compare two PPTX versions and return a detailed diff report.
+
+    Upload exactly 2 PPTX files — the original and the revised version.
+    Returns which slides were added, removed, modified, and unchanged,
+    plus the cache_hit_rate (useful for estimating re-render time).
+
+    This is the same engine used by the session undo/redo system.
+    """
+    start = time.time()
+    fid_list = _safe_json(file_ids, [])
+    ingested = await _ingest_uploads(files, fid_list, user_id)
+
+    pptx_files = [fi for fi in ingested if fi["file_type"] in ("pptx", "ppt")]
+    if len(pptx_files) < 2:
+        raise HTTPException(status_code=400, detail="Upload exactly 2 PPTX files to diff.")
+
+    orig_fi = pptx_files[0]
+    rev_fi  = pptx_files[1]
+
+    diff_engine = DiffEngine()
+    diff = await diff_engine.diff(orig_fi["bytes"], rev_fi["bytes"])
+
+    return {
+        "original_filename": orig_fi["filename"],
+        "revised_filename":  rev_fi["filename"],
+        "diff":              diff.to_dict(),
+        "elapsed_ms":        round((time.time() - start) * 1000),
+    }
+
+
+# =============================================================================
+# POST /pptx/brand-audit/auto-fix  — Apply brand corrections + regenerate slides
+# =============================================================================
+
+@router.post("/brand-audit/auto-fix")
+async def brand_auto_fix(
+    files:           List[UploadFile] = File(default=[]),
+    file_ids:        str = Form(default="[]"),
+    job_id:          str = Form(default=""),
+    output_filename: str = Form(default="brand_fixed.pptx"),
+    user_id:         str = Depends(get_current_user_id),
+):
+    """
+    Run brand audit + apply all safe auto-corrections.
+
+    For each non-compliant slide, applies:
+      - Title → ALL CAPS
+      - Background normalized to nearest Potomac brand color
+      - Logo hint added (guides reconstruction engine)
+
+    Then reconstructs non-compliant slides as native pptxgenjs elements
+    using the corrected analysis.  High-compliance slides (score ≥ 80)
+    are left untouched (embedded as-is).
+
+    Returns:
+      - audit: brand compliance report (before corrections)
+      - corrected_count: number of slides that were auto-corrected
+      - download_url: fixed .pptx ready for download
+    """
+    start = time.time()
+
+    # ── Resolve PPTX ─────────────────────────────────────────────────────────
+    pptx_bytes: Optional[bytes] = None
+    source_filename = "presentation.pptx"
+
+    fid_list = _safe_json(file_ids, [])
+    if files or fid_list:
+        ingested = await _ingest_uploads(files, fid_list, user_id)
+        pptx_fi = next((fi for fi in ingested if fi["file_type"] in ("pptx", "ppt")), None)
+        if pptx_fi:
+            pptx_bytes = pptx_fi["bytes"]
+            source_filename = pptx_fi["filename"]
+
+    if pptx_bytes is None and job_id.strip():
+        job_pptx = sorted(_job_dir(job_id).glob("*.pptx"))
+        if job_pptx:
+            pptx_bytes = job_pptx[0].read_bytes()
+            source_filename = job_pptx[0].name
+
+    if pptx_bytes is None:
+        raise HTTPException(status_code=400, detail="Provide a PPTX file, file_id, or job_id.")
+
+    # ── Render + Vision analyze ───────────────────────────────────────────────
+    fix_job_id = _new_job_id()
+    manifest = await _renderer.render(file_bytes=pptx_bytes, file_type="pptx", filename=source_filename)
+    if not manifest.success:
+        return {"success": False, "error": f"Render failed: {manifest.error}"}
+
+    for slide in manifest.slides:
+        _save_slide_preview(fix_job_id, slide.index, slide.image_bytes)
+
+    analyses = await _vision.analyze_manifest(manifest, fast_mode=True)
+
+    # ── Brand audit ───────────────────────────────────────────────────────────
+    enforcer = BrandEnforcer()
+    loop = asyncio.get_event_loop()
+    audit = await loop.run_in_executor(None, enforcer.score_manifest_sync, analyses, source_filename)
+
+    # ── Auto-correct non-compliant slides ─────────────────────────────────────
+    image_map = {s.index: s.image_bytes for s in manifest.slides}
+    corrected_specs = []
+    corrected_count = 0
+
+    for analysis in analyses:
+        report = next((r for r in audit.reports if r.slide_index == analysis.slide_index), None)
+        if report and not report.is_compliant:
+            # Apply corrections and reconstruct
+            corrected_dict = enforcer.auto_correct(analysis.to_dict())
+            # Convert back to SlideAnalysis
+            from core.vision.vision_engine import SlideAnalysis, DetectedElement
+            try:
+                elems = []
+                for e in corrected_dict.get("elements", []):
+                    pos = e.get("position", {})
+                    elems.append(DetectedElement(
+                        type=e.get("type", ""), label=e.get("label", ""),
+                        sublabel=e.get("sublabel", ""), icon=e.get("icon", ""),
+                        shape=e.get("shape", ""), fill_color=e.get("fill_color", ""),
+                        text_color=e.get("text_color", ""), font_family=e.get("font_family", ""),
+                        font_size_approx=int(e.get("font_size_approx", 0) or 0),
+                        bold=bool(e.get("bold", False)), italic=bool(e.get("italic", False)),
+                        x_pct=float(pos.get("x_pct", 0) or 0), y_pct=float(pos.get("y_pct", 0) or 0),
+                        w_pct=float(pos.get("w_pct", 0) or 0), h_pct=float(pos.get("h_pct", 0) or 0),
+                    ))
+                corrected_analysis = SlideAnalysis(
+                    slide_index=corrected_dict.get("slide_index", analysis.slide_index),
+                    layout_type=corrected_dict.get("layout_type", analysis.layout_type),
+                    background=corrected_dict.get("background", analysis.background),
+                    title=corrected_dict.get("title", analysis.title),
+                    subtitle=corrected_dict.get("subtitle", analysis.subtitle),
+                    body_text=corrected_dict.get("body_text", analysis.body_text),
+                    color_palette=corrected_dict.get("color_palette", analysis.color_palette),
+                    typography=corrected_dict.get("typography", analysis.typography),
+                    elements=elems,
+                    has_logo=corrected_dict.get("has_logo", analysis.has_logo),
+                    logo_variant=corrected_dict.get("logo_variant", analysis.logo_variant),
+                    reconstruction_strategy=corrected_dict.get("reconstruction_strategy", "full_image_embed"),
+                    reconstruction_confidence=float(corrected_dict.get("reconstruction_confidence", 0.5) or 0.5),
+                    grid_columns=corrected_dict.get("grid_columns", analysis.grid_columns),
+                    section_label=corrected_dict.get("section_label", analysis.section_label),
+                )
+                spec = _reconstructor.build_spec(corrected_analysis, image_map.get(analysis.slide_index))
+                corrected_count += 1
+            except Exception as exc:
+                logger.warning("Auto-fix reconstruction failed for slide %d: %s", analysis.slide_index, exc)
+                spec = _reconstructor.build_spec(analysis, image_map.get(analysis.slide_index))
+        else:
+            # Already compliant — embed as-is
+            spec = _reconstructor.build_spec(analysis, image_map.get(analysis.slide_index))
+
+        corrected_specs.append(spec)
+
+    # ── Generate fixed PPTX ────────────────────────────────────────────────────
+    sandbox = PptxSandbox()
+    pptx_spec = {"title": output_filename.replace(".pptx", ""), "slides": corrected_specs}
+    pptx_result = await loop.run_in_executor(None, sandbox.generate, pptx_spec)
+
+    if not pptx_result.success:
+        return {"success": False, "error": pptx_result.error}
+
+    _save_output_pptx(fix_job_id, pptx_result.data, output_filename)
+
+    # Render previews of fixed deck
+    fixed_manifest = await _renderer.render(
+        file_bytes=pptx_result.data, file_type="pptx", filename=output_filename
+    )
+    for slide in fixed_manifest.slides:
+        _save_slide_preview(fix_job_id, slide.index, slide.image_bytes)
+
+    return {
+        "success":         True,
+        "job_id":          fix_job_id,
+        "source":          source_filename,
+        "corrected_count": corrected_count,
+        "unchanged_count": len(analyses) - corrected_count,
+        "audit":           audit.to_dict(),
+        "output_filename": output_filename,
+        "download_url":    f"/pptx/download/{fix_job_id}",
+        "preview_urls":    [f"/pptx/preview/{fix_job_id}/{s.index}" for s in fixed_manifest.slides],
+        "elapsed_ms":      round((time.time() - start) * 1000),
+    }
+
+
+# =============================================================================
+# WebSocket /pptx/ws/{session_id}  — Real-time bidirectional revision channel
+# =============================================================================
+
+@router.websocket("/ws/{session_id}")
+async def websocket_session(
+    websocket:  WebSocket,
+    session_id: str,
+):
+    """
+    Real-time WebSocket channel for interactive PPTX editing.
+
+    The client connects and sends JSON messages; the server responds with
+    streaming JSON events as each slide is processed.
+
+    Incoming message types (client → server):
+    ─────────────────────────────────────────
+    { "type": "revise", "instruction": "Delete slide 5", "token": "<jwt>" }
+    { "type": "undo",   "token": "<jwt>" }
+    { "type": "redo",   "token": "<jwt>" }
+    { "type": "status", "token": "<jwt>" }
+    { "type": "ping" }
+
+    Outgoing event types (server → client):
+    ────────────────────────────────────────
+    { "type": "accepted",      "session_id": "...", "can_undo": bool, "can_redo": bool }
+    { "type": "revision_start","instruction": "..." }
+    { "type": "slide_changed", "slide_index": 5, "preview_url": "...", "preview_b64": "..." }
+    { "type": "revision_done", "diff": {...}, "changed": [...], "cached": [...] }
+    { "type": "undo_done",     "revision_num": 2 }
+    { "type": "redo_done",     "revision_num": 3 }
+    { "type": "status",        "session": {...} }
+    { "type": "error",         "message": "..." }
+    { "type": "pong" }
+
+    Frontend usage (JavaScript):
+    ────────────────────────────
+    const ws = new WebSocket(`wss://api.example.com/pptx/ws/${sessionId}`);
+    ws.onopen = () => ws.send(JSON.stringify({
+      type: 'revise',
+      instruction: 'Delete slide 7 and change Q1 to Q2',
+      token: jwtToken
+    }));
+    ws.onmessage = (e) => {
+      const event = JSON.parse(e.data);
+      if (event.type === 'slide_changed') {
+        updateSlidePreview(event.slide_index, event.preview_b64);
+      }
+    };
+    """
+    await websocket.accept()
+    mgr = SessionManager()
+    user_id: Optional[str] = None
+
+    try:
+        while True:
+            raw = await websocket.receive_text()
+            try:
+                msg = json.loads(raw)
+            except json.JSONDecodeError:
+                await websocket.send_text(json.dumps({"type": "error", "message": "Invalid JSON"}))
+                continue
+
+            msg_type = msg.get("type", "")
+            token    = msg.get("token", "")
+
+            # ── Auth ─────────────────────────────────────────────────────────
+            if msg_type != "ping" and not user_id:
+                if token:
+                    try:
+                        from api.dependencies import _decode_token
+                        user_id = _decode_token(token)
+                    except Exception:
+                        await websocket.send_text(json.dumps({
+                            "type": "error", "message": "Invalid token"
+                        }))
+                        continue
+                else:
+                    await websocket.send_text(json.dumps({
+                        "type": "error", "message": "Token required"
+                    }))
+                    continue
+
+            # ── Verify session ownership ──────────────────────────────────────
+            if msg_type not in ("ping",) and user_id:
+                session = mgr.get_session(session_id)
+                if not session or session.user_id != user_id:
+                    await websocket.send_text(json.dumps({
+                        "type": "error", "message": "Session not found or access denied"
+                    }))
+                    break
+
+            # ── Handle message types ──────────────────────────────────────────
+            if msg_type == "ping":
+                await websocket.send_text(json.dumps({"type": "pong"}))
+
+            elif msg_type == "status":
+                session = mgr.get_session(session_id)
+                await websocket.send_text(json.dumps({
+                    "type": "status",
+                    "session": session.to_dict() if session else None,
+                }))
+
+            elif msg_type == "revise":
+                instruction = msg.get("instruction", "").strip()
+                if not instruction:
+                    await websocket.send_text(json.dumps({
+                        "type": "error", "message": "instruction required"
+                    }))
+                    continue
+
+                await websocket.send_text(json.dumps({
+                    "type": "revision_start", "instruction": instruction
+                }))
+
+                result = await mgr.apply_revision(
+                    session_id=session_id,
+                    instruction=instruction,
+                    user_id=user_id,
+                )
+
+                if not result.success:
+                    await websocket.send_text(json.dumps({
+                        "type": "error", "message": result.error or "Revision failed"
+                    }))
+                    continue
+
+                # Stream changed slide previews
+                if result.diff:
+                    for idx in result.diff.changed_indices:
+                        png_path = _job_dir(result.new_job_id) / f"slide_{idx:04d}.png"
+                        import base64 as _b64
+                        preview_b64 = ""
+                        if png_path.exists():
+                            preview_b64 = "data:image/png;base64," + _b64.b64encode(
+                                png_path.read_bytes()
+                            ).decode()
+                        await websocket.send_text(json.dumps({
+                            "type":        "slide_changed",
+                            "slide_index": idx,
+                            "preview_url": f"/pptx/preview/{result.new_job_id}/{idx}",
+                            "preview_b64": preview_b64,
+                        }))
+                        await asyncio.sleep(0)
+
+                await websocket.send_text(json.dumps({
+                    "type":    "revision_done",
+                    "diff":    result.diff.to_dict() if result.diff else None,
+                    "changed": result.changed_slides,
+                    "cached":  result.cached_slides,
+                    "can_undo": result.session.can_undo if result.session else False,
+                    "can_redo": result.session.can_redo if result.session else False,
+                    "revision_summary": result.revision.summary if result.revision else "",
+                }))
+
+            elif msg_type == "undo":
+                result = await mgr.undo(session_id, user_id)
+                if result.success:
+                    await websocket.send_text(json.dumps({
+                        "type":       "undo_done",
+                        "revision_num": result.revision.revision_num if result.revision else 0,
+                        "instruction": result.revision.instruction if result.revision else "",
+                        "preview_urls": result.preview_urls,
+                        "can_undo": result.session.can_undo if result.session else False,
+                        "can_redo": result.session.can_redo if result.session else False,
+                    }))
+                else:
+                    await websocket.send_text(json.dumps({
+                        "type": "error", "message": result.error or "Nothing to undo"
+                    }))
+
+            elif msg_type == "redo":
+                result = await mgr.redo(session_id, user_id)
+                if result.success:
+                    await websocket.send_text(json.dumps({
+                        "type":        "redo_done",
+                        "revision_num": result.revision.revision_num if result.revision else 0,
+                        "instruction": result.revision.instruction if result.revision else "",
+                        "preview_urls": result.preview_urls,
+                        "can_undo": result.session.can_undo if result.session else False,
+                        "can_redo": result.session.can_redo if result.session else False,
+                    }))
+                else:
+                    await websocket.send_text(json.dumps({
+                        "type": "error", "message": result.error or "Nothing to redo"
+                    }))
+
+            else:
+                await websocket.send_text(json.dumps({
+                    "type": "error", "message": f"Unknown message type: {msg_type}"
+                }))
+
+    except WebSocketDisconnect:
+        logger.debug("WebSocket disconnected: session %s", session_id)
+    except Exception as exc:
+        logger.error("WebSocket error (session %s): %s", session_id, exc)
+        try:
+            await websocket.send_text(json.dumps({"type": "error", "message": str(exc)}))
+        except Exception:
+            pass
