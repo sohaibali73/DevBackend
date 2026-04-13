@@ -4482,17 +4482,14 @@ def _edgar_get_material_events(ti: Dict[str, Any]) -> Dict[str, Any]:
 
 
 def _invoke_skill(tool_input: Dict, api_key: str) -> Dict:
-    """Invoke a registered skill by slug via the SkillGateway.
+    """Invoke a registered skill by slug.
 
-    If the skill produces file artifacts (e.g. .docx, .pptx), downloads them
-    from Claude's Files API and stores them in the local file_store for serving.
+    Uses model-agnostic SkillRouter with fallback to legacy Anthropic SkillGateway.
     """
     if not api_key:
         return {"success": False, "error": "API key required for skill invocation"}
     try:
-        from core.skill_gateway import SkillGateway
-        from core.file_store import store_file
-        gw     = SkillGateway(api_key=api_key)
+        import asyncio
         skill_slug = tool_input.get("skill_slug", "")
 
         # Accept any reasonable field name for the user message — Claude sometimes
@@ -4533,11 +4530,19 @@ def _invoke_skill(tool_input: Dict, api_key: str) -> Dict:
                 skill_slug, list(tool_input.keys()),
             )
 
-        result = gw.execute(
+        from core.llm.anthropic_provider import AnthropicProvider
+        from core.sandbox.manager import SandboxManager
+        from core.skills.router import SkillRouter
+
+        provider = AnthropicProvider(api_key=api_key)
+        sandbox = SandboxManager()
+        router = SkillRouter(provider=provider, sandbox_manager=sandbox)
+
+        result = asyncio.run(router.execute(
             skill_slug=skill_slug,
-            user_message=user_message,
-            extra_context=tool_input.get("extra_context",""),
-        )
+            message=user_message,
+            context=tool_input.get("extra_context",""),
+        ))
 
         # Strip any Claude ephemeral file_xxx URLs from the skill text before
         # returning it as the tool result.  Claude will see the cleaned text and
@@ -4560,46 +4565,8 @@ def _invoke_skill(tool_input: Dict, api_key: str) -> Dict:
             "usage":          result.get("usage", {}),
         }
 
-        # If the skill produced file artifacts, download and store them
-        skill_files = result.get("files", [])
-        logger.info("invoke_skill '%s' files returned: %s", skill_slug, skill_files)
-        if skill_files:
-            try:
-                downloaded = gw.download_files(skill_files)
-                logger.info("invoke_skill '%s' downloaded: %s files", skill_slug, len(downloaded))
-                for dl in downloaded:
-                    fname = dl.get("filename", "")
-                    # FIX: download_files() returns "content" key, not "data"
-                    data = dl.get("content", b"") or dl.get("data", b"")
-                    if data and fname:
-                        # Determine file type from extension
-                        ext = fname.rsplit(".", 1)[-1].lower() if "." in fname else "bin"
-                        # Do NOT pass claude_file_id — let store_file generate a
-                        # permanent backend UUID. The download_url in the tool result
-                        # will use this UUID, so neither the text response nor the
-                        # frontend ever sees Claude's ephemeral file_xxx ID.
-                        entry = store_file(
-                            data=data,
-                            filename=fname,
-                            file_type=ext,
-                            tool_name=f"invoke_skill:{skill_slug}",
-                        )
-                        # Add download info to the response
-                        base_response["file_id"] = entry.file_id
-                        base_response["filename"] = entry.filename
-                        base_response["file_type"] = entry.file_type
-                        base_response["file_size_kb"] = entry.size_kb
-                        base_response["download_url"] = f"/files/{entry.file_id}/download"
-                        # Also set document_id/presentation_id for frontend compatibility
-                        if ext in ("docx", "doc"):
-                            base_response["document_id"] = entry.file_id
-                        elif ext in ("pptx", "ppt"):
-                            base_response["presentation_id"] = entry.file_id
-                        logger.info("Skill %s produced file: %s (%.1f KB)", skill_slug, fname, entry.size_kb)
-                        break  # Use first matching file
-            except Exception as dl_err:
-                logger.error("Failed to download skill files for '%s': %s", skill_slug, dl_err, exc_info=True)
-
+        # Files are handled locally by the SkillRouter/SandboxManager
+        logger.info("invoke_skill '%s' completed successfully", skill_slug)
         return base_response
     except Exception as e:
         logger.error("invoke_skill failed for slug '%s': %s", tool_input.get("skill_slug", "?"), e, exc_info=True)

@@ -23,7 +23,7 @@ from typing import Any, Dict, Generator, List, Optional
 
 import anthropic
 
-from core.skills import (
+from core.skills_legacy import (
     CODE_EXECUTION_TOOL,
     SKILL_REGISTRY,
     SKILLS_BETAS,

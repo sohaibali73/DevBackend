@@ -43,7 +43,7 @@ import anthropic
 logger = logging.getLogger(__name__)
 
 # Single source of truth for skills / streaming configuration
-from core.skills import SKILLS_BETAS, CODE_EXECUTION_TOOL
+from core.skills_legacy import SKILLS_BETAS, CODE_EXECUTION_TOOL
 from core.context_manager import truncate_context, MAX_RECENT_MESSAGES
 from core.streaming import stream_claude_response
 

@@ -17,7 +17,7 @@ import asyncio
 from typing import Dict, Any, List, Optional
 
 from core.llm.base import BaseLLMProvider, LLMResponse
-from core.skills_v2.base import SkillDefinition
+from core.skills.loader import SkillDefinition
 from core.sandbox.manager import SandboxManager
 
 logger = logging.getLogger(__name__)
@@ -153,20 +153,26 @@ class SkillExecutor:
             messages.append({
                 "role": "assistant",
                 "content": response.text or "",
+                "tool_calls": response.tool_calls,
             })
 
             for tc in response.tool_calls:
                 tool_result = await self._execute_tool(tc)
 
-                # Feed tool result back to model
+                # Canonical tool result format — providers normalize this
+                if isinstance(tool_result, dict):
+                    content = json.dumps(tool_result)
+                elif isinstance(tool_result, str):
+                    content = tool_result
+                else:
+                    content = str(tool_result)
+
                 messages.append({
-                    "role": "user",
-                    "content": json.dumps({
-                        "tool_result": tc["name"],
-                        "tool_call_id": tc["id"],
-                        "result": tool_result,
-                    }),
-                    })
+                    "role": "tool",
+                    "tool_call_id": tc["id"],
+                    "name": tc["name"],
+                    "content": content,
+                })
 
         # Exhausted iterations
         return {
