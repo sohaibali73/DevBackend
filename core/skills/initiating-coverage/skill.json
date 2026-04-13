@@ -1,0 +1,12 @@
+{
+  "slug": "initiating-coverage",
+  "name": "Initiating Coverage Report",
+  "description": "Create institutional-quality equity research initiation reports through a structured 5-task workflow: (1) company research, (2) financial modeling, (3) valuation analysis, (4) chart generation, (5) final report assembly. Each task produces specific deliverables. Use when users need a comprehensive first-time coverage report following JPMorgan, Goldman Sachs, or Morgan Stanley institutional standards.",
+  "category": "finance",
+  "tools": ["execute_python", "generate_docx", "generate_xlsx", "web_search", "edgar_get_financials", "edgar_get_filings"],
+  "output_type": "file",
+  "max_tokens": 32768,
+  "timeout": 300,
+  "enabled": true,
+  "aliases": ["initiation-of-coverage", "equity-research", "research-report", "initiating_coverage"]
+}

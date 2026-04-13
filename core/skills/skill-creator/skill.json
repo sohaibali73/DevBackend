@@ -1,0 +1,12 @@
+{
+  "slug": "skill-creator",
+  "name": "Skill Creator",
+  "description": "Guide for creating effective skills. Use when users want to create a new skill (or update an existing skill) that extends capabilities with specialized knowledge, workflows, or tool integrations.",
+  "category": "code",
+  "tools": [],
+  "output_type": "text",
+  "max_tokens": 16384,
+  "timeout": 180,
+  "enabled": true,
+  "aliases": ["skill-builder", "skill-development"]
+}

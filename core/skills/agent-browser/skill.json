@@ -1,0 +1,12 @@
+{
+  "slug": "agent-browser",
+  "name": "Agent Browser",
+  "description": "Browser automation for AI agents. Use when users need to interact with websites, including navigating pages, filling forms, clicking buttons, taking screenshots, extracting data, or automating any browser task.",
+  "category": "code",
+  "tools": ["execute_python"],
+  "output_type": "text",
+  "max_tokens": 8192,
+  "timeout": 120,
+  "enabled": true,
+  "aliases": ["browser-automation", "web-automation"]
+}

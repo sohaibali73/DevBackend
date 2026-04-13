@@ -1,0 +1,12 @@
+{
+  "slug": "web-artifacts-builder",
+  "name": "Web Artifacts Builder",
+  "description": "Suite for creating elaborate, multi-component HTML artifacts using modern frontend web technologies (React, Tailwind CSS, shadcn/ui). Use for complex artifacts requiring state management, routing, or shadcn/ui components - not for simple single-file HTML/JSX artifacts.",
+  "category": "code",
+  "tools": ["execute_python"],
+  "output_type": "code",
+  "max_tokens": 16384,
+  "timeout": 180,
+  "enabled": true,
+  "aliases": ["react-builder", "frontend-artifacts"]
+}

@@ -1,0 +1,12 @@
+{
+  "slug": "people-search",
+  "name": "People Search",
+  "description": "People research using web search. Finds LinkedIn profiles, professional backgrounds, experts, team members, and public bios across the web.",
+  "category": "research",
+  "tools": ["web_search"],
+  "output_type": "text",
+  "max_tokens": 8192,
+  "timeout": 60,
+  "enabled": true,
+  "aliases": ["people-research", "profile-search", "find-people"]
+}

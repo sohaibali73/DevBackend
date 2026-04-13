@@ -1,0 +1,12 @@
+{
+  "slug": "potomac-researcher",
+  "name": "Potomac Researcher",
+  "description": "Market research and intelligence skill providing comprehensive company research, news aggregation with sentiment analysis, macro economic context, SEC filings, peer comparison, and strategy fit analysis.",
+  "category": "finance",
+  "tools": ["get_stock_data", "web_search", "execute_python", "edgar_get_financials", "edgar_get_filings", "technical_analysis"],
+  "output_type": "text",
+  "max_tokens": 16384,
+  "timeout": 180,
+  "enabled": true,
+  "aliases": ["financial-researcher", "market-intelligence"]
+}

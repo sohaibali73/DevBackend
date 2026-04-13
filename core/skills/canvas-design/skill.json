@@ -1,0 +1,12 @@
+{
+  "slug": "canvas-design",
+  "name": "Canvas Design",
+  "description": "Create beautiful visual art in .png and .pdf documents using design philosophy. Use when users request creating a poster, piece of art, design, or other static visual piece. Create original visual designs, never copying existing artists' work to avoid copyright violations.",
+  "category": "design",
+  "tools": ["execute_python"],
+  "output_type": "image",
+  "max_tokens": 16384,
+  "timeout": 180,
+  "enabled": true,
+  "aliases": ["visual-design", "poster-design"]
+}

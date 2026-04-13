@@ -1,0 +1,11 @@
+{
+  "slug": "document-writer",
+  "name": "Document Writer",
+  "description": "Create professional Potomac-branded Word documents for any business purpose: fund fact sheets, market commentaries, performance reports, risk reports, memos, proposals, SOPs, research write-ups.",
+  "category": "document",
+  "tools": ["generate_docx"],
+  "output_type": "file",
+  "max_tokens": 16384,
+  "enabled": true,
+  "aliases": ["docx", "potomac-docx-skill", "potomac-document-generator"]
+}

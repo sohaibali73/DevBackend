@@ -1,0 +1,12 @@
+{
+  "slug": "theme-factory",
+  "name": "Theme Factory",
+  "description": "Toolkit for styling artifacts with a theme. These artifacts can be slides, docs, reports, HTML landing pages, etc. Apply pre-set professional font and color themes or generate custom themes on-the-fly.",
+  "category": "design",
+  "tools": [],
+  "output_type": "text",
+  "max_tokens": 8192,
+  "timeout": 60,
+  "enabled": true,
+  "aliases": ["theme-styling", "color-themes"]
+}

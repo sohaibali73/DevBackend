@@ -524,7 +524,8 @@ async def root():
         "version": "3.6",
         "status": "online",
         "routers_loaded": routers_loaded,
-        "routers_failed": [name for name, _ in routers_failed] if routers_failed else None,
+        "routers_failed": [name for name, _ in routers_failed] if routers_failed else [],
+        "routers_failed_errors": {name: err for name, err in routers_failed} if routers_failed else {},
     }
 
 @app.get("/health")

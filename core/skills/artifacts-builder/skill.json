@@ -1,0 +1,12 @@
+{
+  "slug": "artifacts-builder",
+  "name": "Artifacts Builder",
+  "description": "Build complex, multi-component interactive HTML artifacts using React 18 + TypeScript + Tailwind CSS + shadcn/ui. Use for elaborate frontend artifacts requiring state management, routing, or UI component libraries — not for simple single-file HTML/JSX. Produces polished, self-contained HTML files.",
+  "category": "design",
+  "tools": ["execute_react"],
+  "output_type": "code",
+  "max_tokens": 16384,
+  "timeout": 120,
+  "enabled": true,
+  "aliases": ["artifact-builder", "react-artifact", "complex-artifact"]
+}

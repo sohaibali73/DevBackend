@@ -1,0 +1,12 @@
+{
+  "slug": "article-extractor",
+  "name": "Article Extractor",
+  "description": "Extract clean article content from URLs (blog posts, articles, tutorials) and save as readable text. Use when user wants to download, extract, or save an article/blog post from a URL without ads, navigation, or clutter.",
+  "category": "research",
+  "tools": ["execute_python", "web_search"],
+  "output_type": "text",
+  "max_tokens": 16384,
+  "timeout": 120,
+  "enabled": true,
+  "aliases": ["article-extraction", "extract-article"]
+}

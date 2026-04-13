@@ -1,0 +1,12 @@
+{
+  "slug": "webapp-testing",
+  "name": "Web Application Testing",
+  "description": "Toolkit for interacting with and testing local web applications using Playwright. Supports verifying frontend functionality, debugging UI behavior, capturing browser screenshots, and viewing browser logs.",
+  "category": "code",
+  "tools": ["execute_python"],
+  "output_type": "text",
+  "max_tokens": 8192,
+  "timeout": 120,
+  "enabled": true,
+  "aliases": ["playwright-testing", "webapp-automation"]
+}

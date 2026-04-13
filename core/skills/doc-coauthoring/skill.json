@@ -1,0 +1,12 @@
+{
+  "slug": "doc-coauthoring",
+  "name": "Doc Coauthoring",
+  "description": "Guide users through a structured workflow for co-authoring documentation. Use when user wants to write documentation, proposals, technical specs, decision docs, or similar structured content.",
+  "category": "document",
+  "tools": [],
+  "output_type": "text",
+  "max_tokens": 16384,
+  "timeout": 180,
+  "enabled": true,
+  "aliases": ["doc-workflow", "documentation-guide"]
+}

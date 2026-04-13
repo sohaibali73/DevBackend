@@ -1,0 +1,12 @@
+{
+  "slug": "afl-developer",
+  "name": "AmiBroker AFL Developer",
+  "description": "Expert AmiBroker AFL formula language assistant. Use whenever the user mentions AmiBroker, AFL, AmiFormula, or any task involving writing, debugging, or editing AFL code. Covers trading strategies, indicators, error diagnosis (codes 1-706), parameter optimization, standalone vs composite architecture, backtesting setup, multi-timeframe analysis, and all production-grade AFL patterns.",
+  "category": "code",
+  "tools": ["execute_python"],
+  "output_type": "code",
+  "max_tokens": 16384,
+  "timeout": 180,
+  "enabled": true,
+  "aliases": ["amibroker-afl-developer", "afl", "amibroker", "afl-expert", "amibroker-developer"]
+}

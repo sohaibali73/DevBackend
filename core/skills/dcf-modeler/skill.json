@@ -1,0 +1,12 @@
+{
+  "slug": "dcf-modeler",
+  "name": "DCF Model Builder",
+  "description": "Build institutional-quality DCF (Discounted Cash Flow) equity valuation models. Retrieves financial data from SEC filings, builds comprehensive cash flow projections with proper WACC calculations, performs sensitivity analysis, and outputs professional Excel models with executive summaries. Use when users need company valuation using DCF methodology, intrinsic value analysis, or detailed financial modeling with growth projections and terminal value.",
+  "category": "finance",
+  "tools": ["execute_python", "generate_xlsx", "edgar_get_financials", "edgar_get_filings", "web_search"],
+  "output_type": "file",
+  "max_tokens": 32768,
+  "timeout": 300,
+  "enabled": true,
+  "aliases": ["dcf", "dcf-model", "dcf-valuation", "discounted-cash-flow", "equity-valuation"]
+}

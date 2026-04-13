@@ -1,0 +1,12 @@
+{
+  "slug": "csv-data-summarizer",
+  "name": "CSV Data Summarizer",
+  "description": "Analyzes CSV files, generates summary stats, and plots quick visualizations using Python and pandas.",
+  "category": "data",
+  "tools": ["execute_python"],
+  "output_type": "data",
+  "max_tokens": 16384,
+  "timeout": 120,
+  "enabled": true,
+  "aliases": ["csv-analysis", "data-summarizer"]
+}

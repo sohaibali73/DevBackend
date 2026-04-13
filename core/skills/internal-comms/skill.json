@@ -1,0 +1,12 @@
+{
+  "slug": "internal-comms",
+  "name": "Internal Communications",
+  "description": "A set of resources to help write all kinds of internal communications using company-preferred formats. Use when asked to write status reports, leadership updates, 3P updates, company newsletters, FAQs, incident reports, project updates, etc.",
+  "category": "document",
+  "tools": [],
+  "output_type": "text",
+  "max_tokens": 8192,
+  "timeout": 60,
+  "enabled": true,
+  "aliases": ["internal-communications", "company-comms"]
+}

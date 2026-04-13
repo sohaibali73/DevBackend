@@ -1,0 +1,12 @@
+{
+  "slug": "market-bubble-detector",
+  "name": "US Market Bubble Detector",
+  "description": "Evaluates market bubble risk using the revised Minsky/Kindleberger framework v2.1. Prioritizes objective quantitative metrics (Put/Call, VIX, margin debt, breadth, IPO data) over subjective impressions. Features strict qualitative adjustment criteria with confirmation bias prevention. Use when users ask about bubble risk, valuation concerns, market crash risk, or profit-taking timing.",
+  "category": "finance",
+  "tools": ["execute_python", "get_stock_data", "technical_analysis", "web_search"],
+  "output_type": "text",
+  "max_tokens": 16384,
+  "timeout": 180,
+  "enabled": true,
+  "aliases": ["bubble-detector", "us-market-bubble-detector", "market-bubble", "bubble-analysis"]
+}

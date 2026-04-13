@@ -1,0 +1,12 @@
+{
+  "slug": "backtesting-frameworks",
+  "name": "Backtesting Frameworks",
+  "description": "Build robust backtesting systems for trading strategies with proper handling of look-ahead bias, survivorship bias, and transaction costs. Use when developing trading algorithms, validating strategies, or building backtesting infrastructure.",
+  "category": "code",
+  "tools": ["execute_python"],
+  "output_type": "code",
+  "max_tokens": 16384,
+  "timeout": 180,
+  "enabled": true,
+  "aliases": ["backtesting-infrastructure", "strategy-backtesting"]
+}

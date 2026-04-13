@@ -1,0 +1,12 @@
+{
+  "slug": "web-search",
+  "name": "Web Search",
+  "description": "Search the web for information, news, articles, images, and videos using DuckDuckGo. Use when users need current information, fact-checking, research, or finding web resources.",
+  "category": "research",
+  "tools": ["web_search"],
+  "output_type": "text",
+  "max_tokens": 8192,
+  "timeout": 60,
+  "enabled": true,
+  "aliases": ["search", "duckduckgo-search"]
+}

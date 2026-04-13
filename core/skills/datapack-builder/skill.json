@@ -1,0 +1,12 @@
+{
+  "slug": "datapack-builder",
+  "name": "Financial Data Pack Builder",
+  "description": "Build professional financial services data packs from CIMs, offering memorandums, SEC filings, web search, or MCP servers. Extracts, normalizes, and standardizes financial data into investment committee-ready Excel workbooks. Use for M&A due diligence, private equity analysis, investment committee materials, and standardizing financial reporting across portfolio companies.",
+  "category": "data",
+  "tools": ["execute_python", "generate_xlsx", "edgar_get_financials", "edgar_get_filings", "web_search"],
+  "output_type": "file",
+  "max_tokens": 32768,
+  "timeout": 300,
+  "enabled": true,
+  "aliases": ["data-pack", "financial-datapack", "datapack", "due-diligence-pack"]
+}
