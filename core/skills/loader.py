@@ -105,8 +105,10 @@ def _load_all() -> None:
             logger.warning("Failed to load skill from %s: %s", folder.name, e)
 
     _LOADED = True
-    logger.info("Skill loader: %d skills loaded (%d total slugs with aliases)",
-                len(set(_REGISTRY.values())), len(_REGISTRY))
+    # Use id()-based dedup — SkillDefinition is a mutable dataclass, not hashable
+    num_unique = len({id(v) for v in _REGISTRY.values()})
+    logger.info("Skill loader: %d skills loaded (%d total registry entries with aliases)",
+                num_unique, len(_REGISTRY))
 
 
 # ── Public API ────────────────────────────────────────────────────────────
