@@ -38,14 +38,8 @@ class PotomacPresentationGenerator {
     this.pres.subject = this.options.title;
     this.pres.title = this.options.title;
     
-    // Set slide size (16:9 aspect ratio)
-    this.pres.defineLayout({
-      name: 'POTOMAC_STANDARD',
-      width: 13.333,
-      height: 7.5
-    });
-    
-    this.pres.layout = 'POTOMAC_STANDARD';
+    // Standard 10"×7.5" — element coordinates assume 10" width
+    this.pres.layout = 'LAYOUT_16x9';
   }
 
   // SLIDE TEMPLATES
@@ -78,11 +72,10 @@ class PotomacPresentationGenerator {
       h: 1.5,
       fontFace: POTOMAC_FONTS.HEADERS.family,
       fontSize: 44,
-      fontWeight: '700',
-      color: POTOMAC_COLORS.PRIMARY.DARK_GRAY,
+      bold: true,
+      color: POTOMAC_COLORS.PRIMARY.DARK_GRAY.replace('#', ''),
       align: 'center',
       valign: 'middle',
-      bold: true
     });
     
     // Add subtitle if provided
@@ -101,12 +94,13 @@ class PotomacPresentationGenerator {
     }
     
     // Add accent bar
-    slide.addShape(this.pres.shapes.RECTANGLE, {
+    slide.addShape(this.pres.ShapeType.rect, {
       x: 0.5,
       y: 5.5,
       w: 9,
       h: 0.1,
-      fill: { color: palette.accent }
+      fill: { color: palette.accent.replace('#', '') },
+      line: { color: palette.accent.replace('#', ''), width: 0 },
     });
     
     return slide;
@@ -140,18 +134,18 @@ class PotomacPresentationGenerator {
       h: 1,
       fontFace: POTOMAC_FONTS.HEADERS.family,
       fontSize: 36,
-      fontWeight: '700',
-      color: POTOMAC_COLORS.PRIMARY.DARK_GRAY,
-      bold: true
+      bold: true,
+      color: POTOMAC_COLORS.PRIMARY.DARK_GRAY.replace('#', ''),
     });
     
     // Add title underline
-    slide.addShape(this.pres.shapes.RECTANGLE, {
+    slide.addShape(this.pres.ShapeType.rect, {
       x: 0.5,
       y: 1.4,
       w: 2,
       h: 0.05,
-      fill: { color: palette.accent }
+      fill: { color: palette.accent.replace('#', '') },
+      line: { color: palette.accent.replace('#', ''), width: 0 },
     });
     
     // Add content bullets
@@ -214,18 +208,18 @@ class PotomacPresentationGenerator {
       h: 1,
       fontFace: POTOMAC_FONTS.HEADERS.family,
       fontSize: 32,
-      fontWeight: '700',
-      color: POTOMAC_COLORS.PRIMARY.DARK_GRAY,
-      bold: true
+      bold: true,
+      color: POTOMAC_COLORS.PRIMARY.DARK_GRAY.replace('#', ''),
     });
     
     // Title underline
-    slide.addShape(this.pres.shapes.RECTANGLE, {
+    slide.addShape(this.pres.ShapeType.rect, {
       x: 0.5,
       y: 1.4,
       w: 2,
       h: 0.05,
-      fill: { color: palette.accent }
+      fill: { color: palette.accent.replace('#', '') },
+      line: { color: palette.accent.replace('#', ''), width: 0 },
     });
     
     // Left column
@@ -253,12 +247,13 @@ class PotomacPresentationGenerator {
     });
     
     // Column separator
-    slide.addShape(this.pres.shapes.RECTANGLE, {
+    slide.addShape(this.pres.ShapeType.rect, {
       x: 4.98,
       y: 2.2,
       w: 0.04,
       h: 4,
-      fill: { color: POTOMAC_COLORS.TONES.GRAY_20 }
+      fill: { color: POTOMAC_COLORS.TONES.GRAY_20.replace('#', '') },
+      line: { color: POTOMAC_COLORS.TONES.GRAY_20.replace('#', ''), width: 0 },
     });
     
     return slide;
@@ -292,10 +287,9 @@ class PotomacPresentationGenerator {
       h: 1,
       fontFace: POTOMAC_FONTS.HEADERS.family,
       fontSize: 40,
-      fontWeight: '700',
-      color: POTOMAC_COLORS.PRIMARY.DARK_GRAY,
+      bold: true,
+      color: POTOMAC_COLORS.PRIMARY.DARK_GRAY.replace('#', ''),
       align: 'center',
-      bold: true
     });
     
     // Add tagline

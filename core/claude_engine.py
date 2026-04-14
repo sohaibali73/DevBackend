@@ -38,6 +38,7 @@ from collections import OrderedDict
 from enum import Enum
 
 import anthropic
+import httpx
 
 # Initialize logger FIRST before any code that might use it
 logger = logging.getLogger(__name__)
@@ -151,7 +152,20 @@ class ThinkingConfig:
 
 # ── Top-level defaults ────────────────────────────────────────────────────────
 DEFAULT_MODEL       = ClaudeModel.SONNET_4
-MAX_TOKENS          = 8192
+MAX_TOKENS          = 32768   # Fallback for unrecognised models
+
+# Per-model maximum output tokens — no artificial cap, use the model's full capability
+MODEL_MAX_TOKENS: Dict[str, int] = {
+    "claude-opus-4-6":             128000,
+    "claude-sonnet-4-6":            64000,
+    "claude-opus-4-5-20251101":     16384,
+    "claude-opus-4-5":              16384,
+    "claude-sonnet-4-5-20250929":    8192,
+    "claude-sonnet-4-5":             8192,
+    "claude-haiku-4-5-20251001":     8192,
+    "claude-haiku-4-5":              8192,
+}
+
 AMIBROKER_SKILL_ID  = "skill_01GG6E88EuXr9H9tqLp51sH5"
 
 SKILLS_CONTAINER = {
@@ -309,8 +323,16 @@ class ClaudeAFLEngine:
             self._init_client()
 
     def _init_client(self) -> None:
-        """Instantiate the Anthropic async client."""
-        self.client = anthropic.AsyncAnthropic(api_key=self.api_key)
+        """Instantiate the Anthropic async client with generous timeouts for long generations."""
+        self.client = anthropic.AsyncAnthropic(
+            api_key=self.api_key,
+            timeout=httpx.Timeout(
+                timeout=900.0,   # 15 min total — covers Opus + extended thinking + tool loops
+                connect=30.0,
+                read=900.0,
+                write=60.0,
+            ),
+        )
 
     def _ensure_client(self) -> None:
         """Raise ValueError if no client exists; create one lazily if possible."""
@@ -340,7 +362,7 @@ class ClaudeAFLEngine:
         self,
         system:     str,
         messages:   List[Dict],
-        max_tokens: int  = MAX_TOKENS,
+        max_tokens: Optional[int] = None,
         stream:     bool = False,
         use_skill:  bool = True,
         enable_thinking: Optional[bool] = None,
@@ -354,6 +376,10 @@ class ClaudeAFLEngine:
         • stream=True  → async generator yielding {"type": ..., "content": ...} dicts
         """
         self._ensure_client()
+
+        # Resolve max_tokens: use each model's full published capacity when not explicitly set
+        if max_tokens is None:
+            max_tokens = MODEL_MAX_TOKENS.get(self.model, MAX_TOKENS)
 
         kwargs = {
             "model":     self.model,
@@ -576,8 +602,8 @@ class ClaudeAFLEngine:
 
         Returns Dict on stream=False, async generator on stream=True.
         """
-        if len(request) > 8_000:
-            raise ValueError("Request too long (>8000 chars) — please shorten your description")
+        if len(request) > 50_000:
+            raise ValueError("Request too long (>50000 chars) — please shorten your description")
 
         start = time.time()
 
@@ -757,7 +783,7 @@ class ClaudeAFLEngine:
         message:    str,
         system:     str,
         tools:      Optional[List[Dict]] = None,
-        max_tokens: int = 3000,
+        max_tokens: Optional[int] = None,
         messages:   Optional[List[Dict]] = None,
     ):
         """
@@ -770,6 +796,10 @@ class ClaudeAFLEngine:
           "d:{...}\\n"           — finish message
         """
         self._ensure_client()
+
+        # Resolve max_tokens to model's full capacity when not explicitly set
+        if max_tokens is None:
+            max_tokens = MODEL_MAX_TOKENS.get(self.model, MAX_TOKENS)
 
         # Build the full messages list
         all_messages = list(messages or [])

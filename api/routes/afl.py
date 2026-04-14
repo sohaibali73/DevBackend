@@ -10,6 +10,7 @@ from pydantic import Field
 import json
 import logging
 import base64
+import httpx
 
 from api.dependencies import get_current_user_id, get_user_api_keys
 from core.claude_engine import ClaudeAFLEngine, StrategyType, BacktestSettings, DEFAULT_MODEL
@@ -333,14 +334,22 @@ IF THEY DIDNT SPECIFIFY THEN
 Please ask these questions clearly and wait for the user's response. Do NOT generate any code yet."""
 
             import anthropic
-            client = anthropic.Anthropic(api_key=api_keys["claude"])
+            client = anthropic.Anthropic(
+                api_key=api_keys["claude"],
+                timeout=httpx.Timeout(
+                    timeout=120.0,   # 2 min for the questions phase
+                    connect=30.0,
+                    read=120.0,
+                    write=30.0,
+                ),
+            )
 
             # FIX-12: was hardcoded to claude-haiku-4-5-20251001.
             # Now uses DEFAULT_MODEL (claude-sonnet-4-6) imported from claude_engine,
             # so this stays in sync automatically whenever the engine model is updated.
             response = client.messages.create(
                 model=DEFAULT_MODEL,
-                max_tokens=1000,
+                max_tokens=2000,
                 messages=[{"role": "user", "content": questions_prompt}],
             )
 

@@ -15,13 +15,13 @@ MAX_RECENT_MESSAGES = 10  # Reduced from 100 for faster responses
 MAX_TRAINING_EXAMPLES = 3  # Reduced from 5 for performance
 MAX_CONTEXT_TOKENS = 4000  # Reduced from 8000 for faster processing
 
-# Condensed context limits for performance optimization
+# Condensed context limits — sized for Opus 4 with 1M context window
 CONDENSED_CONTEXT_LIMITS = {
-    "system_prompt_max_tokens": 5000,  # Reduced from ~2000
-    "training_context_max_tokens": 800,  # Reduced from 2000
-    "kb_context_max_tokens": 600,  # Reduced from 1500
-    "research_context_max_tokens": 1000,  # Reduced from 2000
-    "total_context_budget": 50000,  # Reduced from 8000
+    "system_prompt_max_tokens": 5000,
+    "training_context_max_tokens": 2000,   # Increased: AFL training context needs room
+    "kb_context_max_tokens": 1500,          # Increased: KB context for complex strategies
+    "research_context_max_tokens": 2000,
+    "total_context_budget": 100000,         # Increased: support large Opus context window
 }
 
 

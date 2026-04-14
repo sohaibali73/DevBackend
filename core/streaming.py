@@ -345,7 +345,7 @@ async def stream_claude_response(
     system_prompt: str,
     messages: list,
     tools: Optional[list] = None,
-    max_tokens: int = 4096,
+    max_tokens: int = 32768,
     supabase_client=None,
     api_key: str = None,
 ) -> AsyncGenerator[str, None]:
@@ -504,7 +504,7 @@ async def stream_with_artifacts(
     system_prompt: str,
     messages: list,
     tools: Optional[list] = None,
-    max_tokens: int = 4096,
+    max_tokens: int = 32768,
 ) -> AsyncGenerator[str, None]:
     """
     Stream response with automatic artifact detection and streaming.

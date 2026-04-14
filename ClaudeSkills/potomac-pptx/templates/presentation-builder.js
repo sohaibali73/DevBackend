@@ -41,14 +41,11 @@ class PotomacPresentationBuilder {
     this.pres.subject = this.options.title;
     this.pres.title = this.options.title;
     
-    // Set slide size (16:9 aspect ratio)
-    this.pres.defineLayout({
-      name: 'POTOMAC_STANDARD',
-      width: 13.333,
-      height: 7.5
-    });
-    
-    this.pres.layout = 'POTOMAC_STANDARD';
+    // Standard 10"×7.5" (LAYOUT_16x9) — all element coordinates assume 10" width
+    this.pres.layout = 'LAYOUT_16x9';
+
+    // Define slide masters for consistent branding
+    PotomacSlideTemplates.defineAllMasters(this.pres, this.options.palette || 'STANDARD');
   }
 
   // =======================
@@ -120,7 +117,7 @@ class PotomacPresentationBuilder {
     const contentText = this.extractTextFromSlideData(slideData).toLowerCase();
     const classification = {
       type: 'content', // default
-      confidence: 0.5,
+      confidence: 0,   // fixed: was 0.5 which blocked all other classifications
       reasons: [],
       templateMethod: 'createContentSlide'
     };
@@ -162,16 +159,30 @@ class PotomacPresentationBuilder {
 
   getTemplateMethod(classificationType) {
     const methodMap = {
-      titleSlide: 'createStandardTitleSlide',
-      executiveSlide: 'createExecutiveTitleSlide',
-      sectionDivider: 'createSectionDividerSlide',
-      twoColumn: 'createTwoColumnSlide',
-      threeColumn: 'createThreeColumnSlide',
-      quote: 'createQuoteSlide',
-      metrics: 'createMetricSlide',
-      process: 'createProcessSlide',
-      callToAction: 'createCallToActionSlide',
-      content: 'createContentSlide' // default
+      // Original classifications
+      titleSlide:      'createStandardTitleSlide',
+      executiveSlide:  'createExecutiveTitleSlide',
+      sectionDivider:  'createSectionDividerSlide',
+      twoColumn:       'createTwoColumnSlide',
+      threeColumn:     'createThreeColumnSlide',
+      quote:           'createQuoteSlide',
+      metrics:         'createMetricSlide',
+      process:         'createProcessSlide',
+      callToAction:    'createCallToActionSlide',
+      content:         'createContentSlide',
+      // New DeckPlanner types
+      executive_summary: 'createExecutiveSummarySlide',
+      card_grid:         'createCardGridSlide',
+      icon_grid:         'createIconGridSlide',
+      hub_spoke:         'createHubSpokeSlide',
+      timeline:          'createTimelineSlide',
+      matrix_2x2:        'createMatrix2x2Slide',
+      scorecard:         'createScorecardSlide',
+      comparison:        'createComparisonSlide',
+      table:             'createTableSlide',
+      chart:             'createChartSlide',
+      image_content:     'createImageContentSlide',
+      image:             'createImageSlide',
     };
 
     return methodMap[classificationType] || 'createContentSlide';
@@ -326,6 +337,94 @@ class PotomacPresentationBuilder {
           slideData.buttonText
         );
       
+      // New DeckPlanner types
+      case 'createExecutiveSummarySlide':
+        return this.templates.createExecutiveSummarySlide(
+          slideData.title,
+          slideData.bullets || slideData.supporting_points || [],
+          slideData.context
+        );
+
+      case 'createCardGridSlide':
+        return this.templates.createCardGridSlide(
+          slideData.title,
+          slideData.cards || (slideData.columns || []).map((c, i) => ({ title: `Item ${i + 1}`, text: c }))
+        );
+
+      case 'createIconGridSlide':
+        return this.templates.createIconGridSlide(
+          slideData.title,
+          slideData.items || (slideData.bullets || []).map((b, i) => ({ icon: String(i + 1), title: b }))
+        );
+
+      case 'createHubSpokeSlide':
+        return this.templates.createHubSpokeSlide(
+          slideData.title,
+          { title: slideData.center_title || 'POTOMAC', subtitle: slideData.center_subtitle || '' },
+          (slideData.nodes || slideData.columns || []).map(n => typeof n === 'string' ? { label: n } : n)
+        );
+
+      case 'createTimelineSlide':
+        return this.templates.createTimelineSlide(
+          slideData.title,
+          slideData.milestones || (slideData.bullets || []).map(b => ({ label: b, status: 'pending' }))
+        );
+
+      case 'createMatrix2x2Slide':
+        return this.templates.createMatrix2x2Slide(
+          slideData.title,
+          slideData.x_axis_label || '',
+          slideData.y_axis_label || '',
+          slideData.quadrants || []
+        );
+
+      case 'createScorecardSlide':
+        return this.templates.createScorecardSlide(
+          slideData.title,
+          slideData.metrics || [],
+          slideData.subtitle
+        );
+
+      case 'createComparisonSlide':
+        return this.templates.createComparisonSlide(
+          slideData.title,
+          slideData.left_label || slideData.leftLabel || 'OPTION A',
+          slideData.right_label || slideData.rightLabel || 'OPTION B',
+          slideData.rows || [],
+          slideData.winner || null
+        );
+
+      case 'createTableSlide':
+        return this.templates.createTableSlide(
+          slideData.title,
+          slideData.headers || slideData.table_headers || [],
+          slideData.rows || slideData.table_rows || [],
+          slideData.options || {}
+        );
+
+      case 'createChartSlide':
+        return this.templates.createChartSlide(
+          slideData.title,
+          slideData.chart_type || slideData.chartType || 'bar',
+          slideData.chart_data || slideData.chartData || [],
+          slideData.chart_options || {}
+        );
+
+      case 'createImageContentSlide':
+        return this.templates.createImageContentSlide(
+          slideData.title,
+          slideData.image_path || slideData.imagePath || null,
+          slideData.content || slideData.bullets || '',
+          slideData.image_position || 'left'
+        );
+
+      case 'createImageSlide':
+        return this.templates.createImageSlide(
+          slideData.image_path || slideData.imagePath || null,
+          slideData.title,
+          slideData.overlay !== false
+        );
+
       default:
         return this.templates.createContentSlide(slideData.title, slideData.content);
     }

@@ -12,6 +12,7 @@ from fastapi import APIRouter, HTTPException, Depends, Request, UploadFile, File
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 import anthropic
+import httpx
 from anthropic import APIError, RateLimitError
 
 from api.dependencies import get_current_user_id, get_user_api_keys
@@ -810,7 +811,15 @@ async def chat_agent(
 
         try:
             engine = _get_engine(api_keys["claude"])
-            client = anthropic.AsyncAnthropic(api_key=api_keys["claude"])
+            client = anthropic.AsyncAnthropic(
+                api_key=api_keys["claude"],
+                timeout=httpx.Timeout(
+                    timeout=900.0,   # 15 min — covers Opus + extended thinking
+                    connect=30.0,
+                    read=900.0,
+                    write=60.0,
+                ),
+            )
 
             # Resolve model: use the exact string from the frontend if provided,
             # only fall back to the engine default (SONNET_4) when omitted.
@@ -903,10 +912,7 @@ async def chat_agent(
                 # Build API request parameters
                 api_params = {
                     "model": model_to_use,
-                    "max_tokens": min(
-                        model_config["max_output_tokens"],
-                        16384  # Reasonable default that works across models
-                    ),
+                    "max_tokens": model_config["max_output_tokens"],
                     "system": system_prompt,
                     "messages": messages,
                     "tools": tools,

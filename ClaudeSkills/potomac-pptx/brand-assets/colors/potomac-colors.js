@@ -22,12 +22,12 @@ const POTOMAC_COLORS = {
 
   // TONAL VARIATIONS (Auto-calculated)
   TONES: {
-    // Yellow Variations
+    // Yellow Variations (tints of #FEC00F blended toward white)
     YELLOW_100: '#FEC00F',    // 100% - Primary
-    YELLOW_80: '#FEC542',     // 80% opacity
-    YELLOW_60: '#FECA75',     // 60% opacity  
-    YELLOW_40: '#FECFA8',     // 40% opacity
-    YELLOW_20: '#FED4DA',     // 20% opacity
+    YELLOW_80: '#FECD3F',     // 80% tint (20% white blend)
+    YELLOW_60: '#FED96F',     // 60% tint (40% white blend)
+    YELLOW_40: '#FFE69F',     // 40% tint (60% white blend)
+    YELLOW_20: '#FFF2CF',     // 20% tint (80% white blend) — was incorrectly #FED4DA (pink!)
 
     // Gray Variations
     GRAY_100: '#212121',      // 100% - Primary

@@ -18,6 +18,7 @@ import traceback
 from typing import Dict, Any, List, Optional, AsyncGenerator
 
 import anthropic
+import httpx
 
 from core.llm.base import BaseLLMProvider, LLMResponse, StreamChunk
 
@@ -64,7 +65,13 @@ class AnthropicProvider(BaseLLMProvider):
     def __init__(self, api_key: str):
         self._api_key = api_key
         self._client: anthropic.AsyncAnthropic = anthropic.AsyncAnthropic(
-            api_key=api_key
+            api_key=api_key,
+            timeout=httpx.Timeout(
+                timeout=900.0,   # 15 min — covers Opus + extended thinking
+                connect=30.0,
+                read=900.0,
+                write=60.0,
+            ),
         )
         # Lazy-loaded AFL engine (only created if needed)
         self._afl_engine = None
