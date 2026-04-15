@@ -21,7 +21,6 @@ import anthropic
 
 from core.skills.loader import (
     SkillDefinition,
-    SKILL_REGISTRY,
     get_skill,
     list_skills,
 )
@@ -296,7 +295,7 @@ class SkillGateway:
         """Look up a skill or raise ValueError."""
         skill = get_skill(slug)
         if skill is None:
-            available = ", ".join(sorted(SKILL_REGISTRY.keys()))
+            available = ", ".join(sorted(s.slug for s in list_skills(enabled_only=False)))
             raise ValueError(f"Unknown skill '{slug}'. Available skills: {available}")
         if not skill.enabled:
             raise ValueError(f"Skill '{slug}' is currently disabled.")
