@@ -38,7 +38,8 @@ class PotomacSlideTemplates {
   constructor(pptxGenerator, options = {}) {
     this.pptx    = pptxGenerator;
     this.palette = SLIDE_PALETTES[options.palette || 'STANDARD'];
-    this.logoPath = path.join(__dirname, '../brand-assets/logos/potomac-full-logo.png');
+    // Store directory so we can pick the right variant per slide theme
+    this.logoDir = path.join(__dirname, '../brand-assets/logos/');
 
     this.config = {
       slideWidth:  10,
@@ -52,29 +53,97 @@ class PotomacSlideTemplates {
   // UTILITY HELPERS
   // ══════════════════════════════════════════════════════════════════════════
 
-  /** Place Potomac logo at an arbitrary position. Falls back to text. */
-  addLogo(slide, position) {
+  /**
+   * Return the path of the standalone ICON logo (square hexagon mark).
+   * Used for the small top-right watermark on every slide.
+   * Real dimensions: ~4.04" × 4.01" (nearly 1:1)
+   * @param {'light'|'dark'} theme
+   */
+  getIconLogoPath(theme = 'light') {
     const fs = require('fs');
-    if (fs.existsSync(this.logoPath)) {
+    const candidates = theme === 'dark'
+      ? ['potomac-icon-white.png', 'potomac-icon-yellow.png']
+      : ['potomac-icon-black.png', 'potomac-icon-yellow.png'];
+    for (const name of candidates) {
+      const p = path.join(this.logoDir, name);
+      if (fs.existsSync(p)) return p;
+    }
+    return null;
+  }
+
+  /**
+   * Return the path of the FULL WORDMARK logo (icon + "POTOMAC" text, very wide).
+   * Used for title slides and closing slides.
+   * Real dimensions: ~13.02" × 2.67" (roughly 4.87:1)
+   * @param {'light'|'dark'} theme
+   */
+  getFullLogoPath(theme = 'light') {
+    const fs = require('fs');
+    const candidates = theme === 'dark'
+      ? ['potomac-full-logo-white.png', 'potomac-full-logo.png']
+      : ['potomac-full-logo-black.png', 'potomac-full-logo.png'];
+    for (const name of candidates) {
+      const p = path.join(this.logoDir, name);
+      if (fs.existsSync(p)) return p;
+    }
+    return null;
+  }
+
+  /**
+   * Place the FULL WORDMARK logo at an explicit position (title/closing slides).
+   * Uses contain-sizing so the image is never distorted.
+   * @param {'light'|'dark'} theme
+   */
+  addLogo(slide, position, theme = 'light') {
+    const logoPath = this.getFullLogoPath(theme);
+    if (logoPath) {
       slide.addImage({
-        path: this.logoPath,
+        path: logoPath,
         x: position.x, y: position.y,
         w: position.w, h: position.h,
+        sizing: { type: 'contain', w: position.w, h: position.h },
       });
     } else {
       slide.addText('POTOMAC', {
         x: position.x, y: position.y,
         w: position.w, h: position.h,
-        fontFace: F.HEADERS.family, fontSize: 16,
-        bold: true, color: _c(C.PRIMARY.DARK_GRAY),
+        fontFace: F.HEADERS.family, fontSize: 14, bold: true,
+        color: theme === 'dark' ? _c(C.PRIMARY.WHITE) : _c(C.PRIMARY.DARK_GRAY),
         align: 'center', valign: 'middle',
       });
     }
   }
 
-  /** Standard small top-right logo. */
-  addStandardLogo(slide) {
-    this.addLogo(slide, { x: 8.8, y: 0.3, w: 1, h: 0.4 });
+  /**
+   * Standard small top-right watermark — uses the ICON logo (square mark).
+   *
+   * Based on actual Potomac slide specs:
+   *   Original icon size: 4.04" × 4.01"  (nearly square)
+   *   Displayed at 32% → ~1.29" × 1.28"
+   *   Positioned at top-right corner of each slide.
+   *
+   * In pptxgenjs 10"×7.5" coordinates:
+   *   x: 8.72"  (leaves ~0.28" right margin)
+   *   y: 0.12"  (tight to top)
+   *   w: 0.95"  h: 0.95"  (square — matches real ~1:1 aspect ratio)
+   */
+  addStandardLogo(slide, theme = 'light') {
+    const logoPath = this.getIconLogoPath(theme);
+    if (logoPath) {
+      slide.addImage({
+        path: logoPath,
+        x: 8.72, y: 0.12, w: 0.95, h: 0.95,
+        sizing: { type: 'contain', w: 0.95, h: 0.95 },
+      });
+    } else {
+      // Text fallback — show just the wordmark abbreviated
+      slide.addText('POTOMAC', {
+        x: 8.2, y: 0.12, w: 1.5, h: 0.5,
+        fontFace: F.HEADERS.family, fontSize: 12, bold: true,
+        color: theme === 'dark' ? _c(C.PRIMARY.WHITE) : _c(C.PRIMARY.DARK_GRAY),
+        align: 'right', valign: 'middle',
+      });
+    }
   }
 
   /** Yellow accent underline bar below slide title. */
@@ -115,7 +184,8 @@ class PotomacSlideTemplates {
   createStandardTitleSlide(title, subtitle = null, options = {}) {
     const slide = this.pptx.addSlide();
     slide.background = { color: _c(this.palette.background) };
-    this.addLogo(slide, { x: 8.5, y: 0.5, w: 1.3, h: 0.5 });
+    // Full wordmark top-left: width ≈ 4.7" × height ≈ 0.97" (scaled from 6.28" × 1.29" on 13.33" slide)
+    this.addLogo(slide, { x: 0.5, y: 0.25, w: 4.7, h: 0.97 }, 'light');
 
     slide.addText(title.toUpperCase(), {
       x: 0.5, y: 2.5, w: 9, h: 1.5,
@@ -148,7 +218,8 @@ class PotomacSlideTemplates {
   createExecutiveTitleSlide(title, subtitle = null, tagline = 'Built to Conquer Risk\u00AE') {
     const slide = this.pptx.addSlide();
     slide.background = { color: _c(C.PRIMARY.DARK_GRAY) };
-    this.addLogo(slide, { x: 8.3, y: 0.4, w: 1.5, h: 0.6 });
+    // Full white wordmark top-left on dark background
+    this.addLogo(slide, { x: 0.5, y: 0.25, w: 4.7, h: 0.97 }, 'dark');
 
     slide.addText(title.toUpperCase(), {
       x: 0.5, y: 2.2, w: 9, h: 1.8,
@@ -639,7 +710,8 @@ class PotomacSlideTemplates {
   createClosingSlide(title = 'THANK YOU', contactInfo = null) {
     const slide = this.pptx.addSlide();
     slide.background = { color: _c(this.palette.background) };
-    this.addLogo(slide, { x: 4.25, y: 1.5, w: 1.5, h: 0.6 });
+    // Full wordmark centred: (10 - 4.7) / 2 = 2.65" from left
+    this.addLogo(slide, { x: 2.65, y: 1.5, w: 4.7, h: 0.97 }, 'light');
 
     slide.addText(title.toUpperCase(), {
       x: 0.5, y: 2.8, w: 9, h: 1,
@@ -713,7 +785,7 @@ class PotomacSlideTemplates {
   createExecutiveSummarySlide(headline, points = [], context = null) {
     const slide = this.pptx.addSlide();
     slide.background = { color: _c(C.PRIMARY.DARK_GRAY) };
-    this.addStandardLogo(slide);
+    this.addStandardLogo(slide, 'dark');
 
     slide.addText((headline || 'EXECUTIVE SUMMARY').toUpperCase(), {
       x: 0.5, y: 0.4, w: 8, h: 1.1,
@@ -940,6 +1012,15 @@ class PotomacSlideTemplates {
       const angle = (idx / safeNodes.length) * 2 * Math.PI - Math.PI / 2;
       const nx = HUB_CX + SPOKE_R * Math.cos(angle);
       const ny = HUB_CY + SPOKE_R * Math.sin(angle);
+
+      // Spoke line — from hub edge to node edge (drawn first so nodes render on top)
+      slide.addShape(this.pptx.ShapeType.line, {
+        x: HUB_CX + HUB_R * Math.cos(angle),
+        y: HUB_CY + HUB_R * Math.sin(angle),
+        w: (SPOKE_R - NODE_R - HUB_R) * Math.cos(angle),
+        h: (SPOKE_R - NODE_R - HUB_R) * Math.sin(angle),
+        line: { color: _c(C.TONES.GRAY_40), width: 1.5 },
+      });
 
       // Node circle
       slide.addShape(this.pptx.ShapeType.ellipse, {
@@ -1497,7 +1578,8 @@ class PotomacSlideTemplates {
       });
     }
 
-    this.addLogo(slide, { x: 8.8, y: 0.3, w: 1, h: 0.4 });
+    // Dark slide — use white logo variant
+    this.addLogo(slide, { x: 8.2, y: 0.22, w: 1.6, h: 0.55 }, 'dark');
     return slide;
   }
 
@@ -1512,34 +1594,52 @@ class PotomacSlideTemplates {
    *   PotomacSlideTemplates.defineAllMasters(pptxInstance)
    */
   static defineAllMasters(pptxInstance, palette = 'STANDARD') {
-    const pal      = SLIDE_PALETTES[palette] || SLIDE_PALETTES.STANDARD;
-    const logoPath = path.join(__dirname, '../brand-assets/logos/potomac-full-logo.png');
-    const fs       = require('fs');
+    const pal     = SLIDE_PALETTES[palette] || SLIDE_PALETTES.STANDARD;
+    const logoDir = path.join(__dirname, '../brand-assets/logos/');
+    const fs      = require('fs');
 
-    const makeLogo = (colorHex) => fs.existsSync(logoPath)
-      ? { image: { path: logoPath, x: 8.8, y: 0.3, w: 1, h: 0.4 } }
-      : { text: { text: 'POTOMAC', options: {
-          x: 8.8, y: 0.3, w: 1, h: 0.4,
-          fontSize: 11, bold: true,
-          color: colorHex, fontFace: F.HEADERS.family, align: 'center',
-        } } };
+    // Slide masters use the ICON logo (square hexagon mark) in the top-right corner,
+    // matching addStandardLogo(). This is the small watermark present on every slide.
+    const getIconPath = (theme) => {
+      const candidates = theme === 'dark'
+        ? ['potomac-icon-white.png', 'potomac-icon-yellow.png']
+        : ['potomac-icon-black.png', 'potomac-icon-yellow.png'];
+      for (const name of candidates) {
+        const p = path.join(logoDir, name);
+        if (fs.existsSync(p)) return p;
+      }
+      return null;
+    };
+
+    // Square bounding box (0.95"×0.95") — matches real icon dimensions at 32% scale
+    const makeLogo = (theme, fallbackColor) => {
+      const logoPath = getIconPath(theme);
+      return logoPath
+        ? { image: { path: logoPath, x: 8.72, y: 0.12, w: 0.95, h: 0.95,
+                     sizing: { type: 'contain', w: 0.95, h: 0.95 } } }
+        : { text: { text: 'POTOMAC', options: {
+              x: 8.2, y: 0.12, w: 1.5, h: 0.5,
+              fontSize: 12, bold: true, color: fallbackColor,
+              fontFace: F.HEADERS.family, align: 'right',
+            } } };
+    };
 
     pptxInstance.defineSlideMaster({
       title: 'POTOMAC_LIGHT',
       background: { color: _c(pal.background) },
-      objects: [ makeLogo(_c(C.PRIMARY.DARK_GRAY)) ],
+      objects: [ makeLogo('light', _c(C.PRIMARY.DARK_GRAY)) ],
     });
 
     pptxInstance.defineSlideMaster({
       title: 'POTOMAC_DARK',
       background: { color: _c(C.PRIMARY.DARK_GRAY) },
-      objects: [ makeLogo('FFFFFF') ],
+      objects: [ makeLogo('dark', 'FFFFFF') ],
     });
 
     pptxInstance.defineSlideMaster({
       title: 'POTOMAC_ACCENT',
       background: { color: _c(C.TONES.YELLOW_20) },
-      objects: [ makeLogo(_c(C.PRIMARY.DARK_GRAY)) ],
+      objects: [ makeLogo('light', _c(C.PRIMARY.DARK_GRAY)) ],
     });
   }
 

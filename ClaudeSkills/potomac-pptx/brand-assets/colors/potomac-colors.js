@@ -70,24 +70,28 @@ const COLOR_RULES = {
 
 // COLOR VALIDATION FUNCTIONS
 function validateColor(color, context = 'general') {
-  const upperColor = color.toUpperCase();
-  
+  // Normalize: always compare WITH '#' prefix (some callers strip it via _c(), others don't)
+  const raw = String(color).toUpperCase().replace('#', '');
+  const normalized = '#' + raw;
+
   // Check if color is forbidden
-  if (COLOR_RULES.FORBIDDEN.includes(upperColor)) {
+  if (COLOR_RULES.FORBIDDEN.some(c => c.toUpperCase() === normalized)) {
     throw new Error(`BRAND VIOLATION: Color ${color} is forbidden. Use Potomac brand colors only.`);
   }
 
   // Check if color is always allowed
-  if (COLOR_RULES.ALWAYS_ALLOWED.includes(upperColor)) {
+  if (COLOR_RULES.ALWAYS_ALLOWED.some(c => c.toUpperCase() === normalized)) {
     return true;
   }
 
   // Check context-specific restrictions
-  if (context === 'investment_strategies' && COLOR_RULES.INVESTMENT_STRATEGIES_ONLY.includes(upperColor)) {
+  if (context === 'investment_strategies' &&
+      COLOR_RULES.INVESTMENT_STRATEGIES_ONLY.some(c => c.toUpperCase() === normalized)) {
     return true;
   }
 
-  if (context === 'accent' && COLOR_RULES.ACCENT_ONLY.includes(upperColor)) {
+  if (context === 'accent' &&
+      COLOR_RULES.ACCENT_ONLY.some(c => c.toUpperCase() === normalized)) {
     return true;
   }
 
@@ -110,12 +114,39 @@ function getApprovedColors(context = 'general') {
 }
 
 function getNearestBrandColor(inputColor) {
-  // Convert RGB to hex if needed and find closest brand color
-  // This is a simplified version - could be enhanced with proper color distance calculation
-  const brandColors = COLOR_RULES.ALWAYS_ALLOWED;
-  
-  // For now, default to primary yellow for non-compliant colors
-  return POTOMAC_COLORS.PRIMARY.YELLOW;
+  // Parse a 6-digit hex string (with or without '#') into {r,g,b}
+  function hexToRgb(hex) {
+    const h = String(hex).replace('#', '');
+    if (h.length !== 6) return { r: 0, g: 0, b: 0 };
+    return {
+      r: parseInt(h.slice(0, 2), 16),
+      g: parseInt(h.slice(2, 4), 16),
+      b: parseInt(h.slice(4, 6), 16),
+    };
+  }
+
+  // Euclidean distance in RGB space
+  function colorDistance(hex1, hex2) {
+    const a = hexToRgb(hex1);
+    const b = hexToRgb(hex2);
+    return Math.sqrt((a.r - b.r) ** 2 + (a.g - b.g) ** 2 + (a.b - b.b) ** 2);
+  }
+
+  const candidates = COLOR_RULES.ALWAYS_ALLOWED.filter(c => c.length === 7); // valid hex only
+  if (!candidates.length) return POTOMAC_COLORS.PRIMARY.YELLOW;
+
+  let nearest = candidates[0];
+  let minDist = Infinity;
+
+  candidates.forEach(candidate => {
+    const dist = colorDistance(inputColor, candidate);
+    if (dist < minDist) {
+      minDist = dist;
+      nearest = candidate;
+    }
+  });
+
+  return nearest;
 }
 
 // COLOR PALETTE DEFINITIONS

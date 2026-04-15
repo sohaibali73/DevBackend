@@ -10,6 +10,10 @@ const { PotomacSlideTemplates } = require('../templates/slide-templates.js');
 const { PotomacDynamicTables } = require('../data-tables/dynamic-tables.js');
 const { PotomacVisualElements } = require('../infographics/visual-elements.js');
 const { POTOMAC_COLORS } = require('../brand-assets/colors/potomac-colors.js');
+const { POTOMAC_FONTS } = require('../brand-assets/fonts/potomac-fonts.js');  // FIX: was missing
+
+// Strip leading '#' from brand colors (pptxgenjs does not want the '#' prefix)
+function _c(hex) { return hex ? String(hex).replace('#', '') : 'FEC00F'; }
 
 class PotomacIntegratedAssets {
   constructor(pptxGenerator, options = {}) {
@@ -196,26 +200,25 @@ class PotomacIntegratedAssets {
     const slide = this.pptx.addSlide();
     
     // Set background
-    slide.background = { color: POTOMAC_COLORS.PRIMARY.WHITE };
-    
+    slide.background = { color: _c(POTOMAC_COLORS.PRIMARY.WHITE) };
+
     // Add logo
-    this.templates.addLogo(slide, {
-      x: 8.8, y: 0.3, w: 1, h: 0.4
-    });
-    
+    this.templates.addLogo(slide, { x: 8.8, y: 0.3, w: 1, h: 0.4 });
+
     // Add title
     slide.addText((slideData.title || 'DATA ANALYSIS').toUpperCase(), {
       x: 0.5, y: 0.5, w: 8, h: 1,
       fontFace: POTOMAC_FONTS.HEADERS.family,
-      fontSize: 30, fontWeight: 'bold',
-      color: POTOMAC_COLORS.PRIMARY.DARK_GRAY,
-      bold: true
+      fontSize: 30,
+      color: _c(POTOMAC_COLORS.PRIMARY.DARK_GRAY),
+      bold: true,
     });
-    
-    // Title underline
-    slide.addShape(this.pptx.shapes.RECTANGLE, {
+
+    // Title underline — FIX: was this.pptx.shapes.RECTANGLE (deprecated v2 API)
+    slide.addShape(this.pptx.ShapeType.rect, {
       x: 0.5, y: 1.4, w: 2, h: 0.05,
-      fill: { color: POTOMAC_COLORS.PRIMARY.YELLOW }
+      fill: { color: _c(POTOMAC_COLORS.PRIMARY.YELLOW) },
+      line: { color: _c(POTOMAC_COLORS.PRIMARY.YELLOW), width: 0 },
     });
     
     // Detect and apply appropriate asset
@@ -226,8 +229,8 @@ class PotomacIntegratedAssets {
       slide.addText(slideData.content, {
         x: 0.5, y: 2.2, w: 9, h: 3,
         fontFace: POTOMAC_FONTS.BODY.family, fontSize: 16,
-        color: POTOMAC_COLORS.PRIMARY.DARK_GRAY,
-        lineSpacing: 24
+        color: _c(POTOMAC_COLORS.PRIMARY.DARK_GRAY),
+        lineSpacing: 24,
       });
     }
     
@@ -244,13 +247,11 @@ class PotomacIntegratedAssets {
     const slide = this.pptx.addSlide();
     
     // Set background
-    slide.background = { color: POTOMAC_COLORS.PRIMARY.WHITE };
-    
+    slide.background = { color: _c(POTOMAC_COLORS.PRIMARY.WHITE) };
+
     // Add logo
-    this.templates.addLogo(slide, {
-      x: 8.8, y: 0.3, w: 1, h: 0.4
-    });
-    
+    this.templates.addLogo(slide, { x: 8.8, y: 0.3, w: 1, h: 0.4 });
+
     // Detect process-related content and apply visual elements
     const appliedAsset = this.detectAndAddAssets(slide, slideData);
     
@@ -272,20 +273,18 @@ class PotomacIntegratedAssets {
     const slide = this.pptx.addSlide();
     
     // Background
-    slide.background = { color: POTOMAC_COLORS.PRIMARY.WHITE };
-    
+    slide.background = { color: _c(POTOMAC_COLORS.PRIMARY.WHITE) };
+
     // Logo
-    this.templates.addLogo(slide, {
-      x: 8.8, y: 0.3, w: 1, h: 0.4
-    });
-    
-    // Strategy title
+    this.templates.addLogo(slide, { x: 8.8, y: 0.3, w: 1, h: 0.4 });
+
+    // Strategy title  — FIX: removed fontWeight:'bold' (pptxgenjs ignores it), fixed _c()
     slide.addText((slideData.title || 'STRATEGY OVERVIEW').toUpperCase(), {
       x: 0.5, y: 0.5, w: 8, h: 1,
       fontFace: POTOMAC_FONTS.HEADERS.family,
-      fontSize: 28, fontWeight: 'bold',
-      color: POTOMAC_COLORS.PRIMARY.DARK_GRAY,
-      bold: true
+      fontSize: 28,
+      color: _c(POTOMAC_COLORS.PRIMARY.DARK_GRAY),
+      bold: true,
     });
     
     // If strategy performance data is available, create performance visualization
@@ -411,21 +410,14 @@ class PotomacAssetIntegratedBuilder {
   }
 
   setupPresentation() {
-    // Set presentation properties (same as Phase 2)
-    this.pres.author = this.options.author;
-    this.pres.company = this.options.company;
+    this.pres.author   = this.options.author;
+    this.pres.company  = this.options.company;
     this.pres.revision = '1';
-    this.pres.subject = this.options.title;
-    this.pres.title = this.options.title;
-    
-    // Set slide size
-    this.pres.defineLayout({
-      name: 'POTOMAC_STANDARD',
-      width: 13.333,
-      height: 7.5
-    });
-    
-    this.pres.layout = 'POTOMAC_STANDARD';
+    this.pres.subject  = this.options.title;
+    this.pres.title    = this.options.title;
+    // FIX: was defineLayout({width:13.333}) — wrong! All coordinates assume 10" width.
+    // LAYOUT_16x9 is the correct pptxgenjs name for the standard 10"×7.5" slide.
+    this.pres.layout   = 'LAYOUT_16x9';
   }
 
   /**

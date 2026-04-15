@@ -24,7 +24,9 @@
           "slide_range": {"type": "array", "items": {"type": "integer"}, "description": "Slide range [start, end] for merge operations (1-based inclusive)"},
           "output_filename": {"type": "string", "description": "Desired output filename (e.g., 'Q2_Strategy.pptx')"},
           "generate_notes": {"type": "boolean", "description": "Also generate speaker notes for every slide"},
-          "quick_mode": {"type": "boolean", "description": "Use fast heuristic outline instead of AI planning"}
+          "quick_mode": {"type": "boolean", "description": "Use fast heuristic outline instead of AI planning"},
+          "palette": {"type": "string", "description": "Slide color palette: STANDARD | DARK | INVESTMENT | FUNDS (default: STANDARD)"},
+          "disclaimer": {"type": "string", "description": "Custom footer disclaimer for table/chart slides (overrides default regulatory text)"}
         }
       }
     },
@@ -121,6 +123,7 @@
     "session_revise": "POST /pptx/session/{session_id}/revise — Apply further revisions",
     "session_undo": "POST /pptx/session/{session_id}/undo — Undo last revision",
     "templates": "GET /pptx/templates — Browse 16+ built-in slide templates",
+    "session_end": "DELETE /pptx/session/{session_id} — End editing session and free resources",
     "library_search": "GET /pptx/library/search?q=... — Search corporate slide library"
   }
 }

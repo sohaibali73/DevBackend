@@ -1,0 +1,36 @@
+{
+  "name": "potomac-pptx-skill",
+  "version": "3.0.0",
+  "description": "Potomac branded PowerPoint generation skill — PptxGenJS templates, data tables, infographics, and DeckPlanner bridge renderer.",
+  "main": "templates/slide-templates.js",
+  "scripts": {
+    "render": "node templates/pptxgenjs-renderer.js",
+    "generate": "node scripts/generate-potomac-presentation.js",
+    "test": "node scripts/generate-potomac-presentation.js --output test-output.pptx && echo 'Test passed'"
+  },
+  "dependencies": {
+    "pptxgenjs": "^3.12.0"
+  },
+  "engines": {
+    "node": ">=16.0.0"
+  },
+  "keywords": [
+    "pptx",
+    "powerpoint",
+    "presentation",
+    "potomac",
+    "investment",
+    "branded",
+    "slides"
+  ],
+  "author": "Potomac",
+  "license": "SEE LICENSE.txt",
+  "notes": {
+    "layout": "All slides use LAYOUT_16x9 (10\" × 7.5\"). All coordinates are in inches.",
+    "colors": "Brand colors defined in brand-assets/colors/potomac-colors.js. Use _c() helper to strip '#' prefix when passing to pptxgenjs.",
+    "fonts": "Headers: Rajdhani (bold, ALL CAPS). Body: Quicksand. PowerPoint fallbacks: Arial Black / Calibri.",
+    "shapes": "Use pptx.ShapeType.rect / .ellipse / .line / .rightArrow (NOT deprecated pptx.shapes.*)",
+    "bold": "Use bold:true (NOT fontWeight:'700'). pptxgenjs ignores fontWeight.",
+    "renderer": "templates/pptxgenjs-renderer.js accepts a DeckPlan JSON and routes each slide to the correct template."
+  }
+}
