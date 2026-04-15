@@ -43,51 +43,12 @@ import httpx
 # Initialize logger FIRST before any code that might use it
 logger = logging.getLogger(__name__)
 
-# Single source of truth for skills / streaming configuration
-from core.skills_legacy import SKILLS_BETAS, CODE_EXECUTION_TOOL
 from core.context_manager import truncate_context, MAX_RECENT_MESSAGES
 from core.streaming import stream_claude_response
 
-# Import the AFL system prompt builders from core/prompts/afl.py.
-# Fallbacks kept so a wrong path never crashes all routers at startup.
-try:
-    from core.prompts.afl import get_base_prompt, get_chat_prompt
-    _AFL_IMPORT_SOURCE = "core.prompts.afl"
-except ImportError:
-    try:
-        from routes.afl import get_base_prompt, get_chat_prompt
-        _AFL_IMPORT_SOURCE = "routes.afl"
-    except ImportError:
-        try:
-            from afl import get_base_prompt, get_chat_prompt
-            _AFL_IMPORT_SOURCE = "afl"
-        except ImportError:
-            _AFL_IMPORT_SOURCE = "inline-fallback"
-            logger.warning(
-                "afl.py not found at 'core.prompts.afl', 'routes.afl', or 'afl' — "
-                "using minimal inline prompts. Deploy afl.py to fix this."
-            )
-            def get_base_prompt() -> str:
-                return (
-                    "You are an expert AmiBroker Formula Language (AFL) developer.\n"
-                    "CRITICAL RULES:\n"
-                    "- RSI(14) not RSI(Close,14). MA(Close,20) not MA(20). OBV() no args.\n"
-                    "- Never shadow built-ins: use RSI_Val not RSI, MALength not MA.\n"
-                    "- Always ExRem(Buy,Sell) and ExRem(Sell,Buy).\n"
-                    "- RAG Param pattern: varDefault/Min/Max/Step → Var_Dflt=Param() → Var=Optimize().\n"
-                    "- CommissionMode 2 only (0.0005). Never mode 3.\n"
-                    "- ParamToggle needs 3 args: ParamToggle('x','No|Yes',0).\n"
-                    "- Never GetBacktesterObject(). Never if(Status('mode')==1).\n"
-                    "- _SECTION_BEGIN/_SECTION_END for all sections.\n"
-                    "- Use colorViolet not colorPurple (colorPurple does not exist).\n"
-                )
-            def get_chat_prompt() -> str:
-                return (
-                    "You are an expert AFL/AmiBroker assistant. "
-                    "Write correct AFL code following all syntax rules. "
-                    "RSI(14) not RSI(Close,14). MA(Close,20) not MA(20). "
-                    "Always use ExRem() and Param()/Optimize() patterns."
-                )
+# Import AFL system prompt builders — single clean import, no fallback chain needed.
+from core.prompts.afl import get_base_prompt, get_chat_prompt
+_AFL_IMPORT_SOURCE = "core.prompts.afl"
 
 # Training manager is optional — gracefully degraded if the module is absent
 try:
@@ -164,12 +125,6 @@ MODEL_MAX_TOKENS: Dict[str, int] = {
     "claude-sonnet-4-5":             8192,
     "claude-haiku-4-5-20251001":     8192,
     "claude-haiku-4-5":              8192,
-}
-
-AMIBROKER_SKILL_ID  = "skill_01GG6E88EuXr9H9tqLp51sH5"
-
-SKILLS_CONTAINER = {
-    "skills": [{"skill_id": AMIBROKER_SKILL_ID, "type": "custom"}]
 }
 
 # ── Module-level regex for stripping code-fence language tags ─────────────────
@@ -364,11 +319,12 @@ class ClaudeAFLEngine:
         messages:   List[Dict],
         max_tokens: Optional[int] = None,
         stream:     bool = False,
-        use_skill:  bool = True,
         enable_thinking: Optional[bool] = None,
     ):
         """
         Single entry point for all Claude API calls.
+        Uses the standard (non-beta) API — AFL generation is pure LLM text
+        generation validated by core/afl_validator.py server-side.
 
         Returns
         ───────
@@ -389,8 +345,6 @@ class ClaudeAFLEngine:
         }
 
         # Add extended thinking if enabled
-        # Per Anthropic docs: "Extended thinking can be used alongside tool use"
-        # Works with both beta.messages.create() and messages.create()
         thinking_enabled = (
             enable_thinking if enable_thinking is not None
             else self.thinking_config.mode != ThinkingMode.DISABLED
@@ -401,25 +355,12 @@ class ClaudeAFLEngine:
             if thinking_params:
                 kwargs["thinking"] = thinking_params
 
-        # Only attach skills infrastructure when actually generating AFL
-        if use_skill:
-            kwargs["betas"]     = SKILLS_BETAS
-            kwargs["container"] = SKILLS_CONTAINER
-            kwargs["tools"]     = [CODE_EXECUTION_TOOL]
-
         try:
             if stream:
-                # Return the generator directly (don't await)
                 return self._stream_wrapper(**kwargs)
 
-            # Non-streaming path: await the coroutine and extract text
-            if use_skill:
-                response = await self.client.beta.messages.create(**kwargs)
-            else:
-                # Non-skill calls use the standard (non-beta) API
-                standard_kwargs = {k: v for k, v in kwargs.items()
-                                   if k not in ("betas", "container", "tools")}
-                response = await self.client.messages.create(**standard_kwargs)
+            # Standard (non-beta) API — no code execution container
+            response = await self.client.messages.create(**kwargs)
 
             # Log token usage
             usage = getattr(response, "usage", None)
@@ -725,7 +666,6 @@ class ClaudeAFLEngine:
         raw = await self._call_claude(
             system="You are an expert AFL debugger. Fix syntax and logic issues. Return corrected code only in ```afl block.",
             messages=[{"role": "user", "content": prompt}],
-            use_skill=False,
         )
         code_out, _ = self._parse_response(raw)
         return code_out
@@ -737,7 +677,6 @@ class ClaudeAFLEngine:
         raw = await self._call_claude(
             system="You are an AFL optimization expert. Improve performance and style. Return improved code only in ```afl block.",
             messages=[{"role": "user", "content": prompt}],
-            use_skill=False,
         )
         code_out, _ = self._parse_response(raw)
         return code_out
@@ -752,7 +691,6 @@ class ClaudeAFLEngine:
         return await self._call_claude(
             system="Explain AFL code clearly and concisely for non-programmers.",
             messages=[{"role": "user", "content": prompt}],
-            use_skill=False,
         )
 
     async def chat(
@@ -775,8 +713,7 @@ class ClaudeAFLEngine:
             messages.extend(history[-MAX_RECENT_MESSAGES:])
         messages.append({"role": "user", "content": message})
 
-        # Always use the AFL skill so every chat benefits from the AmiBroker AFL Developer skill
-        return await self._call_claude(system, messages, stream=stream, use_skill=True)
+        return await self._call_claude(system, messages, stream=stream)
 
     async def stream_chat(
         self,

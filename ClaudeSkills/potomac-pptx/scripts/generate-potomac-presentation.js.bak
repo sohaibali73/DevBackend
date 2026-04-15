@@ -39,7 +39,7 @@ class PotomacPresentationGenerator {
     this.pres.title = this.options.title;
     
     // Standard 10"×7.5" — element coordinates assume 10" width
-    this.pres.layout = 'LAYOUT_WIDE';
+    this.pres.layout = 'LAYOUT_16x9';
   }
 
   // SLIDE TEMPLATES
@@ -58,18 +58,18 @@ class PotomacPresentationGenerator {
     
     // Add logo (top right)
     this.addLogo(slide, {
-      x: 11.3333,
-      y: 0.6667,
-      w: 1.7333,
-      h: 0.6667
+      x: 8.5,
+      y: 0.5,
+      w: 1.3,
+      h: 0.5
     });
     
     // Add main title
     slide.addText(title.toUpperCase(), {
-      x: 0.6667,
-      y: 3.3333,
-      w: 12.0,
-      h: 2.0,
+      x: 0.5,
+      y: 2.5,
+      w: 9,
+      h: 1.5,
       fontFace: POTOMAC_FONTS.HEADERS.family,
       fontSize: 44,
       bold: true,
@@ -81,10 +81,10 @@ class PotomacPresentationGenerator {
     // Add subtitle if provided
     if (subtitle) {
       slide.addText(subtitle, {
-        x: 0.6667,
-        y: 5.6,
-        w: 12.0,
-        h: 1.0667,
+        x: 0.5,
+        y: 4.2,
+        w: 9,
+        h: 0.8,
         fontFace: POTOMAC_FONTS.BODY.family,
         fontSize: 20,
         color: POTOMAC_COLORS.TONES.GRAY_60,
@@ -95,12 +95,12 @@ class PotomacPresentationGenerator {
     
     // Add accent bar
     slide.addShape(this.pres.ShapeType.rect, {
-      x: 0.6667,
-      y: 7.3333,
-      w: 12.0,
-      h: 0.1333,
+      x: 0.5,
+      y: 5.5,
+      w: 9,
+      h: 0.1,
       fill: { color: palette.accent.replace('#', '') },
-      line: { color: palette.accent.replace('#', ''), width: 0.0 },
+      line: { color: palette.accent.replace('#', ''), width: 0 },
     });
     
     return slide;
@@ -120,18 +120,18 @@ class PotomacPresentationGenerator {
     
     // Add logo (small, top right)
     this.addLogo(slide, {
-      x: 11.7333,
-      y: 0.4,
-      w: 1.3333,
-      h: 0.5333
+      x: 8.8,
+      y: 0.3,
+      w: 1,
+      h: 0.4
     });
     
     // Add slide title
     slide.addText(title.toUpperCase(), {
-      x: 0.6667,
-      y: 0.6667,
-      w: 10.6667,
-      h: 1.3333,
+      x: 0.5,
+      y: 0.5,
+      w: 8,
+      h: 1,
       fontFace: POTOMAC_FONTS.HEADERS.family,
       fontSize: 36,
       bold: true,
@@ -140,12 +140,12 @@ class PotomacPresentationGenerator {
     
     // Add title underline
     slide.addShape(this.pres.ShapeType.rect, {
-      x: 0.6667,
-      y: 1.8667,
-      w: 2.6667,
-      h: 0.0667,
+      x: 0.5,
+      y: 1.4,
+      w: 2,
+      h: 0.05,
       fill: { color: palette.accent.replace('#', '') },
-      line: { color: palette.accent.replace('#', ''), width: 0.0 },
+      line: { color: palette.accent.replace('#', ''), width: 0 },
     });
     
     // Add content bullets
@@ -153,10 +153,10 @@ class PotomacPresentationGenerator {
       const bulletText = content.map(item => ({ text: item, options: { bullet: true } }));
       
       slide.addText(bulletText, {
-        x: 0.6667,
-        y: 2.9333,
-        w: 12.0,
-        h: 6.0,
+        x: 0.5,
+        y: 2.2,
+        w: 9,
+        h: 4.5,
         fontFace: POTOMAC_FONTS.BODY.family,
         fontSize: 18,
         color: POTOMAC_COLORS.PRIMARY.DARK_GRAY,
@@ -166,10 +166,10 @@ class PotomacPresentationGenerator {
     } else {
       // Single paragraph content
       slide.addText(content, {
-        x: 0.6667,
-        y: 2.9333,
-        w: 12.0,
-        h: 6.0,
+        x: 0.5,
+        y: 2.2,
+        w: 9,
+        h: 4.5,
         fontFace: POTOMAC_FONTS.BODY.family,
         fontSize: 16,
         color: POTOMAC_COLORS.PRIMARY.DARK_GRAY,
@@ -194,18 +194,18 @@ class PotomacPresentationGenerator {
     
     // Add logo
     this.addLogo(slide, {
-      x: 11.7333,
-      y: 0.4,
-      w: 1.3333,
-      h: 0.5333
+      x: 8.8,
+      y: 0.3,
+      w: 1,
+      h: 0.4
     });
     
     // Add title
     slide.addText(title.toUpperCase(), {
-      x: 0.6667,
-      y: 0.6667,
-      w: 10.6667,
-      h: 1.3333,
+      x: 0.5,
+      y: 0.5,
+      w: 8,
+      h: 1,
       fontFace: POTOMAC_FONTS.HEADERS.family,
       fontSize: 32,
       bold: true,
@@ -214,20 +214,20 @@ class PotomacPresentationGenerator {
     
     // Title underline
     slide.addShape(this.pres.ShapeType.rect, {
-      x: 0.6667,
-      y: 1.8667,
-      w: 2.6667,
-      h: 0.0667,
+      x: 0.5,
+      y: 1.4,
+      w: 2,
+      h: 0.05,
       fill: { color: palette.accent.replace('#', '') },
-      line: { color: palette.accent.replace('#', ''), width: 0.0 },
+      line: { color: palette.accent.replace('#', ''), width: 0 },
     });
     
     // Left column
     slide.addText(leftContent, {
-      x: 0.6667,
-      y: 2.9333,
-      w: 5.7333,
-      h: 6.0,
+      x: 0.5,
+      y: 2.2,
+      w: 4.3,
+      h: 4.5,
       fontFace: POTOMAC_FONTS.BODY.family,
       fontSize: 16,
       color: POTOMAC_COLORS.PRIMARY.DARK_GRAY,
@@ -236,10 +236,10 @@ class PotomacPresentationGenerator {
     
     // Right column
     slide.addText(rightContent, {
-      x: 6.9333,
-      y: 2.9333,
-      w: 5.7333,
-      h: 6.0,
+      x: 5.2,
+      y: 2.2,
+      w: 4.3,
+      h: 4.5,
       fontFace: POTOMAC_FONTS.BODY.family,
       fontSize: 16,
       color: POTOMAC_COLORS.PRIMARY.DARK_GRAY,
@@ -248,12 +248,12 @@ class PotomacPresentationGenerator {
     
     // Column separator
     slide.addShape(this.pres.ShapeType.rect, {
-      x: 6.64,
-      y: 2.9333,
-      w: 0.0533,
-      h: 5.3333,
+      x: 4.98,
+      y: 2.2,
+      w: 0.04,
+      h: 4,
       fill: { color: POTOMAC_COLORS.TONES.GRAY_20.replace('#', '') },
-      line: { color: POTOMAC_COLORS.TONES.GRAY_20.replace('#', ''), width: 0.0 },
+      line: { color: POTOMAC_COLORS.TONES.GRAY_20.replace('#', ''), width: 0 },
     });
     
     return slide;
@@ -273,18 +273,18 @@ class PotomacPresentationGenerator {
     
     // Add large logo (centered)
     this.addLogo(slide, {
-      x: 5.6667,
-      y: 2.0,
-      w: 2.0,
-      h: 0.8
+      x: 4.25,
+      y: 1.5,
+      w: 1.5,
+      h: 0.6
     });
     
     // Add main message
     slide.addText(title.toUpperCase(), {
-      x: 0.6667,
-      y: 3.7333,
-      w: 12.0,
-      h: 1.3333,
+      x: 0.5,
+      y: 2.8,
+      w: 9,
+      h: 1,
       fontFace: POTOMAC_FONTS.HEADERS.family,
       fontSize: 40,
       bold: true,
@@ -294,10 +294,10 @@ class PotomacPresentationGenerator {
     
     // Add tagline
     slide.addText('Built to Conquer Risk®', {
-      x: 0.6667,
-      y: 5.3333,
-      w: 12.0,
-      h: 0.8,
+      x: 0.5,
+      y: 4,
+      w: 9,
+      h: 0.6,
       fontFace: POTOMAC_FONTS.BODY.family,
       fontSize: 18,
       color: palette.accent,
@@ -308,10 +308,10 @@ class PotomacPresentationGenerator {
     // Add contact info if provided
     if (contactInfo) {
       slide.addText(contactInfo, {
-        x: 0.6667,
-        y: 7.3333,
-        w: 12.0,
-        h: 2.0,
+        x: 0.5,
+        y: 5.5,
+        w: 9,
+        h: 1.5,
         fontFace: POTOMAC_FONTS.BODY.family,
         fontSize: 14,
         color: POTOMAC_COLORS.TONES.GRAY_60,
@@ -321,10 +321,10 @@ class PotomacPresentationGenerator {
     } else {
       // Default contact
       slide.addText('potomac.com\n(305) 824-2702\ninfo@potomac.com', {
-        x: 0.6667,
-        y: 7.3333,
-        w: 12.0,
-        h: 2.0,
+        x: 0.5,
+        y: 5.5,
+        w: 9,
+        h: 1.5,
         fontFace: POTOMAC_FONTS.BODY.family,
         fontSize: 14,
         color: POTOMAC_COLORS.TONES.GRAY_60,

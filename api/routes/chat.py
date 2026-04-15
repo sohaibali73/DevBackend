@@ -508,26 +508,6 @@ async def _fetch_kb_doc_refs(db, user_content: str) -> str:
 
 
 # ---------------------------------------------------------------------------
-# AFL-specific rules and tool list
-# ---------------------------------------------------------------------------
-
-_AFL_RULES = """
-
-## AFL Code Rules
-- Always use ANSI C++ syntax for AmiBroker
-- Use proper AFL functions: MA(), EMA(), RSI(), etc.
-- Include proper Buy/Sell/Short/Cover signals
-- Add position sizing: SetPositionSize(100, spsPercentOfEquity);
-"""
-
-_STREAM_TOOLS_LIST = """
-
-## Available Tools
-You have access to: invoke_skill, analyze_backtest, generate_afl_code, and other domain-specific tools.
-"""
-
-
-# ---------------------------------------------------------------------------
 # Conversation CRUD Endpoints
 # ---------------------------------------------------------------------------
 
@@ -839,7 +819,6 @@ async def chat_agent(
             system_prompt_base = (
                 f"{get_base_prompt()}\n\n{get_chat_prompt()}"
                 f"{file_context}{kb_context}{kb_doc_context}"
-                f"{_AFL_RULES}{_STREAM_TOOLS_LIST}"
             )
 
             # Force-invoke a specific skill if the user pinned one from the UI

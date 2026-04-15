@@ -12,6 +12,9 @@ from .base import (
     RESERVED_KEYWORDS,
 )
 
+# Import from afl.py (shim that fixes claude_engine.py import chain)
+from .afl import get_afl_system_prompt
+
 # Import from condensed_prompts.py (efficient token usage)
 from .condensed_prompts import (
     get_condensed_clarification_prompt,
@@ -132,6 +135,7 @@ __all__ = [
     "get_base_prompt",
     "get_chat_prompt",
     "get_generate_prompt",
+    "get_afl_system_prompt",
     "FUNCTION_REFERENCE",
     "RESERVED_KEYWORDS",
 

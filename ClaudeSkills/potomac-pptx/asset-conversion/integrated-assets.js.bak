@@ -203,11 +203,11 @@ class PotomacIntegratedAssets {
     slide.background = { color: _c(POTOMAC_COLORS.PRIMARY.WHITE) };
 
     // Add logo
-    this.templates.addLogo(slide, { x: 11.7333, y: 0.4, w: 1.3333, h: 0.5333 });
+    this.templates.addLogo(slide, { x: 8.8, y: 0.3, w: 1, h: 0.4 });
 
     // Add title
     slide.addText((slideData.title || 'DATA ANALYSIS').toUpperCase(), {
-      x: 0.6667, y: 0.6667, w: 10.6667, h: 1.3333,
+      x: 0.5, y: 0.5, w: 8, h: 1,
       fontFace: POTOMAC_FONTS.HEADERS.family,
       fontSize: 30,
       color: _c(POTOMAC_COLORS.PRIMARY.DARK_GRAY),
@@ -216,9 +216,9 @@ class PotomacIntegratedAssets {
 
     // Title underline — FIX: was this.pptx.shapes.RECTANGLE (deprecated v2 API)
     slide.addShape(this.pptx.ShapeType.rect, {
-      x: 0.6667, y: 1.8667, w: 2.6667, h: 0.0667,
+      x: 0.5, y: 1.4, w: 2, h: 0.05,
       fill: { color: _c(POTOMAC_COLORS.PRIMARY.YELLOW) },
-      line: { color: _c(POTOMAC_COLORS.PRIMARY.YELLOW), width: 0.0 },
+      line: { color: _c(POTOMAC_COLORS.PRIMARY.YELLOW), width: 0 },
     });
     
     // Detect and apply appropriate asset
@@ -227,7 +227,7 @@ class PotomacIntegratedAssets {
     // If no asset was applied, add standard content
     if (!appliedAsset && slideData.content) {
       slide.addText(slideData.content, {
-        x: 0.6667, y: 2.9333, w: 12.0, h: 4.0,
+        x: 0.5, y: 2.2, w: 9, h: 3,
         fontFace: POTOMAC_FONTS.BODY.family, fontSize: 16,
         color: _c(POTOMAC_COLORS.PRIMARY.DARK_GRAY),
         lineSpacing: 24,
@@ -250,7 +250,7 @@ class PotomacIntegratedAssets {
     slide.background = { color: _c(POTOMAC_COLORS.PRIMARY.WHITE) };
 
     // Add logo
-    this.templates.addLogo(slide, { x: 11.7333, y: 0.4, w: 1.3333, h: 0.5333 });
+    this.templates.addLogo(slide, { x: 8.8, y: 0.3, w: 1, h: 0.4 });
 
     // Detect process-related content and apply visual elements
     const appliedAsset = this.detectAndAddAssets(slide, slideData);
@@ -276,11 +276,11 @@ class PotomacIntegratedAssets {
     slide.background = { color: _c(POTOMAC_COLORS.PRIMARY.WHITE) };
 
     // Logo
-    this.templates.addLogo(slide, { x: 11.7333, y: 0.4, w: 1.3333, h: 0.5333 });
+    this.templates.addLogo(slide, { x: 8.8, y: 0.3, w: 1, h: 0.4 });
 
     // Strategy title  — FIX: removed fontWeight:'bold' (pptxgenjs ignores it), fixed _c()
     slide.addText((slideData.title || 'STRATEGY OVERVIEW').toUpperCase(), {
-      x: 0.6667, y: 0.6667, w: 10.6667, h: 1.3333,
+      x: 0.5, y: 0.5, w: 8, h: 1,
       fontFace: POTOMAC_FONTS.HEADERS.family,
       fontSize: 28,
       color: _c(POTOMAC_COLORS.PRIMARY.DARK_GRAY),
@@ -290,10 +290,10 @@ class PotomacIntegratedAssets {
     // If strategy performance data is available, create performance visualization
     if (slideData.performanceData) {
       this.visuals.createStrategyPerformanceViz(slide, slideData.performanceData, {
-        startX: 0.6667,
-        startY: 2.4,
-        width: 12.0,
-        height: 4.6667
+        startX: 0.5,
+        startY: 1.8,
+        width: 9,
+        height: 3.5
       });
     } else {
       // Standard content with visual enhancement
@@ -415,9 +415,9 @@ class PotomacAssetIntegratedBuilder {
     this.pres.revision = '1';
     this.pres.subject  = this.options.title;
     this.pres.title    = this.options.title;
-    // FIX: was defineLayout({width:17.7773}) — wrong! All coordinates assume 10" width.
+    // FIX: was defineLayout({width:13.333}) — wrong! All coordinates assume 10" width.
     // LAYOUT_16x9 is the correct pptxgenjs name for the standard 10"×7.5" slide.
-    this.pres.layout   = 'LAYOUT_WIDE';
+    this.pres.layout   = 'LAYOUT_16x9';
   }
 
   /**

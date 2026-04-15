@@ -63,7 +63,7 @@ async function renderDeckPlan(plan, outFile = null) {
   pptx.revision = '1';
 
   // Standard 10"×7.5" layout
-  pptx.layout = 'LAYOUT_WIDE';
+  pptx.layout = 'LAYOUT_16x9';
 
   // Define slide masters
   PotomacSlideTemplates.defineAllMasters(pptx, palette);

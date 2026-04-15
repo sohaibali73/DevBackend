@@ -123,22 +123,22 @@ class PotomacSlideTemplates {
    *   Positioned at top-right corner of each slide.
    *
    * In pptxgenjs 10"×7.5" coordinates:
-   *   x: 11.6267"  (leaves ~0.28" right margin)
-   *   y: 0.16"  (tight to top)
-   *   w: 1.2667"  h: 1.2667"  (square — matches real ~1:1 aspect ratio)
+   *   x: 8.72"  (leaves ~0.28" right margin)
+   *   y: 0.12"  (tight to top)
+   *   w: 0.95"  h: 0.95"  (square — matches real ~1:1 aspect ratio)
    */
   addStandardLogo(slide, theme = 'light') {
     const logoPath = this.getIconLogoPath(theme);
     if (logoPath) {
       slide.addImage({
         path: logoPath,
-        x: 11.6267, y: 0.16, w: 1.2667, h: 1.2667,
-        sizing: { type: 'contain', w: 1.2667, h: 1.2667 },
+        x: 8.72, y: 0.12, w: 0.95, h: 0.95,
+        sizing: { type: 'contain', w: 0.95, h: 0.95 },
       });
     } else {
       // Text fallback — show just the wordmark abbreviated
       slide.addText('POTOMAC', {
-        x: 10.9333, y: 0.16, w: 2.0, h: 0.6667,
+        x: 8.2, y: 0.12, w: 1.5, h: 0.5,
         fontFace: F.HEADERS.family, fontSize: 12, bold: true,
         color: theme === 'dark' ? _c(C.PRIMARY.WHITE) : _c(C.PRIMARY.DARK_GRAY),
         align: 'right', valign: 'middle',
@@ -149,16 +149,16 @@ class PotomacSlideTemplates {
   /** Yellow accent underline bar below slide title. */
   addTitleUnderline(slide, x = 0.5, y = 1.4) {
     slide.addShape(this.pptx.ShapeType.rect, {
-      x, y, w: 2.6667, h: 0.0667,
+      x, y, w: 2, h: 0.05,
       fill: { color: _c(this.palette.accent) },
-      line: { color: _c(this.palette.accent), width: 0.0 },
+      line: { color: _c(this.palette.accent), width: 0 },
     });
   }
 
   /** Slide number indicator (bottom-right). */
   addSlideNumber(slide, current, total) {
     slide.addText(`${current} / ${total}`, {
-      x: 12.1333, y: 9.4667, w: 0.9333, h: 0.3733,
+      x: 9.1, y: 7.1, w: 0.7, h: 0.28,
       fontFace: F.BODY.family, fontSize: 9,
       color: _c(C.TONES.GRAY_40), align: 'right',
     });
@@ -167,7 +167,7 @@ class PotomacSlideTemplates {
   /** Regulatory / performance disclaimer footer. */
   addDisclaimer(slide, text = 'Past performance does not guarantee future results. For financial professional use only.') {
     slide.addText(text, {
-      x: 0.6667, y: 9.4667, w: 11.3333, h: 0.3733,
+      x: 0.5, y: 7.1, w: 8.5, h: 0.28,
       fontFace: F.BODY.family, fontSize: 8,
       color: _c(C.TONES.GRAY_40), align: 'left', italic: true,
     });
@@ -185,10 +185,10 @@ class PotomacSlideTemplates {
     const slide = this.pptx.addSlide();
     slide.background = { color: _c(this.palette.background) };
     // Full wordmark top-left: width ≈ 4.7" × height ≈ 0.97" (scaled from 6.28" × 1.29" on 13.33" slide)
-    this.addLogo(slide, { x: 0.6667, y: 0.3333, w: 6.2667, h: 1.2933 }, 'light');
+    this.addLogo(slide, { x: 0.5, y: 0.25, w: 4.7, h: 0.97 }, 'light');
 
     slide.addText(title.toUpperCase(), {
-      x: 0.6667, y: 3.3333, w: 12.0, h: 2.0,
+      x: 0.5, y: 2.5, w: 9, h: 1.5,
       fontFace: F.HEADERS.family, fontSize: 44,
       bold: true, color: _c(C.PRIMARY.DARK_GRAY),
       align: 'center', valign: 'middle',
@@ -196,7 +196,7 @@ class PotomacSlideTemplates {
 
     if (subtitle) {
       slide.addText(subtitle, {
-        x: 0.6667, y: 5.6, w: 12.0, h: 1.0667,
+        x: 0.5, y: 4.2, w: 9, h: 0.8,
         fontFace: F.BODY.family, fontSize: 20,
         color: _c(C.TONES.GRAY_60), align: 'center', valign: 'middle',
       });
@@ -204,9 +204,9 @@ class PotomacSlideTemplates {
 
     // Bottom accent bar
     slide.addShape(this.pptx.ShapeType.rect, {
-      x: 0.6667, y: 7.3333, w: 12.0, h: 0.1333,
+      x: 0.5, y: 5.5, w: 9, h: 0.1,
       fill: { color: _c(this.palette.accent) },
-      line: { color: _c(this.palette.accent), width: 0.0 },
+      line: { color: _c(this.palette.accent), width: 0 },
     });
 
     return slide;
@@ -219,10 +219,10 @@ class PotomacSlideTemplates {
     const slide = this.pptx.addSlide();
     slide.background = { color: _c(C.PRIMARY.DARK_GRAY) };
     // Full white wordmark top-left on dark background
-    this.addLogo(slide, { x: 0.6667, y: 0.3333, w: 6.2667, h: 1.2933 }, 'dark');
+    this.addLogo(slide, { x: 0.5, y: 0.25, w: 4.7, h: 0.97 }, 'dark');
 
     slide.addText(title.toUpperCase(), {
-      x: 0.6667, y: 2.9333, w: 12.0, h: 2.4,
+      x: 0.5, y: 2.2, w: 9, h: 1.8,
       fontFace: F.HEADERS.family, fontSize: 48,
       bold: true, color: _c(C.PRIMARY.WHITE),
       align: 'center', valign: 'middle',
@@ -230,7 +230,7 @@ class PotomacSlideTemplates {
 
     if (subtitle) {
       slide.addText(subtitle, {
-        x: 0.6667, y: 5.6, w: 12.0, h: 0.9333,
+        x: 0.5, y: 4.2, w: 9, h: 0.7,
         fontFace: F.BODY.family, fontSize: 22,
         color: _c(C.TONES.YELLOW_80), align: 'center', valign: 'middle',
       });
@@ -238,13 +238,13 @@ class PotomacSlideTemplates {
 
     // Yellow accent bar
     slide.addShape(this.pptx.ShapeType.rect, {
-      x: 0.6667, y: 7.2667, w: 12.0, h: 0.1067,
+      x: 0.5, y: 5.45, w: 9, h: 0.08,
       fill: { color: _c(C.PRIMARY.YELLOW) },
-      line: { color: _c(C.PRIMARY.YELLOW), width: 0.0 },
+      line: { color: _c(C.PRIMARY.YELLOW), width: 0 },
     });
 
     slide.addText(tagline, {
-      x: 0.6667, y: 7.5333, w: 12.0, h: 0.8,
+      x: 0.5, y: 5.65, w: 9, h: 0.6,
       fontFace: F.BODY.family, fontSize: 18,
       color: _c(C.PRIMARY.YELLOW), align: 'center', valign: 'middle', italic: true,
     });
@@ -262,13 +262,13 @@ class PotomacSlideTemplates {
 
     // Left accent bar (full height)
     slide.addShape(this.pptx.ShapeType.rect, {
-      x: 0.0, y: 0.0, w: 0.4, h: 10.0,
+      x: 0, y: 0, w: 0.3, h: 7.5,
       fill: { color: _c(this.palette.accent) },
-      line: { color: _c(this.palette.accent), width: 0.0 },
+      line: { color: _c(this.palette.accent), width: 0 },
     });
 
     slide.addText(sectionTitle.toUpperCase(), {
-      x: 1.0667, y: 3.3333, w: 10.0, h: 2.0,
+      x: 0.8, y: 2.5, w: 7.5, h: 1.5,
       fontFace: F.HEADERS.family, fontSize: 42,
       bold: true, color: _c(C.PRIMARY.DARK_GRAY),
       align: 'left', valign: 'middle',
@@ -276,7 +276,7 @@ class PotomacSlideTemplates {
 
     if (description) {
       slide.addText(description, {
-        x: 1.0667, y: 5.6, w: 10.0, h: 1.6,
+        x: 0.8, y: 4.2, w: 7.5, h: 1.2,
         fontFace: F.BODY.family, fontSize: 18,
         color: _c(C.TONES.GRAY_60), align: 'left', valign: 'middle',
       });
@@ -300,7 +300,7 @@ class PotomacSlideTemplates {
     this.addStandardLogo(slide);
 
     slide.addText(title.toUpperCase(), {
-      x: 0.6667, y: 0.6667, w: 10.6667, h: 1.3333,
+      x: 0.5, y: 0.5, w: 8, h: 1,
       fontFace: F.HEADERS.family, fontSize: 32,
       bold: true, color: _c(C.PRIMARY.DARK_GRAY),
     });
@@ -316,13 +316,13 @@ class PotomacSlideTemplates {
         },
       }));
       slide.addText(bulletItems, {
-        x: 0.6667, y: 2.2667, w: 12.0, h: 7.0667,
+        x: 0.5, y: 1.7, w: 9, h: 5.3,
         fontFace: F.BODY.family, fontSize: 17,
         color: _c(C.PRIMARY.DARK_GRAY), valign: 'top',
       });
     } else {
       slide.addText(Array.isArray(content) ? content.join('\n') : String(content || ''), {
-        x: 0.6667, y: 2.2667, w: 12.0, h: 7.0667,
+        x: 0.5, y: 1.7, w: 9, h: 5.3,
         fontFace: F.BODY.family, fontSize: 16,
         color: _c(C.PRIMARY.DARK_GRAY), valign: 'top',
       });
@@ -343,7 +343,7 @@ class PotomacSlideTemplates {
     this.addStandardLogo(slide);
 
     slide.addText(title.toUpperCase(), {
-      x: 0.6667, y: 0.6667, w: 10.6667, h: 1.3333,
+      x: 0.5, y: 0.5, w: 8, h: 1,
       fontFace: F.HEADERS.family, fontSize: 28,
       bold: true, color: _c(C.PRIMARY.DARK_GRAY),
     });
@@ -354,14 +354,14 @@ class PotomacSlideTemplates {
 
     if (options.leftHeader) {
       slide.addText(options.leftHeader.toUpperCase(), {
-        x: 0.6667, y: 2.3333, w: COL_W, h: 0.6667,
+        x: 0.5, y: 1.75, w: COL_W, h: 0.5,
         fontFace: F.HEADERS.family, fontSize: 14,
         bold: true, color: _c(this.palette.accent),
       });
     }
     if (options.rightHeader) {
       slide.addText(options.rightHeader.toUpperCase(), {
-        x: 0.6667 + COL_W + GAP, y: 2.3333, w: COL_W, h: 0.6667,
+        x: 0.5 + COL_W + GAP, y: 1.75, w: COL_W, h: 0.5,
         fontFace: F.HEADERS.family, fontSize: 14,
         bold: true, color: _c(this.palette.accent),
       });
@@ -378,23 +378,23 @@ class PotomacSlideTemplates {
     };
 
     slide.addText(fmtColumn(leftContent), {
-      x: 0.6667, y: contentY, w: COL_W, h: 10.0 - contentY - 0.3,
+      x: 0.5, y: contentY, w: COL_W, h: 7.5 - contentY - 0.3,
       fontFace: F.BODY.family, fontSize: 15,
       color: _c(C.PRIMARY.DARK_GRAY), valign: 'top',
     });
 
     slide.addText(fmtColumn(rightContent), {
-      x: 0.6667 + COL_W + GAP, y: contentY, w: COL_W, h: 10.0 - contentY - 0.3,
+      x: 0.5 + COL_W + GAP, y: contentY, w: COL_W, h: 7.5 - contentY - 0.3,
       fontFace: F.BODY.family, fontSize: 15,
       color: _c(C.PRIMARY.DARK_GRAY), valign: 'top',
     });
 
     // Subtle column separator
     slide.addShape(this.pptx.ShapeType.rect, {
-      x: 0.6667 + COL_W + GAP / 2 - 0.02, y: contentY - 0.1,
-      w: 0.0533, h: 10.0 - contentY - 0.2,
+      x: 0.5 + COL_W + GAP / 2 - 0.02, y: contentY - 0.1,
+      w: 0.04, h: 7.5 - contentY - 0.2,
       fill: { color: _c(C.TONES.GRAY_20) },
-      line: { color: _c(C.TONES.GRAY_20), width: 0.0 },
+      line: { color: _c(C.TONES.GRAY_20), width: 0 },
     });
 
     return slide;
@@ -412,7 +412,7 @@ class PotomacSlideTemplates {
     this.addStandardLogo(slide);
 
     slide.addText(title.toUpperCase(), {
-      x: 0.6667, y: 0.6667, w: 10.6667, h: 1.3333,
+      x: 0.5, y: 0.5, w: 8, h: 1,
       fontFace: F.HEADERS.family, fontSize: 26,
       bold: true, color: _c(C.PRIMARY.DARK_GRAY),
     });
@@ -427,14 +427,14 @@ class PotomacSlideTemplates {
 
       if (headers[idx]) {
         slide.addText(headers[idx].toUpperCase(), {
-          x, y: 2.3333, w: COL_W, h: 0.6667,
+          x, y: 1.75, w: COL_W, h: 0.5,
           fontFace: F.HEADERS.family, fontSize: 13,
           bold: true, color: _c(this.palette.accent), align: 'center',
         });
         slide.addShape(this.pptx.ShapeType.rect, {
-          x, y: 2.96, w: COL_W, h: 0.0533,
+          x, y: 2.22, w: COL_W, h: 0.04,
           fill: { color: _c(this.palette.accent) },
-          line: { color: _c(this.palette.accent), width: 0.0 },
+          line: { color: _c(this.palette.accent), width: 0 },
         });
       }
 
@@ -443,7 +443,7 @@ class PotomacSlideTemplates {
         : String(content || '');
 
       slide.addText(fmtContent, {
-        x, y: contentY, w: COL_W, h: 10.0 - contentY - 0.3,
+        x, y: contentY, w: COL_W, h: 7.5 - contentY - 0.3,
         fontFace: F.BODY.family, fontSize: 13,
         color: _c(C.PRIMARY.DARK_GRAY), valign: 'top',
       });
@@ -451,10 +451,10 @@ class PotomacSlideTemplates {
       // Column separator (between columns only)
       if (idx < 2) {
         slide.addShape(this.pptx.ShapeType.rect, {
-          x: x + COL_W + GAP / 2 - 0.015, y: 2.1333,
-          w: 0.04, h: 7.3333,
+          x: x + COL_W + GAP / 2 - 0.015, y: 1.6,
+          w: 0.03, h: 5.5,
           fill: { color: _c(C.TONES.GRAY_20) },
-          line: { color: _c(C.TONES.GRAY_20), width: 0.0 },
+          line: { color: _c(C.TONES.GRAY_20), width: 0 },
         });
       }
     });
@@ -475,13 +475,13 @@ class PotomacSlideTemplates {
 
     // Opening quote mark
     slide.addText('\u201C', {
-      x: 0.6667, y: 2.0, w: 1.3333, h: 1.3333,
+      x: 0.5, y: 1.5, w: 1, h: 1,
       fontFace: F.HEADERS.family, fontSize: 72,
       bold: true, color: _c(this.palette.accent), align: 'center',
     });
 
     slide.addText(quote, {
-      x: 2.0, y: 2.6667, w: 9.3333, h: 3.7333,
+      x: 1.5, y: 2.0, w: 7, h: 2.8,
       fontFace: F.BODY.family, fontSize: 22,
       color: _c(C.PRIMARY.DARK_GRAY),
       align: 'center', valign: 'middle', italic: true,
@@ -489,7 +489,7 @@ class PotomacSlideTemplates {
 
     if (attribution) {
       slide.addText(`\u2014 ${attribution}`, {
-        x: 2.0, y: 6.6667, w: 9.3333, h: 1.0667,
+        x: 1.5, y: 5.0, w: 7, h: 0.8,
         fontFace: F.BODY.family, fontSize: 16,
         bold: true, color: _c(C.TONES.GRAY_60), align: 'center',
       });
@@ -497,7 +497,7 @@ class PotomacSlideTemplates {
 
     if (context) {
       slide.addText(context, {
-        x: 2.0, y: 7.8667, w: 9.3333, h: 0.8,
+        x: 1.5, y: 5.9, w: 7, h: 0.6,
         fontFace: F.BODY.family, fontSize: 12,
         color: _c(C.TONES.GRAY_60), align: 'center',
       });
@@ -516,7 +516,7 @@ class PotomacSlideTemplates {
     this.addStandardLogo(slide);
 
     slide.addText(title.toUpperCase(), {
-      x: 0.6667, y: 0.6667, w: 10.6667, h: 1.3333,
+      x: 0.5, y: 0.5, w: 8, h: 1,
       fontFace: F.HEADERS.family, fontSize: 30,
       bold: true, color: _c(C.PRIMARY.DARK_GRAY),
     });
@@ -539,7 +539,7 @@ class PotomacSlideTemplates {
       slide.addShape(this.pptx.ShapeType.rect, {
         x, y, w: colW - 0.25, h: rowH,
         fill: { color: _c(C.TONES.GRAY_20) },
-        line: { color: _c(C.TONES.GRAY_20), width: 0.0 },
+        line: { color: _c(C.TONES.GRAY_20), width: 0 },
       });
 
       // Metric value — large yellow
@@ -570,7 +570,7 @@ class PotomacSlideTemplates {
 
     if (context) {
       slide.addText(String(context), {
-        x: 0.6667, y: 9.0667, w: 12.0, h: 0.6667,
+        x: 0.5, y: 6.8, w: 9, h: 0.5,
         fontFace: F.BODY.family, fontSize: 10,
         color: _c(C.TONES.GRAY_60), align: 'center', italic: true,
       });
@@ -591,7 +591,7 @@ class PotomacSlideTemplates {
     this.addStandardLogo(slide);
 
     slide.addText(title.toUpperCase(), {
-      x: 0.6667, y: 0.6667, w: 10.6667, h: 1.3333,
+      x: 0.5, y: 0.5, w: 8, h: 1,
       fontFace: F.HEADERS.family, fontSize: 28,
       bold: true, color: _c(C.PRIMARY.DARK_GRAY),
     });
@@ -612,7 +612,7 @@ class PotomacSlideTemplates {
         slide.addShape(this.pptx.ShapeType.ellipse, {
           x: cx - R, y: circY - R, w: R * 2, h: R * 2,
           fill: { color: _c(this.palette.accent) },
-          line: { color: _c(C.PRIMARY.DARK_GRAY), width: 2.0 },
+          line: { color: _c(C.PRIMARY.DARK_GRAY), width: 1.5 },
         });
         // Number
         slide.addText(String(idx + 1), {
@@ -623,14 +623,14 @@ class PotomacSlideTemplates {
         });
         // Title
         slide.addText((step.title || `Step ${idx + 1}`).toUpperCase(), {
-          x: cx - stepW / 2 + 0.05, y: circY + R + 0.1, w: stepW - 0.1, h: 0.8,
+          x: cx - stepW / 2 + 0.05, y: circY + R + 0.1, w: stepW - 0.1, h: 0.6,
           fontFace: F.HEADERS.family, fontSize: 12,
           bold: true, color: _c(C.PRIMARY.DARK_GRAY), align: 'center',
         });
         // Description
         if (step.description) {
           slide.addText(String(step.description), {
-            x: cx - stepW / 2 + 0.05, y: circY + R + 0.75, w: stepW - 0.1, h: 2.9333,
+            x: cx - stepW / 2 + 0.05, y: circY + R + 0.75, w: stepW - 0.1, h: 2.2,
             fontFace: F.BODY.family, fontSize: 11,
             color: _c(C.TONES.GRAY_60), align: 'center', valign: 'top',
           });
@@ -642,14 +642,14 @@ class PotomacSlideTemplates {
           const lineW  = (nextCX - arrowX) * 0.7;
 
           slide.addShape(this.pptx.ShapeType.line, {
-            x: arrowX, y: circY, w: lineW, h: 0.0,
-            line: { color: _c(C.TONES.GRAY_40), width: 2.6667 },
+            x: arrowX, y: circY, w: lineW, h: 0,
+            line: { color: _c(C.TONES.GRAY_40), width: 2 },
           });
           slide.addShape(this.pptx.ShapeType.rightArrow, {
             x: arrowX + lineW - 0.05, y: circY - 0.12,
-            w: 0.3333, h: 0.3333,
+            w: 0.25, h: 0.25,
             fill: { color: _c(C.TONES.GRAY_40) },
-            line: { color: _c(C.TONES.GRAY_40), width: 0.0 },
+            line: { color: _c(C.TONES.GRAY_40), width: 0 },
           });
         }
       });
@@ -664,26 +664,26 @@ class PotomacSlideTemplates {
         const R = 0.3;
 
         slide.addShape(this.pptx.ShapeType.ellipse, {
-          x: 0.6667, y, w: R * 2, h: R * 2,
+          x: 0.5, y, w: R * 2, h: R * 2,
           fill: { color: _c(this.palette.accent) },
-          line: { color: _c(C.PRIMARY.DARK_GRAY), width: 2.0 },
+          line: { color: _c(C.PRIMARY.DARK_GRAY), width: 1.5 },
         });
         slide.addText(String(idx + 1), {
-          x: 0.6667, y, w: R * 2, h: R * 2,
+          x: 0.5, y, w: R * 2, h: R * 2,
           fontFace: F.HEADERS.family, fontSize: 16,
           bold: true, color: _c(C.PRIMARY.DARK_GRAY),
           align: 'center', valign: 'middle',
         });
 
         slide.addText((step.title || `Step ${idx + 1}`).toUpperCase(), {
-          x: 1.8667, y: y + 0.02, w: 10.6667, h: R * 0.9,
+          x: 1.4, y: y + 0.02, w: 8, h: R * 0.9,
           fontFace: F.HEADERS.family, fontSize: 13,
           bold: true, color: _c(C.PRIMARY.DARK_GRAY),
         });
 
         if (step.description) {
           slide.addText(String(step.description), {
-            x: 1.8667, y: y + R * 0.9, w: 10.6667, h: stepH - R * 0.9 - 0.1,
+            x: 1.4, y: y + R * 0.9, w: 8, h: stepH - R * 0.9 - 0.1,
             fontFace: F.BODY.family, fontSize: 11,
             color: _c(C.TONES.GRAY_60), valign: 'top',
           });
@@ -692,8 +692,8 @@ class PotomacSlideTemplates {
         // Vertical connector
         if (idx < safeSteps.length - 1) {
           slide.addShape(this.pptx.ShapeType.line, {
-            x: 0.6667 + R, y: y + R * 2, w: 0.0, h: stepH - R * 2 - 0.05,
-            line: { color: _c(C.TONES.GRAY_40), width: 2.6667 },
+            x: 0.5 + R, y: y + R * 2, w: 0, h: stepH - R * 2 - 0.05,
+            line: { color: _c(C.TONES.GRAY_40), width: 2 },
           });
         }
       });
@@ -711,22 +711,22 @@ class PotomacSlideTemplates {
     const slide = this.pptx.addSlide();
     slide.background = { color: _c(this.palette.background) };
     // Full wordmark centred: (10 - 4.7) / 2 = 2.65" from left
-    this.addLogo(slide, { x: 3.5333, y: 2.0, w: 6.2667, h: 1.2933 }, 'light');
+    this.addLogo(slide, { x: 2.65, y: 1.5, w: 4.7, h: 0.97 }, 'light');
 
     slide.addText(title.toUpperCase(), {
-      x: 0.6667, y: 3.7333, w: 12.0, h: 1.3333,
+      x: 0.5, y: 2.8, w: 9, h: 1,
       fontFace: F.HEADERS.family, fontSize: 40,
       bold: true, color: _c(C.PRIMARY.DARK_GRAY), align: 'center',
     });
 
     slide.addText('Built to Conquer Risk\u00AE', {
-      x: 0.6667, y: 5.3333, w: 12.0, h: 0.8,
+      x: 0.5, y: 4, w: 9, h: 0.6,
       fontFace: F.BODY.family, fontSize: 18,
       color: _c(this.palette.accent), align: 'center', italic: true,
     });
 
     slide.addText(contactInfo || 'potomac.com\n(305) 824-2702\ninfo@potomac.com', {
-      x: 0.6667, y: 7.3333, w: 12.0, h: 2.0,
+      x: 0.5, y: 5.5, w: 9, h: 1.5,
       fontFace: F.BODY.family, fontSize: 14,
       color: _c(C.TONES.GRAY_60), align: 'center',
     });
@@ -740,32 +740,32 @@ class PotomacSlideTemplates {
     this.addStandardLogo(slide);
 
     slide.addText(title.toUpperCase(), {
-      x: 0.6667, y: 2.0, w: 12.0, h: 1.6,
+      x: 0.5, y: 1.5, w: 9, h: 1.2,
       fontFace: F.HEADERS.family, fontSize: 34,
       bold: true, color: _c(C.PRIMARY.DARK_GRAY), align: 'center',
     });
 
     slide.addText(String(actionText || ''), {
-      x: 0.6667, y: 4.0, w: 12.0, h: 2.0,
+      x: 0.5, y: 3, w: 9, h: 1.5,
       fontFace: F.BODY.family, fontSize: 18,
       color: _c(C.PRIMARY.DARK_GRAY), align: 'center',
     });
 
     // CTA button
     slide.addShape(this.pptx.ShapeType.rect, {
-      x: 4.6667, y: 6.4, w: 4.0, h: 1.0667,
+      x: 3.5, y: 4.8, w: 3, h: 0.8,
       fill: { color: _c(this.palette.accent) },
-      line: { color: _c(this.palette.accent), width: 0.0 },
+      line: { color: _c(this.palette.accent), width: 0 },
     });
     slide.addText(buttonText.toUpperCase(), {
-      x: 4.6667, y: 6.4, w: 4.0, h: 1.0667,
+      x: 3.5, y: 4.8, w: 3, h: 0.8,
       fontFace: F.HEADERS.family, fontSize: 16,
       bold: true, color: _c(C.PRIMARY.WHITE),
       align: 'center', valign: 'middle',
     });
 
     slide.addText(String(contactInfo || 'potomac.com | (305) 824-2702 | info@potomac.com'), {
-      x: 0.6667, y: 8.0, w: 12.0, h: 1.3333,
+      x: 0.5, y: 6.0, w: 9, h: 1,
       fontFace: F.BODY.family, fontSize: 14,
       color: _c(C.TONES.GRAY_60), align: 'center',
     });
@@ -788,16 +788,16 @@ class PotomacSlideTemplates {
     this.addStandardLogo(slide, 'dark');
 
     slide.addText((headline || 'EXECUTIVE SUMMARY').toUpperCase(), {
-      x: 0.6667, y: 0.5333, w: 10.6667, h: 1.4667,
+      x: 0.5, y: 0.4, w: 8, h: 1.1,
       fontFace: F.HEADERS.family, fontSize: 34,
       bold: true, color: _c(C.PRIMARY.WHITE),
     });
 
     // Yellow accent bar
     slide.addShape(this.pptx.ShapeType.rect, {
-      x: 0.6667, y: 1.9333, w: 3.3333, h: 0.0933,
+      x: 0.5, y: 1.45, w: 2.5, h: 0.07,
       fill: { color: _c(C.PRIMARY.YELLOW) },
-      line: { color: _c(C.PRIMARY.YELLOW), width: 0.0 },
+      line: { color: _c(C.PRIMARY.YELLOW), width: 0 },
     });
 
     const bulletItems = (points || []).slice(0, 6).map(p => ({
@@ -810,14 +810,14 @@ class PotomacSlideTemplates {
     }));
 
     slide.addText(bulletItems.length ? bulletItems : [{ text: '', options: {} }], {
-      x: 0.6667, y: 2.2667, w: 11.7333, h: 6.9333,
+      x: 0.5, y: 1.7, w: 8.8, h: 5.2,
       fontFace: F.BODY.family, fontSize: 18,
       color: _c(C.PRIMARY.WHITE), valign: 'top',
     });
 
     if (context) {
       slide.addText(String(context), {
-        x: 0.6667, y: 9.2, w: 12.0, h: 0.5333,
+        x: 0.5, y: 6.9, w: 9, h: 0.4,
         fontFace: F.BODY.family, fontSize: 9,
         color: _c(C.TONES.GRAY_60), align: 'center', italic: true,
       });
@@ -837,7 +837,7 @@ class PotomacSlideTemplates {
     this.addStandardLogo(slide);
 
     slide.addText(title.toUpperCase(), {
-      x: 0.6667, y: 0.4, w: 10.6667, h: 1.0,
+      x: 0.5, y: 0.3, w: 8, h: 0.75,
       fontFace: F.HEADERS.family, fontSize: 28,
       bold: true, color: _c(C.PRIMARY.DARK_GRAY),
     });
@@ -873,7 +873,7 @@ class PotomacSlideTemplates {
       slide.addShape(this.pptx.ShapeType.rect, {
         x, y, w: cardW, h: cardH,
         fill: { color: scheme.bg },
-        line: { color: scheme.bg, width: 0.0 },
+        line: { color: scheme.bg, width: 0 },
       });
 
       if (card.title) {
@@ -907,7 +907,7 @@ class PotomacSlideTemplates {
     this.addStandardLogo(slide);
 
     slide.addText(title.toUpperCase(), {
-      x: 0.6667, y: 0.4, w: 10.6667, h: 1.0,
+      x: 0.5, y: 0.3, w: 8, h: 0.75,
       fontFace: F.HEADERS.family, fontSize: 28,
       bold: true, color: _c(C.PRIMARY.DARK_GRAY),
     });
@@ -930,7 +930,7 @@ class PotomacSlideTemplates {
       slide.addShape(this.pptx.ShapeType.ellipse, {
         x: cx - R, y, w: R * 2, h: R * 2,
         fill: { color: _c(this.palette.accent) },
-        line: { color: _c(C.PRIMARY.DARK_GRAY), width: 1.3333 },
+        line: { color: _c(C.PRIMARY.DARK_GRAY), width: 1 },
       });
       slide.addText(String(item.icon || idx + 1), {
         x: cx - R, y, w: R * 2, h: R * 2,
@@ -941,7 +941,7 @@ class PotomacSlideTemplates {
 
       if (item.title) {
         slide.addText(item.title.toUpperCase(), {
-          x: cx - itemW / 2 + 0.1, y: y + R * 2 + 0.1, w: itemW - 0.2, h: 0.6667,
+          x: cx - itemW / 2 + 0.1, y: y + R * 2 + 0.1, w: itemW - 0.2, h: 0.5,
           fontFace: F.HEADERS.family, fontSize: 12,
           bold: true, color: _c(C.PRIMARY.DARK_GRAY), align: 'center',
         });
@@ -971,7 +971,7 @@ class PotomacSlideTemplates {
     this.addStandardLogo(slide);
 
     slide.addText(title.toUpperCase(), {
-      x: 0.6667, y: 0.4, w: 10.6667, h: 0.9333,
+      x: 0.5, y: 0.3, w: 8, h: 0.7,
       fontFace: F.HEADERS.family, fontSize: 24,
       bold: true, color: _c(C.PRIMARY.DARK_GRAY),
     });
@@ -984,7 +984,7 @@ class PotomacSlideTemplates {
     slide.addShape(this.pptx.ShapeType.ellipse, {
       x: HUB_CX - HUB_R, y: HUB_CY - HUB_R, w: HUB_R * 2, h: HUB_R * 2,
       fill: { color: _c(C.PRIMARY.YELLOW) },
-      line: { color: _c(C.PRIMARY.DARK_GRAY), width: 3.3333 },
+      line: { color: _c(C.PRIMARY.DARK_GRAY), width: 2.5 },
     });
     slide.addText((center.title || 'POTOMAC').toUpperCase(), {
       x: HUB_CX - HUB_R, y: HUB_CY - HUB_R + 0.15, w: HUB_R * 2, h: HUB_R * 0.9,
@@ -1019,14 +1019,14 @@ class PotomacSlideTemplates {
         y: HUB_CY + HUB_R * Math.sin(angle),
         w: (SPOKE_R - NODE_R - HUB_R) * Math.cos(angle),
         h: (SPOKE_R - NODE_R - HUB_R) * Math.sin(angle),
-        line: { color: _c(C.TONES.GRAY_40), width: 2.0 },
+        line: { color: _c(C.TONES.GRAY_40), width: 1.5 },
       });
 
       // Node circle
       slide.addShape(this.pptx.ShapeType.ellipse, {
         x: nx - NODE_R, y: ny - NODE_R, w: NODE_R * 2, h: NODE_R * 2,
         fill: { color: NODE_COLORS[idx % NODE_COLORS.length] },
-        line: { color: _c(C.PRIMARY.DARK_GRAY), width: 2.0 },
+        line: { color: _c(C.PRIMARY.DARK_GRAY), width: 1.5 },
       });
       slide.addText((node.label || `Node ${idx + 1}`).toUpperCase(), {
         x: nx - NODE_R, y: ny - NODE_R, w: NODE_R * 2, h: NODE_R * 2,
@@ -1050,7 +1050,7 @@ class PotomacSlideTemplates {
     this.addStandardLogo(slide);
 
     slide.addText(title.toUpperCase(), {
-      x: 0.6667, y: 0.4, w: 10.6667, h: 1.0,
+      x: 0.5, y: 0.3, w: 8, h: 0.75,
       fontFace: F.HEADERS.family, fontSize: 28,
       bold: true, color: _c(C.PRIMARY.DARK_GRAY),
     });
@@ -1064,8 +1064,8 @@ class PotomacSlideTemplates {
 
     // Baseline
     slide.addShape(this.pptx.ShapeType.line, {
-      x: TL_XMIN, y: TL_Y, w: TL_W, h: 0.0,
-      line: { color: _c(C.TONES.GRAY_40), width: 3.3333 },
+      x: TL_XMIN, y: TL_Y, w: TL_W, h: 0,
+      line: { color: _c(C.TONES.GRAY_40), width: 2.5 },
     });
 
     const STATUS_COLORS = {
@@ -1083,15 +1083,15 @@ class PotomacSlideTemplates {
       // Tick
       const tickTop = isAbove ? TL_Y - 1.6 : TL_Y;
       slide.addShape(this.pptx.ShapeType.line, {
-        x: xPos, y: tickTop, w: 0.0, h: 2.1333,
-        line: { color: _c(C.TONES.GRAY_40), width: 1.3333 },
+        x: xPos, y: tickTop, w: 0, h: 1.6,
+        line: { color: _c(C.TONES.GRAY_40), width: 1 },
       });
 
       // Marker dot
       slide.addShape(this.pptx.ShapeType.ellipse, {
         x: xPos - MR, y: TL_Y - MR, w: MR * 2, h: MR * 2,
         fill: { color: STATUS_COLORS[status] || STATUS_COLORS.pending },
-        line: { color: _c(C.PRIMARY.DARK_GRAY), width: 2.0 },
+        line: { color: _c(C.PRIMARY.DARK_GRAY), width: 1.5 },
       });
 
       // Label
@@ -1099,14 +1099,14 @@ class PotomacSlideTemplates {
       const labelY = isAbove ? TL_Y - 2.1 : TL_Y + 1.65;
 
       slide.addText(String(ms.label || `M${idx + 1}`), {
-        x: xPos - labelW / 2, y: labelY, w: labelW, h: 0.6667,
+        x: xPos - labelW / 2, y: labelY, w: labelW, h: 0.5,
         fontFace: F.HEADERS.family, fontSize: 11,
         bold: true, color: _c(C.PRIMARY.DARK_GRAY), align: 'center',
       });
 
       if (ms.date) {
         slide.addText(String(ms.date), {
-          x: xPos - labelW / 2, y: labelY + 0.5, w: labelW, h: 0.5067,
+          x: xPos - labelW / 2, y: labelY + 0.5, w: labelW, h: 0.38,
           fontFace: F.BODY.family, fontSize: 10,
           color: _c(C.TONES.GRAY_60), align: 'center',
         });
@@ -1127,7 +1127,7 @@ class PotomacSlideTemplates {
     this.addStandardLogo(slide);
 
     slide.addText(title.toUpperCase(), {
-      x: 0.6667, y: 0.4, w: 10.6667, h: 0.9333,
+      x: 0.5, y: 0.3, w: 8, h: 0.7,
       fontFace: F.HEADERS.family, fontSize: 26,
       bold: true, color: _c(C.PRIMARY.DARK_GRAY),
     });
@@ -1151,11 +1151,11 @@ class PotomacSlideTemplates {
       slide.addShape(this.pptx.ShapeType.rect, {
         x, y, w: QW, h: QH,
         fill: { color: _c(q.color || C.TONES.GRAY_20) },
-        line: { color: _c(C.TONES.GRAY_40), width: 1.3333 },
+        line: { color: _c(C.TONES.GRAY_40), width: 1 },
       });
       if (q.title) {
         slide.addText(q.title.toUpperCase(), {
-          x: x + 0.15, y: y + 0.15, w: QW - 0.3, h: 1.1333,
+          x: x + 0.15, y: y + 0.15, w: QW - 0.3, h: 0.85,
           fontFace: F.HEADERS.family, fontSize: 13,
           bold: true, color: _c(C.PRIMARY.DARK_GRAY), valign: 'top',
         });
@@ -1171,24 +1171,24 @@ class PotomacSlideTemplates {
 
     // Axis lines
     slide.addShape(this.pptx.ShapeType.line, {
-      x: GX, y: GY + QH + GAP / 2, w: QW * 2 + GAP, h: 0.0,
-      line: { color: _c(C.TONES.GRAY_60), width: 2.6667 },
+      x: GX, y: GY + QH + GAP / 2, w: QW * 2 + GAP, h: 0,
+      line: { color: _c(C.TONES.GRAY_60), width: 2 },
     });
     slide.addShape(this.pptx.ShapeType.line, {
-      x: GX + QW + GAP / 2, y: GY, w: 0.0, h: QH * 2 + GAP,
-      line: { color: _c(C.TONES.GRAY_60), width: 2.6667 },
+      x: GX + QW + GAP / 2, y: GY, w: 0, h: QH * 2 + GAP,
+      line: { color: _c(C.TONES.GRAY_60), width: 2 },
     });
 
     if (xAxisLabel) {
       slide.addText(xAxisLabel.toUpperCase(), {
-        x: GX, y: GY + QH * 2 + GAP + 0.15, w: QW * 2 + GAP, h: 0.4667,
+        x: GX, y: GY + QH * 2 + GAP + 0.15, w: QW * 2 + GAP, h: 0.35,
         fontFace: F.HEADERS.family, fontSize: 11,
         bold: true, color: _c(C.TONES.GRAY_60), align: 'center',
       });
     }
     if (yAxisLabel) {
       slide.addText(yAxisLabel.toUpperCase(), {
-        x: 0.1333, y: GY, w: 1.2, h: QH * 2,
+        x: 0.1, y: GY, w: 0.9, h: QH * 2,
         fontFace: F.HEADERS.family, fontSize: 11,
         bold: true, color: _c(C.TONES.GRAY_60),
         align: 'center', valign: 'middle', rotate: 270,
@@ -1209,7 +1209,7 @@ class PotomacSlideTemplates {
     this.addStandardLogo(slide);
 
     slide.addText(title.toUpperCase(), {
-      x: 0.6667, y: 0.4, w: 10.6667, h: 1.0,
+      x: 0.5, y: 0.3, w: 8, h: 0.75,
       fontFace: F.HEADERS.family, fontSize: 28,
       bold: true, color: _c(C.PRIMARY.DARK_GRAY),
     });
@@ -1219,7 +1219,7 @@ class PotomacSlideTemplates {
 
     if (subtitle) {
       slide.addText(subtitle, {
-        x: 0.6667, y: 1.44, w: 11.3333, h: 0.5067,
+        x: 0.5, y: 1.08, w: 8.5, h: 0.38,
         fontFace: F.BODY.family, fontSize: 13,
         color: _c(C.TONES.GRAY_60),
       });
@@ -1234,13 +1234,13 @@ class PotomacSlideTemplates {
 
     // Header row
     slide.addShape(this.pptx.ShapeType.rect, {
-      x: 0.6667, y: headerY, w: 12.0, h: 0.6,
+      x: 0.5, y: headerY, w: 9.0, h: 0.45,
       fill: { color: _c(C.PRIMARY.DARK_GRAY) },
-      line: { color: _c(C.PRIMARY.DARK_GRAY), width: 0.0 },
+      line: { color: _c(C.PRIMARY.DARK_GRAY), width: 0 },
     });
     HDRS.forEach((h, i) => {
       slide.addText(h, {
-        x: S_COLS[i], y: headerY + 0.03, w: S_WIDTHS[i], h: 0.52,
+        x: S_COLS[i], y: headerY + 0.03, w: S_WIDTHS[i], h: 0.39,
         fontFace: F.HEADERS.family, fontSize: 11,
         bold: true, color: _c(C.PRIMARY.WHITE),
         valign: 'middle', align: i === 0 ? 'left' : 'center',
@@ -1253,19 +1253,19 @@ class PotomacSlideTemplates {
 
       if (alt) {
         slide.addShape(this.pptx.ShapeType.rect, {
-          x: 0.6667, y, w: 12.0, h: rowH,
+          x: 0.5, y, w: 9.0, h: rowH,
           fill: { color: _c(C.TONES.GRAY_20) },
-          line: { color: _c(C.TONES.GRAY_20), width: 0.0 },
+          line: { color: _c(C.TONES.GRAY_20), width: 0 },
         });
       }
 
       const fs = Math.min(12, rowH * 14);
 
       [
-        { v: m.label || '',   x: 0.8, w: 4.4, align: 'left',   bold: true,  color: _c(C.PRIMARY.DARK_GRAY) },
-        { v: m.value || '—',  x: 5.3333, w: 1.8667, align: 'center', bold: true,  color: _c(this.palette.accent) },
-        { v: m.target || '—', x: 7.3333, w: 1.6, align: 'center', bold: false, color: _c(C.PRIMARY.DARK_GRAY) },
-        { v: m.change || '—', x: 9.0667, w: 1.7333, align: 'center', bold: false, color: _c(C.PRIMARY.DARK_GRAY) },
+        { v: m.label || '',   x: 0.6, w: 3.3, align: 'left',   bold: true,  color: _c(C.PRIMARY.DARK_GRAY) },
+        { v: m.value || '—',  x: 4.0, w: 1.4, align: 'center', bold: true,  color: _c(this.palette.accent) },
+        { v: m.target || '—', x: 5.5, w: 1.2, align: 'center', bold: false, color: _c(C.PRIMARY.DARK_GRAY) },
+        { v: m.change || '—', x: 6.8, w: 1.3, align: 'center', bold: false, color: _c(C.PRIMARY.DARK_GRAY) },
       ].forEach(col => {
         slide.addText(String(col.v), {
           x: col.x, y: y + 0.04, w: col.w, h: rowH - 0.08,
@@ -1278,9 +1278,9 @@ class PotomacSlideTemplates {
       // Status indicator circle
       const sc = STATUS_C[m.status] || STATUS_C.yellow;
       slide.addShape(this.pptx.ShapeType.ellipse, {
-        x: 11.0667 + (1.0 - rowH * 0.6) / 2, y: y + rowH * 0.2,
+        x: 8.3 + (1.0 - rowH * 0.6) / 2, y: y + rowH * 0.2,
         w: rowH * 0.6, h: rowH * 0.6,
-        fill: { color: sc }, line: { color: sc, width: 0.0 },
+        fill: { color: sc }, line: { color: sc, width: 0 },
       });
     });
 
@@ -1299,7 +1299,7 @@ class PotomacSlideTemplates {
     this.addStandardLogo(slide);
 
     slide.addText(title.toUpperCase(), {
-      x: 0.6667, y: 0.4, w: 10.6667, h: 0.9333,
+      x: 0.5, y: 0.3, w: 8, h: 0.7,
       fontFace: F.HEADERS.family, fontSize: 26,
       bold: true, color: _c(C.PRIMARY.DARK_GRAY),
     });
@@ -1319,28 +1319,28 @@ class PotomacSlideTemplates {
     const rightTxtColor = rWin ? _c(C.PRIMARY.DARK_GRAY) : _c(C.PRIMARY.WHITE);
 
     slide.addShape(this.pptx.ShapeType.rect, {
-      x: 0.6667, y: HDR_Y, w: COL_W, h: 0.8,
-      fill: { color: leftHdrColor }, line: { color: leftHdrColor, width: 0.0 },
+      x: 0.5, y: HDR_Y, w: COL_W, h: 0.6,
+      fill: { color: leftHdrColor }, line: { color: leftHdrColor, width: 0 },
     });
     slide.addText(leftLabel.toUpperCase(), {
-      x: 0.6667, y: HDR_Y, w: COL_W, h: 0.8,
+      x: 0.5, y: HDR_Y, w: COL_W, h: 0.6,
       fontFace: F.HEADERS.family, fontSize: 14,
       bold: true, color: leftTxtColor, align: 'center', valign: 'middle',
     });
 
     slide.addShape(this.pptx.ShapeType.rect, {
-      x: CENTER_X + 0.2, y: HDR_Y, w: COL_W, h: 0.8,
-      fill: { color: rightHdrColor }, line: { color: rightHdrColor, width: 0.0 },
+      x: CENTER_X + 0.2, y: HDR_Y, w: COL_W, h: 0.6,
+      fill: { color: rightHdrColor }, line: { color: rightHdrColor, width: 0 },
     });
     slide.addText(rightLabel.toUpperCase(), {
-      x: CENTER_X + 0.2, y: HDR_Y, w: COL_W, h: 0.8,
+      x: CENTER_X + 0.2, y: HDR_Y, w: COL_W, h: 0.6,
       fontFace: F.HEADERS.family, fontSize: 14,
       bold: true, color: rightTxtColor, align: 'center', valign: 'middle',
     });
 
     // VS divider label
     slide.addText('VS', {
-      x: CENTER_X - 0.25, y: HDR_Y + 0.1, w: 0.6667, h: 0.5333,
+      x: CENTER_X - 0.25, y: HDR_Y + 0.1, w: 0.5, h: 0.4,
       fontFace: F.HEADERS.family, fontSize: 12,
       bold: true, color: _c(C.TONES.GRAY_40), align: 'center',
     });
@@ -1351,9 +1351,9 @@ class PotomacSlideTemplates {
 
       if (alt) {
         slide.addShape(this.pptx.ShapeType.rect, {
-          x: 0.6667, y, w: 12.0, h: rowH,
+          x: 0.5, y, w: 9.0, h: rowH,
           fill: { color: _c(C.TONES.GRAY_20) },
-          line: { color: _c(C.TONES.GRAY_20), width: 0.0 },
+          line: { color: _c(C.TONES.GRAY_20), width: 0 },
         });
       }
 
@@ -1361,12 +1361,12 @@ class PotomacSlideTemplates {
 
       // Row label (centre column)
       slide.addText(String(row.label || `Point ${idx + 1}`), {
-        x: CENTER_X - 0.3, y: y + 0.05, w: 0.8, h: rowH - 0.1,
+        x: CENTER_X - 0.3, y: y + 0.05, w: 0.6, h: rowH - 0.1,
         fontFace: F.HEADERS.family, fontSize: 10,
         bold: true, color: _c(C.TONES.GRAY_60), align: 'center', valign: 'middle',
       });
       slide.addText(String(row.left || '—'), {
-        x: 0.8, y: y + 0.05, w: COL_W - 0.2, h: rowH - 0.1,
+        x: 0.6, y: y + 0.05, w: COL_W - 0.2, h: rowH - 0.1,
         fontFace: F.BODY.family, fontSize: fs,
         color: _c(C.PRIMARY.DARK_GRAY), align: 'center', valign: 'middle',
       });
@@ -1390,7 +1390,7 @@ class PotomacSlideTemplates {
     this.addStandardLogo(slide);
 
     slide.addText(title.toUpperCase(), {
-      x: 0.6667, y: 0.4, w: 10.6667, h: 1.0,
+      x: 0.5, y: 0.3, w: 8, h: 0.75,
       fontFace: F.HEADERS.family, fontSize: 28,
       bold: true, color: _c(C.PRIMARY.DARK_GRAY),
     });
@@ -1398,7 +1398,7 @@ class PotomacSlideTemplates {
 
     if (!headers.length || !rows.length) {
       slide.addText('No data provided', {
-        x: 0.6667, y: 2.6667, w: 12.0, h: 1.3333,
+        x: 0.5, y: 2, w: 9, h: 1,
         fontFace: F.BODY.family, fontSize: 16,
         color: _c(C.TONES.GRAY_60), align: 'center',
       });
@@ -1434,7 +1434,7 @@ class PotomacSlideTemplates {
 
     const tblH = Math.min(5.5, (rows.length + 1) * 0.5);
     slide.addTable(tableRows, {
-      x: 0.6667, y: 1.8, w: 12.0, h: tblH,
+      x: 0.5, y: 1.35, w: 9.0, h: tblH,
       border: { pt: 0.5, color: _c(C.TONES.GRAY_40) },
       margin: 0.05,
     });
@@ -1458,7 +1458,7 @@ class PotomacSlideTemplates {
     this.addStandardLogo(slide);
 
     slide.addText(title.toUpperCase(), {
-      x: 0.6667, y: 0.4, w: 10.6667, h: 0.96,
+      x: 0.5, y: 0.3, w: 8, h: 0.72,
       fontFace: F.HEADERS.family, fontSize: 26,
       bold: true, color: _c(C.PRIMARY.DARK_GRAY),
     });
@@ -1481,7 +1481,7 @@ class PotomacSlideTemplates {
     ];
 
     slide.addChart(pptxType, safeData, {
-      x: 0.6667, y: 1.4667, w: 12.0, h: 7.3333,
+      x: 0.5, y: 1.1, w: 9, h: 5.5,
       showLegend: options.showLegend !== false,
       legendPos:  options.legendPos || 'b',
       showValue:  options.showValue || false,
@@ -1494,7 +1494,7 @@ class PotomacSlideTemplates {
 
     if (options.source) {
       slide.addText(`Source: ${options.source}`, {
-        x: 0.6667, y: 9.2, w: 8.0, h: 0.4667,
+        x: 0.5, y: 6.9, w: 6, h: 0.35,
         fontFace: F.BODY.family, fontSize: 9,
         color: _c(C.TONES.GRAY_60), italic: true,
       });
@@ -1513,7 +1513,7 @@ class PotomacSlideTemplates {
     this.addStandardLogo(slide);
 
     slide.addText(title.toUpperCase(), {
-      x: 0.6667, y: 0.4, w: 10.6667, h: 0.96,
+      x: 0.5, y: 0.3, w: 8, h: 0.72,
       fontFace: F.HEADERS.family, fontSize: 26,
       bold: true, color: _c(C.PRIMARY.DARK_GRAY),
     });
@@ -1524,15 +1524,15 @@ class PotomacSlideTemplates {
     const fs    = require('fs');
 
     if (imagePath && fs.existsSync(imagePath)) {
-      slide.addImage({ path: imagePath, x: imgX, y: 1.7333, w: 5.7333, h: 7.7333 });
+      slide.addImage({ path: imagePath, x: imgX, y: 1.3, w: 4.3, h: 5.8 });
     } else {
       slide.addShape(this.pptx.ShapeType.rect, {
-        x: imgX, y: 1.7333, w: 5.7333, h: 7.7333,
+        x: imgX, y: 1.3, w: 4.3, h: 5.8,
         fill: { color: _c(C.TONES.GRAY_20) },
-        line: { color: _c(C.TONES.GRAY_40), width: 1.3333 },
+        line: { color: _c(C.TONES.GRAY_40), width: 1 },
       });
       slide.addText('IMAGE', {
-        x: imgX, y: 1.7333, w: 5.7333, h: 7.7333,
+        x: imgX, y: 1.3, w: 4.3, h: 5.8,
         fontFace: F.HEADERS.family, fontSize: 24,
         color: _c(C.TONES.GRAY_40), align: 'center', valign: 'middle',
       });
@@ -1543,7 +1543,7 @@ class PotomacSlideTemplates {
       : String(content || '');
 
     slide.addText(txtContent, {
-      x: txtX, y: 1.7333, w: 5.7333, h: 7.7333,
+      x: txtX, y: 1.3, w: 4.3, h: 5.8,
       fontFace: F.BODY.family, fontSize: 15,
       color: _c(C.PRIMARY.DARK_GRAY), valign: 'top',
     });
@@ -1561,17 +1561,17 @@ class PotomacSlideTemplates {
 
     const fs = require('fs');
     if (imagePath && fs.existsSync(imagePath)) {
-      slide.addImage({ path: imagePath, x: 0.0, y: 0.0, w: 13.3333, h: 10.0 });
+      slide.addImage({ path: imagePath, x: 0, y: 0, w: 10, h: 7.5 });
     }
 
     if (overlay && title) {
       slide.addShape(this.pptx.ShapeType.rect, {
-        x: 0.0, y: 7.3333, w: 13.3333, h: 2.6667,
+        x: 0, y: 5.5, w: 10, h: 2,
         fill: { color: _c(C.PRIMARY.DARK_GRAY), transparency: 35 },
-        line: { color: _c(C.PRIMARY.DARK_GRAY), width: 0.0 },
+        line: { color: _c(C.PRIMARY.DARK_GRAY), width: 0 },
       });
       slide.addText(title.toUpperCase(), {
-        x: 0.6667, y: 7.6, w: 12.0, h: 1.6,
+        x: 0.5, y: 5.7, w: 9, h: 1.2,
         fontFace: F.HEADERS.family, fontSize: 36,
         bold: true, color: _c(C.PRIMARY.WHITE),
         align: 'center', valign: 'middle',
@@ -1579,7 +1579,7 @@ class PotomacSlideTemplates {
     }
 
     // Dark slide — use white logo variant
-    this.addLogo(slide, { x: 10.9333, y: 0.2933, w: 2.1333, h: 0.7333 }, 'dark');
+    this.addLogo(slide, { x: 8.2, y: 0.22, w: 1.6, h: 0.55 }, 'dark');
     return slide;
   }
 
@@ -1615,10 +1615,10 @@ class PotomacSlideTemplates {
     const makeLogo = (theme, fallbackColor) => {
       const logoPath = getIconPath(theme);
       return logoPath
-        ? { image: { path: logoPath, x: 11.6267, y: 0.16, w: 1.2667, h: 1.2667,
-                     sizing: { type: 'contain', w: 1.2667, h: 1.2667 } } }
+        ? { image: { path: logoPath, x: 8.72, y: 0.12, w: 0.95, h: 0.95,
+                     sizing: { type: 'contain', w: 0.95, h: 0.95 } } }
         : { text: { text: 'POTOMAC', options: {
-              x: 10.9333, y: 0.16, w: 2.0, h: 0.6667,
+              x: 8.2, y: 0.12, w: 1.5, h: 0.5,
               fontSize: 12, bold: true, color: fallbackColor,
               fontFace: F.HEADERS.family, align: 'right',
             } } };
