@@ -101,7 +101,7 @@ class BaseLLMProvider(ABC):
         model: str,
         system: str = "",
         tools: Optional[List[Dict]] = None,
-        max_tokens: int = 4096,
+        max_tokens: int = 409600,
         **kwargs,
     ) -> AsyncGenerator[StreamChunk, None]:
         """
@@ -130,7 +130,7 @@ class BaseLLMProvider(ABC):
         model: str,
         system: str = "",
         tools: Optional[List[Dict]] = None,
-        max_tokens: int = 15000,
+        max_tokens: int = 150000,
         **kwargs,
     ) -> LLMResponse:
         """

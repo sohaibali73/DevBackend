@@ -2,11 +2,15 @@
 
 import io
 import json
+import os
 import re
 import asyncio
 import traceback
+import logging
 from typing import Optional, Dict, List
 from datetime import datetime
+
+logger = logging.getLogger(__name__)
 
 from fastapi import APIRouter, HTTPException, Depends, Request, UploadFile, File, Form
 from fastapi.responses import StreamingResponse
@@ -475,6 +479,89 @@ async def _fetch_file_context(db, conversation_id: str) -> str:
     )
 
 
+async def _get_pptx_vision_blocks(db, conversation_id: str) -> list:
+    """
+    For any PPTX files linked to this conversation that have rendered slide
+    previews on disk, return a list of Claude vision image content blocks.
+
+    Blocks are injected into the last user message so Claude can literally see
+    the slide designs, layouts, graphics, and branding — not just extracted text.
+
+    Limits to MAX_SLIDES_PER_DECK slides per file and MAX_TOTAL_SLIDES total
+    to stay within context/token budgets.
+    """
+    MAX_SLIDES_PER_DECK = 8   # per uploaded PPTX
+    MAX_TOTAL_SLIDES   = 16  # across all PPTX files in the conversation
+
+    import base64
+
+    storage_root = os.getenv("STORAGE_ROOT", "/data")
+    vision_blocks: list = []
+
+    try:
+        conv_files = db.table("conversation_files").select(
+            "file_id, file_uploads(id, original_filename, content_type, storage_path)"
+        ).eq("conversation_id", conversation_id).execute()
+
+        for cf in (conv_files.data or []):
+            fu = cf.get("file_uploads")
+            if not fu:
+                continue
+            content_type = fu.get("content_type", "")
+            if "pptx" not in content_type.lower() and "ppt" not in content_type.lower() and \
+               not (fu.get("original_filename") or "").lower().endswith((".pptx", ".ppt")):
+                continue  # not a presentation file
+
+            file_id = cf.get("file_id") or fu.get("id", "")
+            fname   = fu.get("original_filename", "presentation")
+            slide_dir = os.path.join(storage_root, "slide_previews", file_id)
+
+            if not os.path.isdir(slide_dir):
+                continue  # slides not rendered yet (background task still running)
+
+            slide_pngs = sorted(
+                [f for f in os.listdir(slide_dir) if f.endswith(".png")],
+                key=lambda x: x  # slide_001.png, slide_002.png … already sorted
+            )[:MAX_SLIDES_PER_DECK]
+
+            if not slide_pngs:
+                continue
+
+            # Label block: tells Claude which file these slides belong to
+            vision_blocks.append({
+                "type": "text",
+                "text": (
+                    f"\n📊 PRESENTATION SLIDES — \"{fname}\" "
+                    f"({len(slide_pngs)} slide(s) shown below as images):\n"
+                    f"Analyze the visual design, layout, graphics, and branding visible "
+                    f"in these slides, not just the text content."
+                ),
+            })
+
+            for png_name in slide_pngs:
+                if len(vision_blocks) > MAX_TOTAL_SLIDES * 2:  # *2 for label blocks
+                    break
+                png_path = os.path.join(slide_dir, png_name)
+                try:
+                    with open(png_path, "rb") as fh:
+                        b64_data = base64.b64encode(fh.read()).decode()
+                    vision_blocks.append({
+                        "type": "image",
+                        "source": {
+                            "type": "base64",
+                            "media_type": "image/png",
+                            "data": b64_data,
+                        },
+                    })
+                except Exception as img_err:
+                    logger.debug(f"Could not read slide image {png_path}: {img_err}")
+
+    except Exception as e:
+        logger.debug(f"_get_pptx_vision_blocks failed (non-fatal): {e}")
+
+    return vision_blocks
+
+
 async def _fetch_kb_context(db, user_content: str) -> str:
     """Search KB for relevant context based on user message."""
     # Placeholder: implement semantic search if available
@@ -844,10 +931,24 @@ async def chat_agent(
             else:
                 system_prompt = system_prompt_base
 
-            # Sanitize and manage context window
-            messages = sanitize_message_history(
-                history + [{"role": "user", "content": data.content}]
-            )
+            # ── PPTX Vision: inject rendered slide images into last user message ──
+            # If any PPTX files attached to this conversation have rendered slide
+            # previews on disk, pass them as Claude Vision image content blocks.
+            # This lets the LLM literally SEE the slide designs, graphics, and
+            # branding rather than only reading extracted text.
+            pptx_vision_blocks = await _get_pptx_vision_blocks(db, conversation_id)
+            if pptx_vision_blocks:
+                last_user_content: list = (
+                    [{"type": "text", "text": data.content}] + pptx_vision_blocks
+                )
+                messages = sanitize_message_history(
+                    history + [{"role": "user", "content": last_user_content}]
+                )
+            else:
+                messages = sanitize_message_history(
+                    history + [{"role": "user", "content": data.content}]
+                )
+
             messages = manage_context_window(
                 messages,
                 model_config["context_window"],

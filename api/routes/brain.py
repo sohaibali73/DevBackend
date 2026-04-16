@@ -11,7 +11,8 @@ import uuid
 from datetime import datetime, timezone
 from typing import Optional, List
 
-from fastapi import APIRouter, HTTPException, UploadFile, File, Form, Depends
+from fastapi import APIRouter, BackgroundTasks, HTTPException, UploadFile, File, Form, Depends
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
 from api.dependencies import get_current_user_id, get_user_api_keys
@@ -24,6 +25,7 @@ from api.routes.upload import (
     _write_file,
     _delete_file,
     _extract_text,
+    _render_pptx_slides_to_disk,
     MAX_FILE_SIZE,
 )
 
@@ -73,7 +75,123 @@ class SearchRequest(BaseModel):
 
 
 # ============================================================================
-# UPLOAD DOCUMENT
+# BACKGROUND DOCUMENT PROCESSOR
+# ============================================================================
+
+def _process_document_background(
+    document_id: str,
+    storage_path: str,
+    content_bytes: bytes,
+    content_type: str,
+    filename: str,
+    claude_key: str,
+    user_id: str,
+    category: str,
+) -> None:
+    """
+    Blocking sync function — FastAPI runs this in a thread-pool executor so
+    it never blocks the uvicorn event loop.
+
+    Steps: extract text → classify → chunk → mark ready.
+    On any failure the document row is updated with an error summary so the
+    status endpoint can surface it to the frontend.
+    """
+    db = get_supabase()
+    now = datetime.now(timezone.utc).isoformat()
+
+    try:
+        # ── Text extraction (PPTX now uses fast python-pptx path, <100 ms) ───
+        content = _extract_text_from_bytes(content_bytes, content_type, filename)
+        content = content.replace("\x00", "")  # strip null bytes — Postgres rejects them
+
+        if not content.strip():
+            db.table("brain_documents").update({
+                "summary": "[ERROR: Could not extract text from this file]",
+                "processed_at": now,
+                "is_processed": False,
+            }).eq("id", document_id).execute()
+            logger.warning(f"Background extraction yielded no text for {filename} ({document_id})")
+            return
+
+        # ── Classification ────────────────────────────────────────────────────
+        final_category = category
+        classification_data: dict = {
+            "subcategories": [], "tags": [], "summary": "", "confidence": 0,
+        }
+        if claude_key:
+            try:
+                classifier = AIDocumentClassifier(api_key=claude_key)
+                cl = classifier.classify_document(content[:5000], filename)
+                if category == "general" and hasattr(cl, "primary_category"):
+                    final_category = cl.primary_category or "general"
+                classification_data = {
+                    "subcategories": getattr(cl, "subcategories", []),
+                    "tags": getattr(cl, "suggested_tags", []),
+                    "summary": getattr(cl, "summary", ""),
+                    "confidence": getattr(cl, "confidence", 0),
+                }
+            except Exception as cls_err:
+                logger.warning(f"Classification failed for {filename}: {cls_err}")
+
+        # ── Update DB with extracted content + classification ─────────────────
+        db.table("brain_documents").update({
+            "raw_content": content,
+            "category": final_category,
+            "subcategories": classification_data["subcategories"],
+            "tags": classification_data["tags"],
+            "summary": classification_data["summary"],
+        }).eq("id", document_id).execute()
+
+        # ── Chunk for RAG ─────────────────────────────────────────────────────
+        chunk_size = 500
+        chunks = [content[i:i + chunk_size] for i in range(0, len(content), chunk_size)][:50]
+        for idx, chunk_text in enumerate(chunks):
+            db.table("brain_chunks").insert({
+                "document_id": document_id,
+                "chunk_index": idx,
+                "content": chunk_text,
+            }).execute()
+
+        # ── Mark as ready ─────────────────────────────────────────────────────
+        db.table("brain_documents").update({
+            "is_processed": True,
+            "chunk_count": len(chunks),
+            "processed_at": now,
+        }).eq("id", document_id).execute()
+
+        logger.info(
+            f"Background processing complete: {filename} → {len(chunks)} chunks "
+            f"(doc_id={document_id})"
+        )
+
+    except Exception as e:
+        logger.error(f"Background processing failed for {document_id}: {e}", exc_info=True)
+        try:
+            db.table("brain_documents").update({
+                "summary": f"[ERROR: {str(e)[:200]}]",
+                "processed_at": now,
+                "is_processed": False,
+            }).eq("id", document_id).execute()
+        except Exception:
+            pass  # DB unavailable — log already written
+        return  # don't attempt slide rendering on error
+
+    # ── Slide rendering for PPTX files (vision pipeline, runs after text is ready) ──
+    # Stores PNGs at $STORAGE_ROOT/slide_previews/{document_id}/slide_NNN.png
+    # These are used by chat.py to inject vision content blocks so the LLM can
+    # literally see the slide design, layout, graphics, and branding.
+    ext = os.path.splitext(filename)[1].lower()
+    if ext in {".pptx", ".ppt"}:
+        try:
+            import asyncio
+            asyncio.run(_render_pptx_slides_to_disk(document_id, content_bytes, filename))
+        except Exception as slide_err:
+            # Slide rendering is best-effort — text extraction is already done
+            logger.warning(f"PPTX slide rendering step failed for {document_id}: {slide_err}")
+
+
+# ============================================================================
+# UPLOAD DOCUMENT  (async — returns 202 immediately, processes in background)
 # ============================================================================
 
 @router.post("/upload")
@@ -81,46 +199,52 @@ async def upload_document(
     file: UploadFile = File(...),
     title: Optional[str] = Form(None),
     category: Optional[str] = Form("general"),
+    background_tasks: BackgroundTasks = BackgroundTasks(),
     user_id: str = Depends(get_current_user_id),
     api_keys: dict = Depends(get_user_api_keys),
 ):
-    """Upload and index a document into the knowledge base.
+    """
+    Upload and index a document into the knowledge base.
 
-    1. File bytes → Railway volume  ($STORAGE_ROOT/uploads/{user_id}/...)
-    2. Metadata + extracted text → Supabase brain_documents
-    3. Text chunks → Supabase brain_chunks
+    Returns 202 immediately after saving the file to disk.
+    Text extraction, classification, and chunking happen in a background
+    thread so the HTTP request is never blocked by parsing.
+
+    Poll GET /brain/documents/{id}/status to check processing progress.
     """
     try:
         content_bytes = await file.read()
 
         if len(content_bytes) > MAX_FILE_SIZE:
-            raise HTTPException(status_code=413, detail="File too large. Maximum size is 10 MB.")
+            raise HTTPException(
+                status_code=413,
+                detail=f"File too large. Maximum size is {MAX_FILE_SIZE // (1024*1024*1024)} GB.",
+            )
 
         if not content_bytes.strip():
             raise HTTPException(status_code=400, detail="File is empty.")
 
         db = get_supabase()
 
-        # ── Extract text ──────────────────────────────────────────────────────
-        content = _extract_text_from_bytes(content_bytes, file.content_type or "", file.filename or "")
-        content = content.replace("\x00", "")  # strip null bytes — Postgres rejects them
-        if not content.strip():
-            raise HTTPException(status_code=400, detail="Could not extract text from this file.")
-
-        # ── Deduplication ─────────────────────────────────────────────────────
+        # ── Deduplication (hash check before any heavy work) ──────────────────
         content_hash = hashlib.sha256(content_bytes).hexdigest()
-        existing = db.table("brain_documents").select("id").eq(
+        existing = db.table("brain_documents").select("id, is_processed").eq(
             "content_hash", content_hash
         ).limit(1).execute()
 
         if existing.data:
-            return {
-                "status": "duplicate",
-                "document_id": existing.data[0]["id"],
-                "message": "Document already exists in knowledge base",
-            }
+            row = existing.data[0]
+            return JSONResponse(
+                status_code=200,
+                content={
+                    "status": "duplicate",
+                    "document_id": row["id"],
+                    "ready": row.get("is_processed", False),
+                    "message": "Document already exists in knowledge base",
+                },
+            )
 
-        # ── Save file to Railway volume ───────────────────────────────────────
+        # ── Save file to Railway volume immediately ────────────────────────────
         file_id = str(uuid.uuid4())
         storage_path = _storage_path(user_id, file_id, file.filename or "upload")
         try:
@@ -129,77 +253,55 @@ async def upload_document(
             logger.error(f"Failed to write brain document to disk: {e}")
             raise HTTPException(status_code=500, detail="Storage error — could not save file.")
 
-        # ── Classify ──────────────────────────────────────────────────────────
-        final_category = category or "general"
-        classification_data = {"subcategories": [], "tags": [], "summary": "", "confidence": 0}
-
-        try:
-            claude_key = api_keys.get("claude", "")
-            if claude_key:
-                classifier = AIDocumentClassifier(api_key=claude_key)
-                classification = classifier.classify_document(content[:5000], file.filename)
-                if category == "general" and hasattr(classification, "primary_category"):
-                    final_category = classification.primary_category or "general"
-                classification_data = {
-                    "subcategories": getattr(classification, "subcategories", []),
-                    "tags": getattr(classification, "suggested_tags", []),
-                    "summary": getattr(classification, "summary", ""),
-                    "confidence": getattr(classification, "confidence", 0),
-                }
-        except Exception as cls_err:
-            logger.warning(f"Document classification failed (continuing): {cls_err}")
-
-        # ── Insert brain_documents row ─────────────────────────────────────────
+        # ── Insert placeholder DB row (processing not yet started) ────────────
         now = datetime.now(timezone.utc).isoformat()
-        doc_result = db.table("brain_documents").insert({
+        db.table("brain_documents").insert({
             "id": file_id,
             "uploaded_by": user_id,
             "title": title or file.filename,
             "filename": file.filename,
             "file_type": file.content_type,
             "file_size": len(content_bytes),
-            "storage_path": storage_path,          # ← points to Railway volume
-            "category": final_category,
-            "subcategories": classification_data["subcategories"],
-            "tags": classification_data["tags"],
-            "raw_content": content,                 # extracted text kept in DB for search
-            "summary": classification_data["summary"],
+            "storage_path": storage_path,
+            "category": category or "general",
             "content_hash": content_hash,
             "source_type": "upload",
+            "is_processed": False,
             "created_at": now,
         }).execute()
 
-        document_id = doc_result.data[0]["id"]
+        # ── Queue background processing (thread-pool, non-blocking) ──────────
+        claude_key = api_keys.get("claude", "")
+        background_tasks.add_task(
+            _process_document_background,
+            file_id,
+            storage_path,
+            content_bytes,
+            file.content_type or "",
+            file.filename or "upload",
+            claude_key,
+            user_id,
+            category or "general",
+        )
 
-        # ── Chunk for RAG ─────────────────────────────────────────────────────
-        chunk_size = 500
-        chunks = [content[i:i + chunk_size] for i in range(0, len(content), chunk_size)]
-        chunks = chunks[:50]  # cap at 50 chunks
+        logger.info(
+            f"Accepted upload for background processing: {file.filename} "
+            f"({len(content_bytes) // 1024} KB, doc_id={file_id})"
+        )
 
-        for idx, chunk in enumerate(chunks):
-            db.table("brain_chunks").insert({
-                "document_id": document_id,
-                "chunk_index": idx,
-                "content": chunk,
-            }).execute()
-
-        db.table("brain_documents").update({
-            "is_processed": True,
-            "chunk_count": len(chunks),
-            "processed_at": now,
-        }).eq("id", document_id).execute()
-
-        return {
-            "status": "success",
-            "document_id": document_id,
-            "storage_path": storage_path,
-            "classification": {
-                "category": final_category,
-                "confidence": classification_data["confidence"],
-                "summary": classification_data["summary"],
+        # ── Return 202 immediately ─────────────────────────────────────────────
+        return JSONResponse(
+            status_code=202,
+            content={
+                "status": "processing",
+                "document_id": file_id,
+                "ready": False,
+                "message": (
+                    "File saved. Text extraction and indexing are running in the background. "
+                    "Poll GET /brain/documents/{id}/status for completion."
+                ),
             },
-            "chunks_created": len(chunks),
-        }
+        )
 
     except HTTPException:
         raise
@@ -674,6 +776,69 @@ async def download_document(
             "Cache-Control": "private, max-age=3600",
         },
     )
+
+
+# ============================================================================
+# DOCUMENT PROCESSING STATUS  (poll after async upload)
+# ============================================================================
+
+@router.get("/documents/{document_id}/status")
+async def get_document_status(
+    document_id: str,
+    user_id: str = Depends(get_current_user_id),
+):
+    """
+    Poll the processing status of a document uploaded via POST /brain/upload.
+
+    Response shape:
+      { document_id, status: "processing"|"ready"|"error", ready: bool, ... }
+
+    Status logic (no extra DB column needed):
+      - is_processed=True                     → "ready"
+      - is_processed=False, processed_at=null → "processing" (background task running)
+      - is_processed=False, processed_at set  → "error" (task ran, extraction failed)
+    """
+    db = get_supabase()
+    result = db.table("brain_documents").select(
+        "id, title, filename, is_processed, processed_at, chunk_count, summary, file_size, file_type"
+    ).eq("id", document_id).limit(1).execute()
+
+    if not result.data:
+        raise HTTPException(status_code=404, detail="Document not found.")
+
+    doc = result.data[0]
+    is_processed: bool = doc.get("is_processed", False)
+    processed_at: Optional[str] = doc.get("processed_at")
+    summary: str = doc.get("summary") or ""
+
+    if is_processed:
+        return {
+            "document_id": document_id,
+            "status": "ready",
+            "ready": True,
+            "title": doc.get("title"),
+            "filename": doc.get("filename"),
+            "file_size": doc.get("file_size"),
+            "file_type": doc.get("file_type"),
+            "chunk_count": doc.get("chunk_count", 0),
+            "summary_preview": summary[:300] if summary and not summary.startswith("[ERROR") else "",
+        }
+    elif processed_at and summary.startswith("[ERROR"):
+        # Background task ran and reported an error
+        return {
+            "document_id": document_id,
+            "status": "error",
+            "ready": False,
+            "error": summary,
+        }
+    else:
+        # Background task is still running (or hasn't started yet)
+        return {
+            "document_id": document_id,
+            "status": "processing",
+            "ready": False,
+            "message": "Document is being indexed. Check back in a few seconds.",
+        }
 
 
 # ============================================================================

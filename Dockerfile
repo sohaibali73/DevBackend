@@ -82,11 +82,15 @@ COPY main.py .
 EXPOSE 8000
 
 # Gunicorn with UvicornWorker for production-grade async handling
-# --timeout 120 matches keep-alive in main.py for long-running skill API calls
+# --timeout 300: background tasks (PPTX parsing, OCR, slide rendering) can take
+#   several minutes on large files; this prevents gunicorn from killing workers.
+#   Railway's proxy timeout is ~120 s for synchronous requests, but background
+#   tasks run AFTER the HTTP response is sent so they are not proxy-limited.
 # --workers 2 is safe for Railway's default memory limits
 CMD ["gunicorn", "main:app", \
      "--worker-class", "uvicorn.workers.UvicornWorker", \
      "--workers", "2", \
      "--bind", "0.0.0.0:8000", \
-     "--timeout", "120", \
-     "--keep-alive", "120"]
+     "--timeout", "300", \
+     "--keep-alive", "120", \
+     "--graceful-timeout", "60"]

@@ -110,7 +110,7 @@ class AnthropicProvider(BaseLLMProvider):
         model: str,
         system: str = "",
         tools: Optional[List[Dict]] = None,
-        max_tokens: int = 15000,
+        max_tokens: int = 1500000,
         **kwargs,
     ) -> AsyncGenerator[StreamChunk, None]:
         """

@@ -198,6 +198,15 @@ class DocumentParser:
             except Exception as e:
                 return f"[Archive extraction error: {e}]"
 
+        # === PPTX/PPT FAST PATH — skip unstructured entirely ===
+        # unstructured unpacks ALL embedded images from PPTX and runs ML inference
+        # on each one (seen in logs: "Reading image file: /tmp/.../ppt/media/imageN.png").
+        # A 50 MB presentation with 30–60 graphics takes 3–10 minutes → Railway 504.
+        # python-pptx text extraction runs in <100 ms.  Vision analysis is handled
+        # separately via SlideRenderer + VisionEngine in the brain upload pipeline.
+        if ext in {".pptx", ".ppt"}:
+            return cls._extract_pptx(path)
+
         # === UNSTRUCTURED SUPERCHARGER (primary path — 64+ formats + OCR) ===
         try:
             from unstructured.partition.auto import partition

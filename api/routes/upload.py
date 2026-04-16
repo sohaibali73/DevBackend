@@ -22,7 +22,7 @@ import logging
 from datetime import datetime, timezone
 from typing import Optional, List
 
-from fastapi import APIRouter, HTTPException, Depends, UploadFile, File, Form
+from fastapi import APIRouter, BackgroundTasks, HTTPException, Depends, UploadFile, File, Form
 from fastapi.responses import Response
 from pydantic import BaseModel
 
@@ -104,6 +104,95 @@ def _extract_text(storage_path: str) -> str:
     except Exception as e:
         logger.warning(f"DocumentParser failed for {storage_path}: {e}")
         return ""
+
+
+async def _render_pptx_slides_to_disk(document_id: str, file_bytes: bytes, filename: str) -> list:
+    """
+    Render a PPTX file's slides to PNG images using the existing SlideRenderer
+    (LibreOffice → PDF → PyMuPDF pipeline).
+
+    Images are saved to:  $STORAGE_ROOT/slide_previews/{document_id}/slide_NNN.png
+
+    Returns a list of absolute paths to the saved PNG files.
+    Call this with `asyncio.run()` from a sync background task, or directly
+    `await` it from an async context.
+    """
+    try:
+        from core.vision.slide_renderer import SlideRenderer
+
+        storage_root = os.getenv("STORAGE_ROOT", "/data")
+        output_dir = os.path.join(storage_root, "slide_previews", document_id)
+        os.makedirs(output_dir, exist_ok=True)
+
+        renderer = SlideRenderer()
+        manifest = await renderer.render(
+            file_bytes=file_bytes,
+            file_type="pptx",
+            filename=filename,
+        )
+
+        if manifest.error:
+            logger.warning(f"SlideRenderer reported error for {filename}: {manifest.error}")
+
+        slide_paths: list = []
+        for slide in manifest.slides:
+            png_path = os.path.join(output_dir, f"slide_{slide.index:03d}.png")
+            with open(png_path, "wb") as fh:
+                fh.write(slide.image_bytes)
+            slide_paths.append(png_path)
+
+        logger.info(
+            f"Rendered {len(slide_paths)} slide PNG(s) for document {document_id} "
+            f"→ {output_dir}"
+        )
+        return slide_paths
+
+    except ImportError:
+        logger.info("SlideRenderer not available — skipping slide image rendering")
+        return []
+    except Exception as e:
+        logger.warning(f"Slide rendering failed for document {document_id}: {e}")
+        return []
+
+
+def _background_extract_and_update(file_id: str, storage_path: str) -> None:
+    """
+    Blocking sync background task — FastAPI runs this in a thread pool so the
+    conversation upload HTTP response is never blocked by slow parsing.
+
+    Steps:
+    1. Extract text and update file_uploads.extracted_text / status
+    2. For PPTX files: render slides to PNG (enables vision analysis in chat)
+    """
+    import asyncio
+
+    try:
+        text = _extract_text(storage_path)
+        if text:
+            db = get_supabase()
+            db.table("file_uploads").update({
+                "extracted_text": text,
+                "status": "ready",
+                "processed_at": datetime.now(timezone.utc).isoformat(),
+            }).eq("id", file_id).execute()
+            logger.info(f"Background extraction done for file {file_id}: {len(text)} chars")
+        else:
+            logger.warning(f"Background extraction yielded no text for file {file_id}")
+    except Exception as e:
+        logger.warning(f"Background extraction failed for file {file_id}: {e}")
+
+    # ── Slide rendering for PPTX files (vision pipeline) ──────────────────────
+    # Check extension from the storage_path
+    ext = os.path.splitext(storage_path)[1].lower()
+    if ext in {".pptx", ".ppt"}:
+        try:
+            with open(storage_path, "rb") as fh:
+                file_bytes = fh.read()
+            filename = os.path.basename(storage_path)
+            # asyncio.run() creates a new event loop — safe from a thread-pool thread
+            asyncio.run(_render_pptx_slides_to_disk(file_id, file_bytes, filename))
+        except Exception as e:
+            logger.warning(f"PPTX slide rendering failed for file {file_id}: {e}")
 
 
 # ============================================================================
@@ -229,38 +318,40 @@ async def upload_to_conversation(
     conversation_id: str,
     file: UploadFile = File(...),
     purpose: str = Form("reference"),
+    background_tasks: BackgroundTasks = BackgroundTasks(),
     user_id: str = Depends(get_current_user_id),
 ):
     """
     Upload a file and immediately link it to a conversation.
 
     This is the endpoint called by the Next.js /api/upload proxy.
+
+    Text extraction runs in a background thread so the response is returned
+    immediately — this prevents 504 timeouts on large/complex files (e.g.
+    50 MB PPTX with many embedded graphics).
     """
-    # Reuse the direct upload logic
+    # ── Save file to disk + insert DB row ─────────────────────────────────────
     file_info = await upload_file_direct(file=file, bucket="user-uploads", user_id=user_id)
 
     db = get_supabase()
 
-    # ── Auto-extract text using the bulletproof parser ────────────────────────
-    try:
-        text = _extract_text(file_info.storage_path)
-        if text:
-            db.table("file_uploads").update({
-                "extracted_text": text,
-                "status": "ready",
-                "processed_at": datetime.now(timezone.utc).isoformat(),
-            }).eq("id", file_info.id).execute()
-    except Exception as ex:
-        logger.warning(f"Auto-extract failed for {file_info.original_filename}: {ex}")
+    # ── Queue text extraction in background (non-blocking) ────────────────────
+    # _background_extract_and_update is a plain sync function; FastAPI runs it
+    # in the default thread-pool executor so we never block the event loop.
+    background_tasks.add_task(
+        _background_extract_and_update,
+        file_info.id,
+        file_info.storage_path,
+    )
 
-    # Verify conversation belongs to this user
+    # ── Verify conversation belongs to this user ──────────────────────────────
     conv = db.table("conversations").select("id").eq("id", conversation_id).eq(
         "user_id", user_id
     ).execute()
     if not conv.data:
         raise HTTPException(status_code=404, detail="Conversation not found.")
 
-    # Link (ignore duplicate)
+    # ── Link file ↔ conversation (ignore duplicate) ───────────────────────────
     try:
         db.table("conversation_files").insert({
             "conversation_id": conversation_id,
