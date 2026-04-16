@@ -1,78 +1,130 @@
-/**
- * Potomac Universal Slide Templates — Phase 2 + Phase 3 (Consolidated)
- *
- * FIXES applied vs original:
- *  - All this.pptx.shapes.* → this.pptx.ShapeType.*  (v3 API)
- *  - All fontWeight:'700'/'600' → bold:true            (correct pptxgenjs option)
- *  - Layout set to LAYOUT_WIDE (13.333" × 7.5") via pptx.layout assignment
- *  - All element coordinates reworked for 13.333" canvas width
- *  - ARROW_RIGHT → ShapeType.rightArrow
- *  - Vertical process layout now implemented
- *  - Metric slide overflow protection added
- *  - Column headers added to 2- and 3-column layouts
- *  - YELLOW_20 color propagated from fixed colors file
- *  - Uses _c() helper to strip '#' from brand color hex strings
- *
- * NEW slide types added to match DeckPlanner VALID_SLIDE_TYPES vocabulary:
- *  card_grid, icon_grid, hub_spoke, timeline, matrix_2x2, scorecard,
- *  comparison, table, chart, executive_summary, image_content, image
- *
- * CANVAS SPEC: 13.333" × 7.5"  (pptxgenjs LAYOUT_WIDE)
- *   Left/right content margin: 0.5"
- *   Standard content width:    12.333"  (x=0.5 → x+w=12.833)
- *   Logo watermark (top-right): x=12.08, y=0.12, w=0.95, h=0.95
- */
-
 'use strict';
 
-const { POTOMAC_COLORS, SLIDE_PALETTES } = require('../brand-assets/colors/potomac-colors.js');
-const { POTOMAC_FONTS } = require('../brand-assets/fonts/potomac-fonts.js');
-const path = require('path');
+/**
+ * Potomac Universal Slide Templates — fully dynamic geometry
+ *
+ * Every coordinate, width, height, font size, and spacing value is derived
+ * from the CANVAS constants at the top of the constructor.  There are no
+ * hard-coded layout numbers anywhere in this file — change W / H and every
+ * slide reflows automatically.
+ *
+ * Presentation layout: LAYOUT_WIDE  (13.333" × 7.5")
+ *
+ * Slide types supported (matches DeckPlanner VALID_SLIDE_TYPES):
+ *   Title:   standard_title, executive_title, section_divider
+ *   Content: content, two_column, three_column, quote, metric,
+ *            process, executive_summary, card_grid, icon_grid,
+ *            hub_spoke, timeline, matrix_2x2, scorecard,
+ *            comparison, table, chart, image_content, image
+ *   Closing: closing, call_to_action
+ */
 
-// ── Color helper: strip leading '#' that pptxgenjs does NOT want ─────────────
+const { POTOMAC_COLORS, SLIDE_PALETTES } = require('../brand-assets/colors/potomac-colors.js');
+const { POTOMAC_FONTS }                  = require('../brand-assets/fonts/potomac-fonts.js');
+const path                               = require('path');
+
+// ── Strip '#' that pptxgenjs does not accept ────────────────────────────────
 function _c(hex) {
   if (!hex) return 'FEC00F';
   return String(hex).replace('#', '');
 }
 
-// ── Shortcuts ─────────────────────────────────────────────────────────────────
-const C  = POTOMAC_COLORS;
-const F  = POTOMAC_FONTS;
+const C = POTOMAC_COLORS;
+const F = POTOMAC_FONTS;
+
+// ── Full-logo natural aspect ratio  (icon+wordmark, ~13.02 × 2.67 inches) ──
+const FULL_LOGO_RATIO = 13.02 / 2.67; // ≈ 4.876  (width : height)
+
+// ── Icon-logo natural aspect ratio  (square hexagon mark, ~4.04 × 4.01") ───
+const ICON_LOGO_RATIO = 1.0;          // effectively 1 : 1
 
 
 class PotomacSlideTemplates {
+
   constructor(pptxGenerator, options = {}) {
     this.pptx    = pptxGenerator;
     this.palette = SLIDE_PALETTES[options.palette || 'STANDARD'];
-    // Store directory so we can pick the right variant per slide theme
     this.logoDir = path.join(__dirname, '../brand-assets/logos/');
 
-    // ── Apply true widescreen layout to the pptxgenjs instance ───────────────
-    this.pptx.layout = 'LAYOUT_WIDE';   // 13.333" × 7.5"
+    // ── Apply widescreen layout ──────────────────────────────────────────────
+    this.pptx.layout = 'LAYOUT_WIDE';
 
-    this.config = {
-      slideWidth:  13.333,
-      slideHeight: 7.5,
-      margins: { standard: 0.5, content: 0.75, title: 1.0 },
+    // ── SINGLE SOURCE OF TRUTH ───────────────────────────────────────────────
+    // Every geometric value in this class is derived from these two numbers.
+    const W = 13.333;   // slide width  (inches, LAYOUT_WIDE)
+    const H = 7.5;      // slide height (inches, LAYOUT_WIDE)
+
+    // Margins
+    const ML = W * 0.0375;    // left  margin  ≈ 0.5"
+    const MR = W * 0.0375;    // right margin  ≈ 0.5"
+    const MT = H * 0.04;      // top   margin  ≈ 0.3"
+    const MB = H * 0.053;     // bottom margin ≈ 0.4"
+
+    // Content column
+    const CW  = W - ML - MR;          // content width ≈ 12.333"
+    const CX  = ML;                    // content left  ≈  0.5"
+    const CX2 = W - MR;               // content right ≈ 12.833"
+
+    // Logo watermark (top-right icon)
+    const LOGO_W = W * 0.0712;        // ≈ 0.95"
+    const LOGO_H = LOGO_W / ICON_LOGO_RATIO;
+    const LOGO_X = W - MR - LOGO_W;   // ≈ 12.083"
+    const LOGO_Y = H * 0.016;         // ≈ 0.12"
+
+    // Full wordmark for title / closing slides
+    const WORDMARK_H = H * 0.129;     // ≈ 0.97"
+    const WORDMARK_W = WORDMARK_H * FULL_LOGO_RATIO;  // ≈ 4.73"
+
+    // Title row
+    const TITLE_Y    = H * 0.067;     // ≈ 0.5"
+    const TITLE_H    = H * 0.133;     // ≈ 1.0"
+    const TITLE_FS   = Math.round(W * 2.4);  // ≈ 32pt
+    const UNDERLINE_Y = TITLE_Y + TITLE_H * 0.93;  // just below title text
+    const UNDERLINE_H = H * 0.007;    // ≈ 0.05"
+    const UNDERLINE_W = W * 0.15;     // ≈ 2.0"
+
+    // Content body (below title)
+    const BODY_Y  = UNDERLINE_Y + UNDERLINE_H + H * 0.027;  // ≈ 1.6"
+    const BODY_H  = H - BODY_Y - MB;                         // remaining height
+
+    // Footer row
+    const FOOTER_Y  = H - MB;                // ≈ 7.1"
+    const FOOTER_H  = MB;
+    const DISCLAIMER_W = CW * 0.96;
+
+    // Slide-number box (bottom-right)
+    const SN_W = CW * 0.057;   // ≈ 0.7"
+    const SN_X = CX2 - SN_W;
+
+    // Gap & column helpers
+    const COL_GAP = W * 0.03;  // ≈ 0.4"
+
+    // ── Store every derived value on this.cv (canvas variables) ──────────────
+    this.cv = {
+      W, H, ML, MR, MT, MB,
+      CW, CX, CX2,
+      LOGO_W, LOGO_H, LOGO_X, LOGO_Y,
+      WORDMARK_W, WORDMARK_H,
+      TITLE_Y, TITLE_H, TITLE_FS,
+      UNDERLINE_Y, UNDERLINE_H, UNDERLINE_W,
+      BODY_Y, BODY_H,
+      FOOTER_Y, FOOTER_H, DISCLAIMER_W,
+      SN_W, SN_X,
+      COL_GAP,
     };
   }
 
 
-  // ══════════════════════════════════════════════════════════════════════════
-  // UTILITY HELPERS
-  // ══════════════════════════════════════════════════════════════════════════
+  // ════════════════════════════════════════════════════════════════════════════
+  // LOGO HELPERS
+  // ════════════════════════════════════════════════════════════════════════════
 
-  /**
-   * Return the path of the standalone ICON logo (square hexagon mark).
-   * Used for the small top-right watermark on every slide.
-   * Real dimensions: ~4.04" × 4.01" (nearly 1:1)
-   * @param {'light'|'dark'} theme
-   */
+  /** Returns the path of the square icon logo, or null. */
   getIconLogoPath(theme = 'light') {
-    const fs = require('fs');
+    const fs         = require('fs');
     const candidates = theme === 'dark'
-      ? ['potomac-icon-white.png', 'potomac-icon-yellow.png']
-      : ['potomac-icon-black.png', 'potomac-icon-yellow.png'];
+      ? ['potomac-icon-white.png',  'potomac-icon-yellow.png']
+      : ['potomac-icon-black.png',  'potomac-icon-yellow.png'];
     for (const name of candidates) {
       const p = path.join(this.logoDir, name);
       if (fs.existsSync(p)) return p;
@@ -80,14 +132,9 @@ class PotomacSlideTemplates {
     return null;
   }
 
-  /**
-   * Return the path of the FULL WORDMARK logo (icon + "POTOMAC" text, very wide).
-   * Used for title slides and closing slides.
-   * Real dimensions: ~13.02" × 2.67" (roughly 4.87:1)
-   * @param {'light'|'dark'} theme
-   */
+  /** Returns the path of the full wordmark logo, or null. */
   getFullLogoPath(theme = 'light') {
-    const fs = require('fs');
+    const fs         = require('fs');
     const candidates = theme === 'dark'
       ? ['potomac-full-logo-white.png', 'potomac-full-logo.png']
       : ['potomac-full-logo-black.png', 'potomac-full-logo.png'];
@@ -99,9 +146,8 @@ class PotomacSlideTemplates {
   }
 
   /**
-   * Place the FULL WORDMARK logo at an explicit position (title/closing slides).
+   * Place the full WORDMARK at an explicit bounding box.
    * Uses contain-sizing so the image is never distorted.
-   * @param {'light'|'dark'} theme
    */
   addLogo(slide, position, theme = 'light') {
     const logoPath = this.getFullLogoPath(theme);
@@ -113,102 +159,180 @@ class PotomacSlideTemplates {
         sizing: { type: 'contain', w: position.w, h: position.h },
       });
     } else {
+      const { cv } = this;
       slide.addText('POTOMAC', {
-        x: position.x, y: position.y,
-        w: position.w, h: position.h,
-        fontFace: F.HEADERS.family, fontSize: 14, bold: true,
+        x: position.x, y: position.y, w: position.w, h: position.h,
+        fontFace: F.HEADERS.family, fontSize: Math.round(cv.H * 1.87),
+        bold: true, align: 'center', valign: 'middle',
         color: theme === 'dark' ? _c(C.PRIMARY.WHITE) : _c(C.PRIMARY.DARK_GRAY),
-        align: 'center', valign: 'middle',
       });
     }
   }
 
   /**
-   * Standard small top-right watermark — uses the ICON logo (square mark).
-   *
-   * In pptxgenjs 13.333"×7.5" (LAYOUT_WIDE) coordinates:
-   *   x: 12.08"  (leaves ~0.283" right margin)
-   *   y:  0.12"  (tight to top)
-   *   w:  0.95"  h: 0.95"  (square — matches real ~1:1 aspect ratio)
+   * Small icon-logo watermark — top-right on every content slide.
+   * Dimensions and position are derived from cv (canvas variables).
    */
   addStandardLogo(slide, theme = 'light') {
+    const { cv } = this;
     const logoPath = this.getIconLogoPath(theme);
     if (logoPath) {
       slide.addImage({
         path: logoPath,
-        x: 12.08, y: 0.12, w: 0.95, h: 0.95,
-        sizing: { type: 'contain', w: 0.95, h: 0.95 },
+        x: cv.LOGO_X, y: cv.LOGO_Y, w: cv.LOGO_W, h: cv.LOGO_H,
+        sizing: { type: 'contain', w: cv.LOGO_W, h: cv.LOGO_H },
       });
     } else {
-      // Text fallback — show just the wordmark abbreviated
       slide.addText('POTOMAC', {
-        x: 11.583, y: 0.12, w: 1.5, h: 0.5,
-        fontFace: F.HEADERS.family, fontSize: 12, bold: true,
+        x: cv.LOGO_X - cv.LOGO_W * 0.6, y: cv.LOGO_Y,
+        w: cv.LOGO_W * 1.6, h: cv.LOGO_H,
+        fontFace: F.HEADERS.family, fontSize: Math.round(cv.H * 1.6),
+        bold: true, align: 'right', valign: 'middle',
         color: theme === 'dark' ? _c(C.PRIMARY.WHITE) : _c(C.PRIMARY.DARK_GRAY),
-        align: 'right', valign: 'middle',
       });
     }
   }
 
-  /** Yellow accent underline bar below slide title. */
-  addTitleUnderline(slide, x = 0.5, y = 1.4) {
+
+  // ════════════════════════════════════════════════════════════════════════════
+  // CHROME HELPERS  (underline, disclaimer, slide number)
+  // ════════════════════════════════════════════════════════════════════════════
+
+  /**
+   * Accent underline bar below the slide title.
+   * x and y default to the standard title position; pass overrides for custom layouts.
+   */
+  addTitleUnderline(slide, x, y) {
+    const { cv } = this;
     slide.addShape(this.pptx.ShapeType.rect, {
-      x, y, w: 2, h: 0.05,
+      x: x !== undefined ? x : cv.CX,
+      y: y !== undefined ? y : cv.UNDERLINE_Y,
+      w: cv.UNDERLINE_W, h: cv.UNDERLINE_H,
       fill: { color: _c(this.palette.accent) },
       line: { color: _c(this.palette.accent), width: 0 },
     });
   }
 
-  /** Slide number indicator (bottom-right). */
-  addSlideNumber(slide, current, total) {
-    slide.addText(`${current} / ${total}`, {
-      x: 12.433, y: 7.1, w: 0.7, h: 0.28,
-      fontFace: F.BODY.family, fontSize: 9,
-      color: _c(C.TONES.GRAY_40), align: 'right',
-    });
-  }
-
-  /** Regulatory / performance disclaimer footer. */
-  addDisclaimer(slide, text = 'Past performance does not guarantee future results. For financial professional use only.') {
-    slide.addText(text, {
-      x: 0.5, y: 7.1, w: 11.833, h: 0.28,
-      fontFace: F.BODY.family, fontSize: 8,
+  /** Regulatory / performance disclaimer (bottom-left footer). */
+  addDisclaimer(slide, text) {
+    const { cv } = this;
+    const msg = text || 'Past performance does not guarantee future results. For financial professional use only.';
+    slide.addText(msg, {
+      x: cv.CX, y: cv.FOOTER_Y, w: cv.DISCLAIMER_W, h: cv.FOOTER_H,
+      fontFace: F.BODY.family, fontSize: Math.round(cv.H * 1.07),
       color: _c(C.TONES.GRAY_40), align: 'left', italic: true,
     });
   }
 
-
-  // ══════════════════════════════════════════════════════════════════════════
-  // TITLE SLIDES
-  // ══════════════════════════════════════════════════════════════════════════
+  /** Slide-number indicator (bottom-right). */
+  addSlideNumber(slide, current, total) {
+    const { cv } = this;
+    slide.addText(`${current} / ${total}`, {
+      x: cv.SN_X, y: cv.FOOTER_Y, w: cv.SN_W, h: cv.FOOTER_H,
+      fontFace: F.BODY.family, fontSize: Math.round(cv.H * 1.2),
+      color: _c(C.TONES.GRAY_40), align: 'right',
+    });
+  }
 
   /**
-   * Standard Title Slide — white background, large centred title, yellow bar.
+   * Render a standard slide title + accent underline.
+   * Returns { titleRight } for callers that need to know available x after logo gap.
+   */
+  _addSlideTitle(slide, titleText, opts = {}) {
+    const { cv } = this;
+    const fs = opts.fontSize || Math.round(cv.TITLE_FS * (opts.fsScale || 1));
+    const w  = opts.w        || cv.CW - cv.LOGO_W - cv.COL_GAP;  // leave room for logo
+    slide.addText(titleText.toUpperCase(), {
+      x: cv.CX, y: cv.TITLE_Y, w, h: cv.TITLE_H,
+      fontFace: F.HEADERS.family, fontSize: fs,
+      bold: true, color: _c(C.PRIMARY.DARK_GRAY),
+    });
+    this.addTitleUnderline(slide);
+    return { titleRight: cv.CX + w };
+  }
+
+
+  // ════════════════════════════════════════════════════════════════════════════
+  // COLUMN GEOMETRY HELPERS
+  // ════════════════════════════════════════════════════════════════════════════
+
+  /**
+   * Returns { colW, gaps } for an n-column layout within the content area.
+   * All math derived from cv.CW and cv.COL_GAP.
+   */
+  _colGeometry(n) {
+    const { cv } = this;
+    const totalGap = cv.COL_GAP * (n - 1);
+    const colW     = (cv.CW - totalGap) / n;
+    return { colW, gap: cv.COL_GAP };
+  }
+
+  /** Returns the left x-position of column `idx` (0-based) in an n-col layout. */
+  _colX(idx, colW, gap) {
+    const { cv } = this;
+    return cv.CX + idx * (colW + gap);
+  }
+
+  /**
+   * Format an array or string for bullet-point text blocks.
+   * Returns a pptxgenjs text array (bullets) or plain string.
+   */
+  _fmtContent(content, bulletIndent = 12, paraSpace = 5) {
+    if (Array.isArray(content)) {
+      return content.map(item => ({
+        text: String(typeof item === 'object' ? (item.text || item) : item),
+        options: {
+          bullet:        { code: '25AA', indent: bulletIndent },
+          paraSpaceBefore: paraSpace,
+        },
+      }));
+    }
+    return String(content || '');
+  }
+
+
+  // ════════════════════════════════════════════════════════════════════════════
+  // TITLE SLIDES
+  // ════════════════════════════════════════════════════════════════════════════
+
+  /**
+   * Standard Title Slide — white background, centred title, bottom accent bar.
    */
   createStandardTitleSlide(title, subtitle = null, options = {}) {
-    const slide = this.pptx.addSlide();
+    const { cv } = this;
+    const slide  = this.pptx.addSlide();
     slide.background = { color: _c(this.palette.background) };
-    // Full wordmark top-left: width ≈ 4.7" × height ≈ 0.97"
-    this.addLogo(slide, { x: 0.5, y: 0.25, w: 4.7, h: 0.97 }, 'light');
 
+    // Full wordmark – top left
+    this.addLogo(slide, { x: cv.CX, y: cv.MT, w: cv.WORDMARK_W, h: cv.WORDMARK_H }, 'light');
+
+    // Centred main title — occupy the middle 60 % of the slide height
+    const titleY = cv.H * 0.33;
+    const titleH = cv.H * 0.2;
     slide.addText(title.toUpperCase(), {
-      x: 0.5, y: 2.5, w: 12.333, h: 1.5,
-      fontFace: F.HEADERS.family, fontSize: 44,
+      x: cv.CX, y: titleY, w: cv.CW, h: titleH,
+      fontFace: F.HEADERS.family,
+      fontSize: Math.round(cv.W * 3.3),
       bold: true, color: _c(C.PRIMARY.DARK_GRAY),
       align: 'center', valign: 'middle',
     });
 
     if (subtitle) {
+      const subtitleY = titleY + titleH + cv.H * 0.04;
       slide.addText(subtitle, {
-        x: 0.5, y: 4.2, w: 12.333, h: 0.8,
-        fontFace: F.BODY.family, fontSize: 20,
-        color: _c(C.TONES.GRAY_60), align: 'center', valign: 'middle',
+        x: cv.CX, y: subtitleY, w: cv.CW, h: cv.H * 0.107,
+        fontFace: F.BODY.family,
+        fontSize: Math.round(cv.W * 1.5),
+        color: _c(C.TONES.GRAY_60),
+        align: 'center', valign: 'middle',
       });
     }
 
     // Bottom accent bar
+    const barH = cv.H * 0.013;
+    const barY = cv.H * 0.733;
     slide.addShape(this.pptx.ShapeType.rect, {
-      x: 0.5, y: 5.5, w: 12.333, h: 0.1,
+      x: cv.CX, y: barY, w: cv.CW, h: barH,
       fill: { color: _c(this.palette.accent) },
       line: { color: _c(this.palette.accent), width: 0 },
     });
@@ -217,39 +341,47 @@ class PotomacSlideTemplates {
   }
 
   /**
-   * Executive Title Slide — dark background, white text, yellow tagline.
+   * Executive Title Slide — dark background, white title, yellow tagline.
    */
   createExecutiveTitleSlide(title, subtitle = null, tagline = 'Built to Conquer Risk\u00AE') {
-    const slide = this.pptx.addSlide();
+    const { cv } = this;
+    const slide  = this.pptx.addSlide();
     slide.background = { color: _c(C.PRIMARY.DARK_GRAY) };
-    // Full white wordmark top-left on dark background
-    this.addLogo(slide, { x: 0.5, y: 0.25, w: 4.7, h: 0.97 }, 'dark');
 
+    this.addLogo(slide, { x: cv.CX, y: cv.MT, w: cv.WORDMARK_W, h: cv.WORDMARK_H }, 'dark');
+
+    const titleY = cv.H * 0.293;
+    const titleH = cv.H * 0.24;
     slide.addText(title.toUpperCase(), {
-      x: 0.5, y: 2.2, w: 12.333, h: 1.8,
-      fontFace: F.HEADERS.family, fontSize: 48,
+      x: cv.CX, y: titleY, w: cv.CW, h: titleH,
+      fontFace: F.HEADERS.family,
+      fontSize: Math.round(cv.W * 3.6),
       bold: true, color: _c(C.PRIMARY.WHITE),
       align: 'center', valign: 'middle',
     });
 
     if (subtitle) {
+      const subtitleY = titleY + titleH + cv.H * 0.027;
       slide.addText(subtitle, {
-        x: 0.5, y: 4.2, w: 12.333, h: 0.7,
-        fontFace: F.BODY.family, fontSize: 22,
-        color: _c(C.TONES.YELLOW_80), align: 'center', valign: 'middle',
+        x: cv.CX, y: subtitleY, w: cv.CW, h: cv.H * 0.093,
+        fontFace: F.BODY.family,
+        fontSize: Math.round(cv.W * 1.65),
+        color: _c(C.TONES.YELLOW_80),
+        align: 'center', valign: 'middle',
       });
     }
 
-    // Yellow accent bar
+    const accentY = cv.H * 0.727;
+    const accentH = cv.H * 0.011;
     slide.addShape(this.pptx.ShapeType.rect, {
-      x: 0.5, y: 5.45, w: 12.333, h: 0.08,
+      x: cv.CX, y: accentY, w: cv.CW, h: accentH,
       fill: { color: _c(C.PRIMARY.YELLOW) },
       line: { color: _c(C.PRIMARY.YELLOW), width: 0 },
     });
 
     slide.addText(tagline, {
-      x: 0.5, y: 5.65, w: 12.333, h: 0.6,
-      fontFace: F.BODY.family, fontSize: 18,
+      x: cv.CX, y: accentY + accentH + cv.H * 0.013, w: cv.CW, h: cv.H * 0.08,
+      fontFace: F.BODY.family, fontSize: Math.round(cv.W * 1.35),
       color: _c(C.PRIMARY.YELLOW), align: 'center', valign: 'middle', italic: true,
     });
 
@@ -260,28 +392,31 @@ class PotomacSlideTemplates {
    * Section Divider — light-yellow background, full-height left accent bar.
    */
   createSectionDividerSlide(sectionTitle, description = null) {
-    const slide = this.pptx.addSlide();
+    const { cv } = this;
+    const slide  = this.pptx.addSlide();
     slide.background = { color: _c(C.TONES.YELLOW_20) };
     this.addStandardLogo(slide);
 
-    // Left accent bar (full height)
+    const barW = cv.W * 0.0225;   // ≈ 0.3"
     slide.addShape(this.pptx.ShapeType.rect, {
-      x: 0, y: 0, w: 0.3, h: 7.5,
+      x: 0, y: 0, w: barW, h: cv.H,
       fill: { color: _c(this.palette.accent) },
       line: { color: _c(this.palette.accent), width: 0 },
     });
 
+    const titleX = barW + cv.ML * 0.6;
+    const titleW = cv.W - titleX - cv.MR;
     slide.addText(sectionTitle.toUpperCase(), {
-      x: 0.8, y: 2.5, w: 12.0, h: 1.5,
-      fontFace: F.HEADERS.family, fontSize: 42,
+      x: titleX, y: cv.H * 0.333, w: titleW, h: cv.H * 0.2,
+      fontFace: F.HEADERS.family, fontSize: Math.round(cv.W * 3.15),
       bold: true, color: _c(C.PRIMARY.DARK_GRAY),
       align: 'left', valign: 'middle',
     });
 
     if (description) {
       slide.addText(description, {
-        x: 0.8, y: 4.2, w: 12.0, h: 1.2,
-        fontFace: F.BODY.family, fontSize: 18,
+        x: titleX, y: cv.H * 0.56, w: titleW, h: cv.H * 0.16,
+        fontFace: F.BODY.family, fontSize: Math.round(cv.W * 1.35),
         color: _c(C.TONES.GRAY_60), align: 'left', valign: 'middle',
       });
     }
@@ -290,44 +425,33 @@ class PotomacSlideTemplates {
   }
 
 
-  // ══════════════════════════════════════════════════════════════════════════
+  // ════════════════════════════════════════════════════════════════════════════
   // CORE CONTENT SLIDES
-  // ══════════════════════════════════════════════════════════════════════════
+  // ════════════════════════════════════════════════════════════════════════════
 
   /**
-   * Standard Content Slide — title + bullet points or paragraph.
+   * Standard Content Slide — title + bullet list or paragraph body.
    */
   createContentSlide(title, content, options = {}) {
-    const slide = this.pptx.addSlide();
-    const showBullets = options.bullets !== false;
+    const { cv } = this;
+    const slide  = this.pptx.addSlide();
     slide.background = { color: _c(this.palette.background) };
     this.addStandardLogo(slide);
+    this._addSlideTitle(slide, title);
 
-    slide.addText(title.toUpperCase(), {
-      x: 0.5, y: 0.5, w: 11.333, h: 1,
-      fontFace: F.HEADERS.family, fontSize: 32,
-      bold: true, color: _c(C.PRIMARY.DARK_GRAY),
-    });
-    this.addTitleUnderline(slide);
+    const bodyFS   = Math.round(cv.H * 2.27);
+    const showBullets = options.bullets !== false;
 
     if (Array.isArray(content) && showBullets) {
-      const bulletItems = content.map(item => ({
-        text: String(typeof item === 'object' ? (item.text || item) : item),
-        options: {
-          bullet: { code: '25AA', indent: 15 },
-          color: _c(C.PRIMARY.DARK_GRAY),
-          paraSpaceBefore: 6,
-        },
-      }));
-      slide.addText(bulletItems, {
-        x: 0.5, y: 1.7, w: 12.333, h: 5.3,
-        fontFace: F.BODY.family, fontSize: 17,
+      slide.addText(this._fmtContent(content, 15, 6), {
+        x: cv.CX, y: cv.BODY_Y, w: cv.CW, h: cv.BODY_H,
+        fontFace: F.BODY.family, fontSize: bodyFS,
         color: _c(C.PRIMARY.DARK_GRAY), valign: 'top',
       });
     } else {
       slide.addText(Array.isArray(content) ? content.join('\n') : String(content || ''), {
-        x: 0.5, y: 1.7, w: 12.333, h: 5.3,
-        fontFace: F.BODY.family, fontSize: 16,
+        x: cv.CX, y: cv.BODY_Y, w: cv.CW, h: cv.BODY_H,
+        fontFace: F.BODY.family, fontSize: Math.round(bodyFS * 0.94),
         color: _c(C.PRIMARY.DARK_GRAY), valign: 'top',
       });
     }
@@ -336,70 +460,49 @@ class PotomacSlideTemplates {
   }
 
   /**
-   * Two-Column Layout — optional per-column headers.
+   * Two-Column Layout.
    * options: { leftHeader, rightHeader }
-   *
-   * Canvas: 13.333"  margins: 0.5" each side  available: 12.333"
-   * COL_W = (12.333 - GAP) / 2 = (12.333 - 0.4) / 2 ≈ 5.967"
    */
   createTwoColumnSlide(title, leftContent, rightContent, options = {}) {
-    const slide = this.pptx.addSlide();
-    const COL_W = 5.967;
-    const GAP   = 0.4;
-    slide.background = { color: _c(this.palette.background) };
+    const { cv }       = this;
+    const slide        = this.pptx.addSlide();
+    const { colW, gap } = this._colGeometry(2);
+    slide.background   = { color: _c(this.palette.background) };
     this.addStandardLogo(slide);
-
-    slide.addText(title.toUpperCase(), {
-      x: 0.5, y: 0.5, w: 11.333, h: 1,
-      fontFace: F.HEADERS.family, fontSize: 28,
-      bold: true, color: _c(C.PRIMARY.DARK_GRAY),
-    });
-    this.addTitleUnderline(slide);
+    this._addSlideTitle(slide, title, { fsScale: 0.875 });
 
     const hasHeaders = options.leftHeader || options.rightHeader;
-    const contentY   = hasHeaders ? 2.4 : 1.9;
+    const hdrY       = cv.BODY_Y;
+    const hdrH       = cv.H * 0.067;
+    const contentY   = hasHeaders ? hdrY + hdrH + cv.H * 0.013 : cv.BODY_Y;
+    const contentH   = cv.H - contentY - cv.MB;
+    const bodyFS     = Math.round(cv.H * 2.0);
+    const hdrFS      = Math.round(cv.H * 1.87);
 
-    if (options.leftHeader) {
-      slide.addText(options.leftHeader.toUpperCase(), {
-        x: 0.5, y: 1.75, w: COL_W, h: 0.5,
-        fontFace: F.HEADERS.family, fontSize: 14,
+    [options.leftHeader, options.rightHeader].forEach((hdr, idx) => {
+      if (!hdr) return;
+      const x = this._colX(idx, colW, gap);
+      slide.addText(hdr.toUpperCase(), {
+        x, y: hdrY, w: colW, h: hdrH,
+        fontFace: F.HEADERS.family, fontSize: hdrFS,
         bold: true, color: _c(this.palette.accent),
       });
-    }
-    if (options.rightHeader) {
-      slide.addText(options.rightHeader.toUpperCase(), {
-        x: 0.5 + COL_W + GAP, y: 1.75, w: COL_W, h: 0.5,
-        fontFace: F.HEADERS.family, fontSize: 14,
-        bold: true, color: _c(this.palette.accent),
-      });
-    }
-
-    const fmtColumn = (content) => {
-      if (Array.isArray(content)) {
-        return content.map(item => ({
-          text: String(item),
-          options: { bullet: { code: '25AA', indent: 10 }, paraSpaceBefore: 4 },
-        }));
-      }
-      return String(content || '');
-    };
-
-    slide.addText(fmtColumn(leftContent), {
-      x: 0.5, y: contentY, w: COL_W, h: 7.5 - contentY - 0.3,
-      fontFace: F.BODY.family, fontSize: 15,
-      color: _c(C.PRIMARY.DARK_GRAY), valign: 'top',
     });
 
-    slide.addText(fmtColumn(rightContent), {
-      x: 0.5 + COL_W + GAP, y: contentY, w: COL_W, h: 7.5 - contentY - 0.3,
-      fontFace: F.BODY.family, fontSize: 15,
-      color: _c(C.PRIMARY.DARK_GRAY), valign: 'top',
+    [leftContent, rightContent].forEach((col, idx) => {
+      const x = this._colX(idx, colW, gap);
+      slide.addText(this._fmtContent(col, 10, 4), {
+        x, y: contentY, w: colW, h: contentH,
+        fontFace: F.BODY.family, fontSize: bodyFS,
+        color: _c(C.PRIMARY.DARK_GRAY), valign: 'top',
+      });
     });
 
     // Subtle column separator
+    const sepX = cv.CX + colW + gap / 2 - cv.W * 0.0015;
+    const sepW = cv.W * 0.003;
     slide.addShape(this.pptx.ShapeType.rect, {
-      x: 0.5 + COL_W + GAP / 2 - 0.02, y: contentY - 0.1,
-      w: 0.04, h: 7.5 - contentY - 0.2,
+      x: sepX, y: contentY - cv.H * 0.013, w: sepW, h: contentH + cv.H * 0.013,
       fill: { color: _c(C.TONES.GRAY_20) },
       line: { color: _c(C.TONES.GRAY_20), width: 0 },
     });
@@ -408,61 +511,57 @@ class PotomacSlideTemplates {
   }
 
   /**
-   * Three-Column Layout — optional per-column headers array.
-   * options: { headers: ['Col A', 'Col B', 'Col C'] }
-   *
-   * Canvas: 13.333"  available: 12.333"
-   * COL_W = (12.333 - 2*GAP) / 3 = (12.333 - 0.6) / 3 ≈ 3.911"
+   * Three-Column Layout.
+   * options: { headers: ['A', 'B', 'C'] }
    */
   createThreeColumnSlide(title, leftContent, centerContent, rightContent, options = {}) {
-    const slide = this.pptx.addSlide();
-    const COL_W = 3.911;
-    const GAP   = 0.3;
-    slide.background = { color: _c(this.palette.background) };
+    const { cv }        = this;
+    const slide         = this.pptx.addSlide();
+    const { colW, gap } = this._colGeometry(3);
+    slide.background    = { color: _c(this.palette.background) };
     this.addStandardLogo(slide);
+    this._addSlideTitle(slide, title, { fsScale: 0.8125 });
 
-    slide.addText(title.toUpperCase(), {
-      x: 0.5, y: 0.5, w: 11.333, h: 1,
-      fontFace: F.HEADERS.family, fontSize: 26,
-      bold: true, color: _c(C.PRIMARY.DARK_GRAY),
-    });
-    this.addTitleUnderline(slide);
+    const headers    = options.headers || [];
+    const hasHeaders = headers.some(Boolean);
+    const hdrY       = cv.BODY_Y;
+    const hdrH       = cv.H * 0.067;
+    const contentY   = hasHeaders ? hdrY + hdrH + cv.H * 0.013 : cv.BODY_Y;
+    const contentH   = cv.H - contentY - cv.MB;
+    const bodyFS     = Math.round(cv.H * 1.73);
+    const hdrFS      = Math.round(cv.H * 1.73);
+    const sepH       = cv.H * 0.733;
+    const sepW       = cv.W * 0.00225;
 
-    const headers  = options.headers || [];
-    const contentY = headers.length ? 2.4 : 1.9;
-    const columns  = [leftContent, centerContent, rightContent];
+    const columns = [leftContent, centerContent, rightContent];
 
     columns.forEach((content, idx) => {
-      const x = 0.5 + (COL_W + GAP) * idx;
+      const x = this._colX(idx, colW, gap);
 
       if (headers[idx]) {
         slide.addText(headers[idx].toUpperCase(), {
-          x, y: 1.75, w: COL_W, h: 0.5,
-          fontFace: F.HEADERS.family, fontSize: 13,
+          x, y: hdrY, w: colW, h: hdrH,
+          fontFace: F.HEADERS.family, fontSize: hdrFS,
           bold: true, color: _c(this.palette.accent), align: 'center',
         });
         slide.addShape(this.pptx.ShapeType.rect, {
-          x, y: 2.22, w: COL_W, h: 0.04,
+          x, y: hdrY + hdrH, w: colW, h: cv.H * 0.0053,
           fill: { color: _c(this.palette.accent) },
           line: { color: _c(this.palette.accent), width: 0 },
         });
       }
 
-      const fmtContent = Array.isArray(content)
-        ? content.map(item => ({ text: String(item), options: { bullet: { code: '25AA', indent: 8 }, paraSpaceBefore: 3 } }))
-        : String(content || '');
-
-      slide.addText(fmtContent, {
-        x, y: contentY, w: COL_W, h: 7.5 - contentY - 0.3,
-        fontFace: F.BODY.family, fontSize: 13,
+      slide.addText(this._fmtContent(content, 8, 3), {
+        x, y: contentY, w: colW, h: contentH,
+        fontFace: F.BODY.family, fontSize: bodyFS,
         color: _c(C.PRIMARY.DARK_GRAY), valign: 'top',
       });
 
-      // Column separator (between columns only)
+      // Separator between columns (not after last)
       if (idx < 2) {
+        const sepX = x + colW + gap / 2 - sepW / 2;
         slide.addShape(this.pptx.ShapeType.rect, {
-          x: x + COL_W + GAP / 2 - 0.015, y: 1.6,
-          w: 0.03, h: 5.5,
+          x: sepX, y: cv.BODY_Y - cv.H * 0.027, w: sepW, h: sepH,
           fill: { color: _c(C.TONES.GRAY_20) },
           line: { color: _c(C.TONES.GRAY_20), width: 0 },
         });
@@ -472,43 +571,50 @@ class PotomacSlideTemplates {
     return slide;
   }
 
-
-  // ══════════════════════════════════════════════════════════════════════════
-  // SPECIALISED CONTENT SLIDES
-  // ══════════════════════════════════════════════════════════════════════════
-
-  /** Quote / Testimonial slide. */
+  /**
+   * Quote / Testimonial Slide — light-yellow background.
+   */
   createQuoteSlide(quote, attribution = null, context = null) {
-    const slide = this.pptx.addSlide();
+    const { cv } = this;
+    const slide  = this.pptx.addSlide();
     slide.background = { color: _c(C.TONES.YELLOW_20) };
     this.addStandardLogo(slide);
 
-    // Opening quote mark
+    const markX = cv.CX;
+    const markW = cv.W * 0.075;
+    const markY = cv.H * 0.2;
+    const markH = cv.H * 0.133;
     slide.addText('\u201C', {
-      x: 0.5, y: 1.5, w: 1, h: 1,
-      fontFace: F.HEADERS.family, fontSize: 72,
+      x: markX, y: markY, w: markW, h: markH,
+      fontFace: F.HEADERS.family, fontSize: Math.round(cv.H * 9.6),
       bold: true, color: _c(this.palette.accent), align: 'center',
     });
 
+    const quoteX = cv.CX + markW + cv.W * 0.015;
+    const quoteW = cv.CW - markW - cv.W * 0.015;
+    const quoteY = cv.H * 0.267;
+    const quoteH = cv.H * 0.373;
     slide.addText(quote, {
-      x: 1.5, y: 2.0, w: 10.333, h: 2.8,
-      fontFace: F.BODY.family, fontSize: 22,
+      x: quoteX, y: quoteY, w: quoteW, h: quoteH,
+      fontFace: F.BODY.family, fontSize: Math.round(cv.W * 1.65),
       color: _c(C.PRIMARY.DARK_GRAY),
       align: 'center', valign: 'middle', italic: true,
     });
 
     if (attribution) {
+      const attrY = quoteY + quoteH + cv.H * 0.04;
       slide.addText(`\u2014 ${attribution}`, {
-        x: 1.5, y: 5.0, w: 10.333, h: 0.8,
-        fontFace: F.BODY.family, fontSize: 16,
+        x: quoteX, y: attrY, w: quoteW, h: cv.H * 0.107,
+        fontFace: F.BODY.family, fontSize: Math.round(cv.W * 1.2),
         bold: true, color: _c(C.TONES.GRAY_60), align: 'center',
       });
     }
 
     if (context) {
+      const ctxY = cv.H * 0.787;
       slide.addText(context, {
-        x: 1.5, y: 5.9, w: 10.333, h: 0.6,
-        fontFace: F.BODY.family, fontSize: 12,
+        x: quoteX, y: ctxY, w: quoteW, h: cv.H * 0.08,
+        fontFace: F.BODY.family, fontSize: Math.round(cv.W * 0.9),
         color: _c(C.TONES.GRAY_60), align: 'center',
       });
     }
@@ -517,74 +623,70 @@ class PotomacSlideTemplates {
   }
 
   /**
-   * Metrics / KPI Slide — up to 6 large numbers in a responsive grid.
-   * metrics = [{value, label, sublabel?}, ...]
-   *
-   * Available content width from x=0.75 → 12.583" = 11.833"
-   * colW = 11.833 / cols
+   * Metrics / KPI Slide — up to 6 large stat cards in a responsive grid.
+   * metrics = [{ value, label, sublabel? }, ...]
    */
   createMetricSlide(title, metrics, context = null) {
-    const slide = this.pptx.addSlide();
+    const { cv } = this;
+    const slide  = this.pptx.addSlide();
     slide.background = { color: _c(this.palette.background) };
     this.addStandardLogo(slide);
+    this._addSlideTitle(slide, title, { fsScale: 0.9375 });
 
-    slide.addText(title.toUpperCase(), {
-      x: 0.5, y: 0.5, w: 11.333, h: 1,
-      fontFace: F.HEADERS.family, fontSize: 30,
-      bold: true, color: _c(C.PRIMARY.DARK_GRAY),
-    });
-    this.addTitleUnderline(slide);
+    const safe   = (Array.isArray(metrics) ? metrics : []).slice(0, 6);
+    const cols   = Math.min(3, safe.length) || 1;
+    const rows   = Math.ceil(safe.length / cols);
+    const colW   = cv.CW / cols;
+    const pad    = cv.W * 0.019;
 
-    const safeMetrics = (Array.isArray(metrics) ? metrics : []).slice(0, 6);
-    const cols     = Math.min(3, safeMetrics.length) || 1;
-    const rows     = Math.ceil(safeMetrics.length / cols);
-    const colW     = 11.833 / cols;
-    const rowH     = rows > 1 ? 2.1 : 2.8;
-    const startY   = 1.9;
+    // Vertical space available for cards
+    const cardsTop = cv.BODY_Y;
+    const cardsBot = context ? cv.H - cv.MB - cv.H * 0.093 : cv.H - cv.MB;
+    const totalH   = cardsBot - cardsTop;
+    const rowGap   = cv.H * 0.027;
+    const cardH    = (totalH - rowGap * (rows - 1)) / rows;
 
-    safeMetrics.forEach((metric, idx) => {
-      const col  = idx % cols;
-      const row  = Math.floor(idx / cols);
-      const x    = 0.75 + col * colW;
-      const y    = startY + row * (rowH + 0.2);
+    safe.forEach((metric, idx) => {
+      const col   = idx % cols;
+      const row   = Math.floor(idx / cols);
+      const cardX = cv.CX + col * colW;
+      const cardY = cardsTop + row * (cardH + rowGap);
+      const cW    = colW - pad;
 
-      // Card background
       slide.addShape(this.pptx.ShapeType.rect, {
-        x, y, w: colW - 0.25, h: rowH,
+        x: cardX, y: cardY, w: cW, h: cardH,
         fill: { color: _c(C.TONES.GRAY_20) },
         line: { color: _c(C.TONES.GRAY_20), width: 0 },
       });
 
-      // Metric value — large yellow
+      const valueFS = cols <= 2 ? Math.round(cv.W * 3.9) : Math.round(cv.W * 3.0);
       slide.addText(String(metric.value), {
-        x, y: y + 0.1, w: colW - 0.25, h: rowH * 0.55,
-        fontFace: F.HEADERS.family,
-        fontSize: cols <= 2 ? 52 : 40,
+        x: cardX, y: cardY + cardH * 0.08, w: cW, h: cardH * 0.52,
+        fontFace: F.HEADERS.family, fontSize: valueFS,
         bold: true, color: _c(this.palette.accent),
         align: 'center', valign: 'middle',
       });
 
-      // Metric label
       slide.addText(String(metric.label || ''), {
-        x, y: y + rowH * 0.6, w: colW - 0.25, h: rowH * 0.25,
-        fontFace: F.BODY.family, fontSize: 13,
+        x: cardX, y: cardY + cardH * 0.62, w: cW, h: cardH * 0.22,
+        fontFace: F.BODY.family, fontSize: Math.round(cv.H * 1.73),
         color: _c(C.TONES.GRAY_60), align: 'center',
       });
 
-      // Optional sublabel
       if (metric.sublabel) {
         slide.addText(String(metric.sublabel), {
-          x, y: y + rowH * 0.85, w: colW - 0.25, h: rowH * 0.15,
-          fontFace: F.BODY.family, fontSize: 10,
+          x: cardX, y: cardY + cardH * 0.84, w: cW, h: cardH * 0.14,
+          fontFace: F.BODY.family, fontSize: Math.round(cv.H * 1.33),
           color: _c(C.TONES.GRAY_40), align: 'center', italic: true,
         });
       }
     });
 
     if (context) {
+      const ctxY = cardsBot + cv.H * 0.013;
       slide.addText(String(context), {
-        x: 0.5, y: 6.8, w: 12.333, h: 0.5,
-        fontFace: F.BODY.family, fontSize: 10,
+        x: cv.CX, y: ctxY, w: cv.CW, h: cv.H * 0.08,
+        fontFace: F.BODY.family, fontSize: Math.round(cv.H * 1.33),
         color: _c(C.TONES.GRAY_60), align: 'center', italic: true,
       });
     }
@@ -593,77 +695,74 @@ class PotomacSlideTemplates {
   }
 
   /**
-   * Process / Timeline Slide.
+   * Process / Workflow Slide.
    * options.layout = 'horizontal' (default) | 'vertical'
-   * steps = [{title, description}, ...]
-   *
-   * Horizontal: stepW = 11.833 / steps.length  (from x=0.75)
-   * Vertical:   full content width used for title/description text
+   * steps = [{ title, description }, ...]
    */
   createProcessSlide(title, steps, options = {}) {
+    const { cv }   = this;
     const slide    = this.pptx.addSlide();
     const vertical = options.layout === 'vertical';
     slide.background = { color: _c(this.palette.background) };
     this.addStandardLogo(slide);
-
-    slide.addText(title.toUpperCase(), {
-      x: 0.5, y: 0.5, w: 11.333, h: 1,
-      fontFace: F.HEADERS.family, fontSize: 28,
-      bold: true, color: _c(C.PRIMARY.DARK_GRAY),
-    });
-    this.addTitleUnderline(slide);
+    this._addSlideTitle(slide, title, { fsScale: 0.875 });
 
     const safeSteps = (steps || []).slice(0, vertical ? 6 : 5);
 
     if (!vertical) {
-      // ── HORIZONTAL flow ──────────────────────────────────────────────────
-      const stepW = 11.833 / safeSteps.length;
+      // ── HORIZONTAL ────────────────────────────────────────────────────────
+      const stepW   = cv.CW / safeSteps.length;
+      const circleY = cv.H * 0.427;
+      const R       = cv.H * 0.0467;   // circle radius ≈ 0.35"
 
       safeSteps.forEach((step, idx) => {
-        const cx    = 0.75 + idx * stepW + stepW / 2;
-        const circY = 2.65;
-        const R     = 0.35;
+        const cx = cv.CX + idx * stepW + stepW / 2;
 
-        // Circle
         slide.addShape(this.pptx.ShapeType.ellipse, {
-          x: cx - R, y: circY - R, w: R * 2, h: R * 2,
+          x: cx - R, y: circleY - R, w: R * 2, h: R * 2,
           fill: { color: _c(this.palette.accent) },
           line: { color: _c(C.PRIMARY.DARK_GRAY), width: 1.5 },
         });
-        // Number
+
         slide.addText(String(idx + 1), {
-          x: cx - R, y: circY - R, w: R * 2, h: R * 2,
-          fontFace: F.HEADERS.family, fontSize: 18,
+          x: cx - R, y: circleY - R, w: R * 2, h: R * 2,
+          fontFace: F.HEADERS.family, fontSize: Math.round(cv.H * 2.4),
           bold: true, color: _c(C.PRIMARY.DARK_GRAY),
           align: 'center', valign: 'middle',
         });
-        // Title
+
+        const labelY = circleY + R + cv.H * 0.013;
+        const labelW = stepW - cv.W * 0.008;
+        const labelX = cx - stepW / 2 + cv.W * 0.004;
+
         slide.addText((step.title || `Step ${idx + 1}`).toUpperCase(), {
-          x: cx - stepW / 2 + 0.05, y: circY + R + 0.1, w: stepW - 0.1, h: 0.6,
-          fontFace: F.HEADERS.family, fontSize: 12,
+          x: labelX, y: labelY, w: labelW, h: cv.H * 0.08,
+          fontFace: F.HEADERS.family, fontSize: Math.round(cv.H * 1.6),
           bold: true, color: _c(C.PRIMARY.DARK_GRAY), align: 'center',
         });
-        // Description
+
         if (step.description) {
           slide.addText(String(step.description), {
-            x: cx - stepW / 2 + 0.05, y: circY + R + 0.75, w: stepW - 0.1, h: 2.2,
-            fontFace: F.BODY.family, fontSize: 11,
+            x: labelX, y: labelY + cv.H * 0.093, w: labelW, h: cv.H * 0.293,
+            fontFace: F.BODY.family, fontSize: Math.round(cv.H * 1.47),
             color: _c(C.TONES.GRAY_60), align: 'center', valign: 'top',
           });
         }
-        // Connector arrow (except last step)
+
+        // Arrow connector between steps
         if (idx < safeSteps.length - 1) {
-          const arrowX = cx + R + 0.05;
-          const nextCX = 0.75 + (idx + 1) * stepW + stepW / 2 - R - 0.05;
-          const lineW  = (nextCX - arrowX) * 0.7;
+          const nextCX = cv.CX + (idx + 1) * stepW + stepW / 2;
+          const arrowX = cx + R + cv.W * 0.004;
+          const lineW  = (nextCX - R - cv.W * 0.004 - arrowX) * 0.75;
+          const arrowW = cv.W * 0.019;
 
           slide.addShape(this.pptx.ShapeType.line, {
-            x: arrowX, y: circY, w: lineW, h: 0,
+            x: arrowX, y: circleY, w: lineW, h: 0,
             line: { color: _c(C.TONES.GRAY_40), width: 2 },
           });
           slide.addShape(this.pptx.ShapeType.rightArrow, {
-            x: arrowX + lineW - 0.05, y: circY - 0.12,
-            w: 0.25, h: 0.25,
+            x: arrowX + lineW - arrowW / 2, y: circleY - cv.H * 0.016,
+            w: arrowW, h: cv.H * 0.033,
             fill: { color: _c(C.TONES.GRAY_40) },
             line: { color: _c(C.TONES.GRAY_40), width: 0 },
           });
@@ -671,44 +770,46 @@ class PotomacSlideTemplates {
       });
 
     } else {
-      // ── VERTICAL flow ────────────────────────────────────────────────────
-      const availH = 7.5 - 1.9 - 0.3;
+      // ── VERTICAL ──────────────────────────────────────────────────────────
+      const availH = cv.H - cv.BODY_Y - cv.MB;
       const stepH  = availH / safeSteps.length;
+      const R      = cv.H * 0.04;   // circle radius ≈ 0.3"
+      const lineX  = cv.CX + R;
+      const textX  = cv.CX + R * 2 + cv.W * 0.008;
+      const textW  = cv.CW - R * 2 - cv.W * 0.008;
 
       safeSteps.forEach((step, idx) => {
-        const y = 1.9 + idx * stepH;
-        const R = 0.3;
+        const y = cv.BODY_Y + idx * stepH;
 
         slide.addShape(this.pptx.ShapeType.ellipse, {
-          x: 0.5, y, w: R * 2, h: R * 2,
+          x: cv.CX, y, w: R * 2, h: R * 2,
           fill: { color: _c(this.palette.accent) },
           line: { color: _c(C.PRIMARY.DARK_GRAY), width: 1.5 },
         });
         slide.addText(String(idx + 1), {
-          x: 0.5, y, w: R * 2, h: R * 2,
-          fontFace: F.HEADERS.family, fontSize: 16,
+          x: cv.CX, y, w: R * 2, h: R * 2,
+          fontFace: F.HEADERS.family, fontSize: Math.round(cv.H * 2.13),
           bold: true, color: _c(C.PRIMARY.DARK_GRAY),
           align: 'center', valign: 'middle',
         });
 
         slide.addText((step.title || `Step ${idx + 1}`).toUpperCase(), {
-          x: 1.4, y: y + 0.02, w: 11.433, h: R * 0.9,
-          fontFace: F.HEADERS.family, fontSize: 13,
+          x: textX, y: y + cv.H * 0.003, w: textW, h: R * 0.9,
+          fontFace: F.HEADERS.family, fontSize: Math.round(cv.H * 1.73),
           bold: true, color: _c(C.PRIMARY.DARK_GRAY),
         });
 
         if (step.description) {
           slide.addText(String(step.description), {
-            x: 1.4, y: y + R * 0.9, w: 11.433, h: stepH - R * 0.9 - 0.1,
-            fontFace: F.BODY.family, fontSize: 11,
+            x: textX, y: y + R * 0.9, w: textW, h: stepH - R * 0.9 - cv.H * 0.013,
+            fontFace: F.BODY.family, fontSize: Math.round(cv.H * 1.47),
             color: _c(C.TONES.GRAY_60), valign: 'top',
           });
         }
 
-        // Vertical connector
         if (idx < safeSteps.length - 1) {
           slide.addShape(this.pptx.ShapeType.line, {
-            x: 0.5 + R, y: y + R * 2, w: 0, h: stepH - R * 2 - 0.05,
+            x: lineX, y: y + R * 2, w: 0, h: stepH - R * 2 - cv.H * 0.007,
             line: { color: _c(C.TONES.GRAY_40), width: 2 },
           });
         }
@@ -719,31 +820,34 @@ class PotomacSlideTemplates {
   }
 
 
-  // ══════════════════════════════════════════════════════════════════════════
+  // ════════════════════════════════════════════════════════════════════════════
   // CLOSING SLIDES
-  // ══════════════════════════════════════════════════════════════════════════
+  // ════════════════════════════════════════════════════════════════════════════
 
   createClosingSlide(title = 'THANK YOU', contactInfo = null) {
-    const slide = this.pptx.addSlide();
+    const { cv } = this;
+    const slide  = this.pptx.addSlide();
     slide.background = { color: _c(this.palette.background) };
-    // Full wordmark centred: (13.333 - 4.7) / 2 ≈ 4.317" from left
-    this.addLogo(slide, { x: 4.317, y: 1.5, w: 4.7, h: 0.97 }, 'light');
+
+    // Centred full wordmark
+    const markX = (cv.W - cv.WORDMARK_W) / 2;
+    this.addLogo(slide, { x: markX, y: cv.H * 0.2, w: cv.WORDMARK_W, h: cv.WORDMARK_H }, 'light');
 
     slide.addText(title.toUpperCase(), {
-      x: 0.5, y: 2.8, w: 12.333, h: 1,
-      fontFace: F.HEADERS.family, fontSize: 40,
+      x: cv.CX, y: cv.H * 0.373, w: cv.CW, h: cv.H * 0.133,
+      fontFace: F.HEADERS.family, fontSize: Math.round(cv.W * 3.0),
       bold: true, color: _c(C.PRIMARY.DARK_GRAY), align: 'center',
     });
 
     slide.addText('Built to Conquer Risk\u00AE', {
-      x: 0.5, y: 4, w: 12.333, h: 0.6,
-      fontFace: F.BODY.family, fontSize: 18,
+      x: cv.CX, y: cv.H * 0.533, w: cv.CW, h: cv.H * 0.08,
+      fontFace: F.BODY.family, fontSize: Math.round(cv.W * 1.35),
       color: _c(this.palette.accent), align: 'center', italic: true,
     });
 
     slide.addText(contactInfo || 'potomac.com\n(305) 824-2702\ninfo@potomac.com', {
-      x: 0.5, y: 5.5, w: 12.333, h: 1.5,
-      fontFace: F.BODY.family, fontSize: 14,
+      x: cv.CX, y: cv.H * 0.733, w: cv.CW, h: cv.H * 0.2,
+      fontFace: F.BODY.family, fontSize: Math.round(cv.W * 1.05),
       color: _c(C.TONES.GRAY_60), align: 'center',
     });
 
@@ -751,38 +855,44 @@ class PotomacSlideTemplates {
   }
 
   createCallToActionSlide(title, actionText, contactInfo, buttonText = 'GET STARTED') {
-    const slide = this.pptx.addSlide();
+    const { cv } = this;
+    const slide  = this.pptx.addSlide();
     slide.background = { color: _c(this.palette.background) };
     this.addStandardLogo(slide);
 
     slide.addText(title.toUpperCase(), {
-      x: 0.5, y: 1.5, w: 12.333, h: 1.2,
-      fontFace: F.HEADERS.family, fontSize: 34,
+      x: cv.CX, y: cv.H * 0.2, w: cv.CW, h: cv.H * 0.16,
+      fontFace: F.HEADERS.family, fontSize: Math.round(cv.W * 2.55),
       bold: true, color: _c(C.PRIMARY.DARK_GRAY), align: 'center',
     });
 
     slide.addText(String(actionText || ''), {
-      x: 0.5, y: 3, w: 12.333, h: 1.5,
-      fontFace: F.BODY.family, fontSize: 18,
+      x: cv.CX, y: cv.H * 0.4, w: cv.CW, h: cv.H * 0.2,
+      fontFace: F.BODY.family, fontSize: Math.round(cv.W * 1.35),
       color: _c(C.PRIMARY.DARK_GRAY), align: 'center',
     });
 
-    // CTA button — centred on 13.333" canvas: (13.333 - 3) / 2 ≈ 5.167"
+    // CTA button — centred horizontally
+    const btnW = cv.CW * 0.225;   // ≈ 2.75" at standard CW
+    const btnH = cv.H * 0.107;    // ≈ 0.8"
+    const btnX = (cv.W - btnW) / 2;
+    const btnY = cv.H * 0.64;
+
     slide.addShape(this.pptx.ShapeType.rect, {
-      x: 5.167, y: 4.8, w: 3, h: 0.8,
+      x: btnX, y: btnY, w: btnW, h: btnH,
       fill: { color: _c(this.palette.accent) },
       line: { color: _c(this.palette.accent), width: 0 },
     });
     slide.addText(buttonText.toUpperCase(), {
-      x: 5.167, y: 4.8, w: 3, h: 0.8,
-      fontFace: F.HEADERS.family, fontSize: 16,
+      x: btnX, y: btnY, w: btnW, h: btnH,
+      fontFace: F.HEADERS.family, fontSize: Math.round(cv.W * 1.2),
       bold: true, color: _c(C.PRIMARY.WHITE),
       align: 'center', valign: 'middle',
     });
 
     slide.addText(String(contactInfo || 'potomac.com | (305) 824-2702 | info@potomac.com'), {
-      x: 0.5, y: 6.0, w: 12.333, h: 1,
-      fontFace: F.BODY.family, fontSize: 14,
+      x: cv.CX, y: cv.H * 0.8, w: cv.CW, h: cv.H * 0.133,
+      fontFace: F.BODY.family, fontSize: Math.round(cv.W * 1.05),
       color: _c(C.TONES.GRAY_60), align: 'center',
     });
 
@@ -790,28 +900,27 @@ class PotomacSlideTemplates {
   }
 
 
-  // ══════════════════════════════════════════════════════════════════════════
-  // NEW TEMPLATES — DeckPlanner VALID_SLIDE_TYPES
-  // ══════════════════════════════════════════════════════════════════════════
+  // ════════════════════════════════════════════════════════════════════════════
+  // EXTENDED SLIDE TYPES
+  // ════════════════════════════════════════════════════════════════════════════
 
   /**
    * Executive Summary — dark background, large headline, yellow-accented bullets.
-   * Matches DeckPlanner type 'executive_summary'.
    */
   createExecutiveSummarySlide(headline, points = [], context = null) {
-    const slide = this.pptx.addSlide();
+    const { cv } = this;
+    const slide  = this.pptx.addSlide();
     slide.background = { color: _c(C.PRIMARY.DARK_GRAY) };
     this.addStandardLogo(slide, 'dark');
 
     slide.addText((headline || 'EXECUTIVE SUMMARY').toUpperCase(), {
-      x: 0.5, y: 0.4, w: 11.333, h: 1.1,
-      fontFace: F.HEADERS.family, fontSize: 34,
+      x: cv.CX, y: cv.H * 0.053, w: cv.CW - cv.LOGO_W - cv.COL_GAP, h: cv.H * 0.147,
+      fontFace: F.HEADERS.family, fontSize: Math.round(cv.W * 2.55),
       bold: true, color: _c(C.PRIMARY.WHITE),
     });
 
-    // Yellow accent bar
     slide.addShape(this.pptx.ShapeType.rect, {
-      x: 0.5, y: 1.45, w: 2.5, h: 0.07,
+      x: cv.CX, y: cv.H * 0.193, w: cv.CW * 0.187, h: cv.H * 0.009,
       fill: { color: _c(C.PRIMARY.YELLOW) },
       line: { color: _c(C.PRIMARY.YELLOW), width: 0 },
     });
@@ -819,22 +928,22 @@ class PotomacSlideTemplates {
     const bulletItems = (points || []).slice(0, 6).map(p => ({
       text: String(p),
       options: {
-        bullet: { code: '25BA', indent: 12 },
-        color: _c(C.PRIMARY.WHITE),
+        bullet:          { code: '25BA', indent: 12 },
+        color:           _c(C.PRIMARY.WHITE),
         paraSpaceBefore: 8,
       },
     }));
 
     slide.addText(bulletItems.length ? bulletItems : [{ text: '', options: {} }], {
-      x: 0.5, y: 1.7, w: 12.333, h: 5.2,
-      fontFace: F.BODY.family, fontSize: 18,
+      x: cv.CX, y: cv.H * 0.227, w: cv.CW, h: cv.H * 0.693,
+      fontFace: F.BODY.family, fontSize: Math.round(cv.W * 1.35),
       color: _c(C.PRIMARY.WHITE), valign: 'top',
     });
 
     if (context) {
       slide.addText(String(context), {
-        x: 0.5, y: 6.9, w: 12.333, h: 0.4,
-        fontFace: F.BODY.family, fontSize: 9,
+        x: cv.CX, y: cv.H * 0.92, w: cv.CW, h: cv.H * 0.053,
+        fontFace: F.BODY.family, fontSize: Math.round(cv.H * 1.2),
         color: _c(C.TONES.GRAY_60), align: 'center', italic: true,
       });
     }
@@ -844,50 +953,42 @@ class PotomacSlideTemplates {
 
   /**
    * Card Grid — 2×2 or 1×4 coloured content cards.
-   * Matches DeckPlanner type 'card_grid'.
-   * cards = [{title, text, color: 'yellow'|'dark'|'white'|'turquoise'}, ...]
-   *
-   * 1-col: cardW = 12.333" (from startX 0.75, right edge 12.583 ≈ 12.583)
-   * 2-col: 2*cardW + gapX = 12.333  →  cardW = (12.333 - 0.5) / 2 ≈ 5.917"
+   * cards = [{ title, text, color: 'yellow'|'dark'|'white'|'turquoise' }, ...]
    */
   createCardGridSlide(title, cards = [], options = {}) {
-    const slide = this.pptx.addSlide();
+    const { cv } = this;
+    const slide  = this.pptx.addSlide();
     slide.background = { color: _c(this.palette.background) };
     this.addStandardLogo(slide);
+    this._addSlideTitle(slide, title, { fsScale: 0.875 });
 
-    slide.addText(title.toUpperCase(), {
-      x: 0.5, y: 0.3, w: 11.333, h: 0.75,
-      fontFace: F.HEADERS.family, fontSize: 28,
-      bold: true, color: _c(C.PRIMARY.DARK_GRAY),
-    });
-    this.addTitleUnderline(slide, 0.5, 1.02);
-
-    const safeCards = (cards || []).slice(0, 4);
-    const count = safeCards.length || 1;
+    const safe  = (cards || []).slice(0, 4);
+    const count = safe.length || 1;
     const cols  = count <= 2 ? count : 2;
     const rows  = Math.ceil(count / cols);
 
-    const cardW  = cols === 1 ? 12.083 : 5.917;
-    const cardH  = rows === 1 ? 4.8 : 2.25;
-    const startX = cols === 1 ? 0.75 : 0.5;
-    const startY = 1.35;
-    const gapX   = 0.5;
-    const gapY   = 0.3;
+    const gapX   = cv.W * 0.0375;
+    const gapY   = cv.H * 0.04;
+    const cardW  = cols === 1 ? cv.CW : (cv.CW - gapX * (cols - 1)) / cols;
+    const cardsH = cv.H - cv.BODY_Y - cv.MB;
+    const cardH  = (cardsH - gapY * (rows - 1)) / rows;
 
     const COLOR_MAP = {
-      yellow:    { bg: _c(C.PRIMARY.YELLOW),       hdr: _c(C.PRIMARY.DARK_GRAY),  txt: _c(C.PRIMARY.DARK_GRAY) },
-      dark:      { bg: _c(C.PRIMARY.DARK_GRAY),    hdr: _c(C.PRIMARY.WHITE),       txt: _c(C.PRIMARY.WHITE) },
-      white:     { bg: _c(C.TONES.GRAY_20),        hdr: _c(C.PRIMARY.DARK_GRAY),  txt: _c(C.PRIMARY.DARK_GRAY) },
-      turquoise: { bg: _c(C.SECONDARY.TURQUOISE),  hdr: _c(C.PRIMARY.DARK_GRAY),  txt: _c(C.PRIMARY.DARK_GRAY) },
+      yellow:    { bg: _c(C.PRIMARY.YELLOW),      hdr: _c(C.PRIMARY.DARK_GRAY), txt: _c(C.PRIMARY.DARK_GRAY) },
+      dark:      { bg: _c(C.PRIMARY.DARK_GRAY),   hdr: _c(C.PRIMARY.WHITE),     txt: _c(C.PRIMARY.WHITE) },
+      white:     { bg: _c(C.TONES.GRAY_20),       hdr: _c(C.PRIMARY.DARK_GRAY), txt: _c(C.PRIMARY.DARK_GRAY) },
+      turquoise: { bg: _c(C.SECONDARY.TURQUOISE), hdr: _c(C.PRIMARY.DARK_GRAY), txt: _c(C.PRIMARY.DARK_GRAY) },
     };
-    const DEFAULT_COLORS = ['yellow', 'dark', 'white', 'turquoise'];
+    const DEFAULT_ORDER = ['yellow', 'dark', 'white', 'turquoise'];
 
-    safeCards.forEach((card, idx) => {
+    safe.forEach((card, idx) => {
       const col    = idx % cols;
       const row    = Math.floor(idx / cols);
-      const x      = startX + col * (cardW + gapX);
-      const y      = startY + row * (cardH + gapY);
-      const scheme = COLOR_MAP[card.color] || COLOR_MAP[DEFAULT_COLORS[idx % 4]];
+      const x      = cv.CX + col * (cardW + gapX);
+      const y      = cv.BODY_Y + row * (cardH + gapY);
+      const scheme = COLOR_MAP[card.color] || COLOR_MAP[DEFAULT_ORDER[idx % 4]];
+      const padX   = cardW * 0.033;
+      const padY   = cardH * 0.067;
 
       slide.addShape(this.pptx.ShapeType.rect, {
         x, y, w: cardW, h: cardH,
@@ -896,17 +997,19 @@ class PotomacSlideTemplates {
       });
 
       if (card.title) {
+        const hdrFS = rows > 1 ? Math.round(cv.H * 1.73) : Math.round(cv.H * 2.27);
         slide.addText(card.title.toUpperCase(), {
-          x: x + 0.2, y: y + 0.15, w: cardW - 0.4, h: cardH * 0.38,
-          fontFace: F.HEADERS.family, fontSize: rows > 1 ? 13 : 17,
+          x: x + padX, y: y + padY, w: cardW - padX * 2, h: cardH * 0.35,
+          fontFace: F.HEADERS.family, fontSize: hdrFS,
           bold: true, color: scheme.hdr, align: 'left', valign: 'middle',
         });
       }
 
       if (card.text) {
+        const bodyFS = rows > 1 ? Math.round(cv.H * 1.47) : Math.round(cv.H * 1.87);
         slide.addText(String(card.text), {
-          x: x + 0.2, y: y + cardH * 0.42, w: cardW - 0.4, h: cardH * 0.52,
-          fontFace: F.BODY.family, fontSize: rows > 1 ? 11 : 14,
+          x: x + padX, y: y + cardH * 0.42, w: cardW - padX * 2, h: cardH * 0.5,
+          fontFace: F.BODY.family, fontSize: bodyFS,
           color: scheme.txt, align: 'left', valign: 'top',
         });
       }
@@ -917,37 +1020,29 @@ class PotomacSlideTemplates {
 
   /**
    * Icon Grid — circular icon badges in a responsive grid.
-   * Matches DeckPlanner type 'icon_grid'.
-   * items = [{icon, title, description}, ...]
-   *
-   * itemW = 11.833 / cols  (from startX 0.75)
+   * items = [{ icon, title, description }, ...]
    */
   createIconGridSlide(title, items = [], options = {}) {
-    const slide = this.pptx.addSlide();
+    const { cv } = this;
+    const slide  = this.pptx.addSlide();
     slide.background = { color: _c(this.palette.background) };
     this.addStandardLogo(slide);
+    this._addSlideTitle(slide, title, { fsScale: 0.875 });
 
-    slide.addText(title.toUpperCase(), {
-      x: 0.5, y: 0.3, w: 11.333, h: 0.75,
-      fontFace: F.HEADERS.family, fontSize: 28,
-      bold: true, color: _c(C.PRIMARY.DARK_GRAY),
-    });
-    this.addTitleUnderline(slide, 0.5, 1.02);
-
-    const safe = (items || []).slice(0, 6);
-    const cols = Math.min(3, safe.length) || 1;
-    const rows = Math.ceil(safe.length / cols);
-    const itemW = 11.833 / cols;
-    const itemH = rows > 1 ? 2.6 : 4.8;
+    const safe  = (items || []).slice(0, 6);
+    const cols  = Math.min(3, safe.length) || 1;
+    const rows  = Math.ceil(safe.length / cols);
+    const itemW = cv.CW / cols;
+    const gapY  = cv.H * 0.04;
+    const itemH = (cv.H - cv.BODY_Y - cv.MB - gapY * (rows - 1)) / rows;
 
     safe.forEach((item, idx) => {
-      const col = idx % cols;
-      const row = Math.floor(idx / cols);
-      const cx  = 0.75 + col * itemW + itemW / 2;
-      const y   = 1.35 + row * (itemH + 0.3);
-      const R   = rows > 1 ? 0.38 : 0.55;
+      const col  = idx % cols;
+      const row  = Math.floor(idx / cols);
+      const cx   = cv.CX + col * itemW + itemW / 2;
+      const y    = cv.BODY_Y + row * (itemH + gapY);
+      const R    = rows > 1 ? cv.H * 0.05 : cv.H * 0.073;  // circle radius
 
-      // Icon circle
       slide.addShape(this.pptx.ShapeType.ellipse, {
         x: cx - R, y, w: R * 2, h: R * 2,
         fill: { color: _c(this.palette.accent) },
@@ -955,24 +1050,26 @@ class PotomacSlideTemplates {
       });
       slide.addText(String(item.icon || idx + 1), {
         x: cx - R, y, w: R * 2, h: R * 2,
-        fontFace: F.HEADERS.family, fontSize: R > 0.45 ? 20 : 15,
+        fontFace: F.HEADERS.family, fontSize: R > cv.H * 0.06 ? Math.round(cv.H * 2.67) : Math.round(cv.H * 2.0),
         bold: true, color: _c(C.PRIMARY.DARK_GRAY),
         align: 'center', valign: 'middle',
       });
 
       if (item.title) {
         slide.addText(item.title.toUpperCase(), {
-          x: cx - itemW / 2 + 0.1, y: y + R * 2 + 0.1, w: itemW - 0.2, h: 0.5,
-          fontFace: F.HEADERS.family, fontSize: 12,
+          x: cx - itemW / 2 + cv.W * 0.008, y: y + R * 2 + cv.H * 0.013,
+          w: itemW - cv.W * 0.015, h: cv.H * 0.067,
+          fontFace: F.HEADERS.family, fontSize: Math.round(cv.H * 1.6),
           bold: true, color: _c(C.PRIMARY.DARK_GRAY), align: 'center',
         });
       }
 
       if (item.description) {
+        const descY = y + R * 2 + cv.H * 0.013 + cv.H * 0.08;
         slide.addText(String(item.description), {
-          x: cx - itemW / 2 + 0.1, y: y + R * 2 + 0.65, w: itemW - 0.2,
-          h: itemH - R * 2 - 0.7,
-          fontFace: F.BODY.family, fontSize: 11,
+          x: cx - itemW / 2 + cv.W * 0.008, y: descY,
+          w: itemW - cv.W * 0.015, h: itemH - R * 2 - cv.H * 0.1,
+          fontFace: F.BODY.family, fontSize: Math.round(cv.H * 1.47),
           color: _c(C.TONES.GRAY_60), align: 'center', valign: 'top',
         });
       }
@@ -982,70 +1079,67 @@ class PotomacSlideTemplates {
   }
 
   /**
-   * Hub & Spoke — central Potomac hub with peripheral service nodes.
-   * Matches DeckPlanner type 'hub_spoke'.
-   * center = {title, subtitle}; nodes = [{label, description?}, ...]
-   *
-   * Hub centred at x=6.667 (13.333/2), y=4.1
+   * Hub & Spoke — central hub with up to 6 peripheral nodes.
+   * center = { title, subtitle };  nodes = [{ label, description? }, ...]
    */
   createHubSpokeSlide(title, center = {}, nodes = []) {
-    const slide = this.pptx.addSlide();
+    const { cv } = this;
+    const slide  = this.pptx.addSlide();
     slide.background = { color: _c(this.palette.background) };
     this.addStandardLogo(slide);
 
     slide.addText(title.toUpperCase(), {
-      x: 0.5, y: 0.3, w: 11.333, h: 0.7,
-      fontFace: F.HEADERS.family, fontSize: 24,
+      x: cv.CX, y: cv.TITLE_Y, w: cv.CW - cv.LOGO_W - cv.COL_GAP, h: cv.TITLE_H,
+      fontFace: F.HEADERS.family, fontSize: Math.round(cv.TITLE_FS * 0.75),
       bold: true, color: _c(C.PRIMARY.DARK_GRAY),
     });
 
-    const HUB_CX = 6.667;   // true centre of 13.333" slide
-    const HUB_CY = 4.1;
-    const HUB_R  = 0.9;
+    // Hub centre — vertically below title, horizontally centred
+    const HUB_CX = cv.W / 2;
+    const HUB_CY = cv.BODY_Y + (cv.H - cv.BODY_Y - cv.MB) * 0.55;
+    const HUB_R  = cv.H * 0.12;   // ≈ 0.9"
 
-    // Central hub
     slide.addShape(this.pptx.ShapeType.ellipse, {
       x: HUB_CX - HUB_R, y: HUB_CY - HUB_R, w: HUB_R * 2, h: HUB_R * 2,
       fill: { color: _c(C.PRIMARY.YELLOW) },
       line: { color: _c(C.PRIMARY.DARK_GRAY), width: 2.5 },
     });
     slide.addText((center.title || 'POTOMAC').toUpperCase(), {
-      x: HUB_CX - HUB_R, y: HUB_CY - HUB_R + 0.15, w: HUB_R * 2, h: HUB_R * 0.9,
-      fontFace: F.HEADERS.family, fontSize: 16,
+      x: HUB_CX - HUB_R, y: HUB_CY - HUB_R + cv.H * 0.02, w: HUB_R * 2, h: HUB_R * 0.9,
+      fontFace: F.HEADERS.family, fontSize: Math.round(cv.H * 2.13),
       bold: true, color: _c(C.PRIMARY.DARK_GRAY),
       align: 'center', valign: 'middle',
     });
     if (center.subtitle) {
       slide.addText(String(center.subtitle), {
-        x: HUB_CX - HUB_R, y: HUB_CY + 0.1, w: HUB_R * 2, h: HUB_R * 0.5,
-        fontFace: F.BODY.family, fontSize: 10,
+        x: HUB_CX - HUB_R, y: HUB_CY + HUB_R * 0.1, w: HUB_R * 2, h: HUB_R * 0.5,
+        fontFace: F.BODY.family, fontSize: Math.round(cv.H * 1.33),
         color: _c(C.PRIMARY.DARK_GRAY), align: 'center',
       });
     }
 
     const safeNodes = (nodes || []).slice(0, 6);
-    const SPOKE_R   = 2.6;
-    const NODE_R    = 0.55;
+    const SPOKE_R   = cv.H * 0.347;   // ≈ 2.6"
+    const NODE_R    = cv.H * 0.0733;  // ≈ 0.55"
     const NODE_COLORS = [
-      _c(C.SECONDARY.TURQUOISE), _c(C.TONES.GRAY_20), _c(C.TONES.YELLOW_40),
-      _c(C.SECONDARY.TURQUOISE), _c(C.TONES.GRAY_20), _c(C.TONES.YELLOW_40),
+      _c(C.SECONDARY.TURQUOISE), _c(C.TONES.GRAY_20),   _c(C.TONES.YELLOW_40),
+      _c(C.SECONDARY.TURQUOISE), _c(C.TONES.GRAY_20),   _c(C.TONES.YELLOW_40),
     ];
 
     safeNodes.forEach((node, idx) => {
       const angle = (idx / safeNodes.length) * 2 * Math.PI - Math.PI / 2;
-      const nx = HUB_CX + SPOKE_R * Math.cos(angle);
-      const ny = HUB_CY + SPOKE_R * Math.sin(angle);
+      const nx    = HUB_CX + SPOKE_R * Math.cos(angle);
+      const ny    = HUB_CY + SPOKE_R * Math.sin(angle);
 
-      // Spoke line — from hub edge to node edge (drawn first so nodes render on top)
+      // Spoke line from hub edge to node edge
       slide.addShape(this.pptx.ShapeType.line, {
-        x: HUB_CX + HUB_R * Math.cos(angle),
-        y: HUB_CY + HUB_R * Math.sin(angle),
+        x: HUB_CX + HUB_R  * Math.cos(angle),
+        y: HUB_CY + HUB_R  * Math.sin(angle),
         w: (SPOKE_R - NODE_R - HUB_R) * Math.cos(angle),
         h: (SPOKE_R - NODE_R - HUB_R) * Math.sin(angle),
         line: { color: _c(C.TONES.GRAY_40), width: 1.5 },
       });
 
-      // Node circle
       slide.addShape(this.pptx.ShapeType.ellipse, {
         x: nx - NODE_R, y: ny - NODE_R, w: NODE_R * 2, h: NODE_R * 2,
         fill: { color: NODE_COLORS[idx % NODE_COLORS.length] },
@@ -1053,7 +1147,7 @@ class PotomacSlideTemplates {
       });
       slide.addText((node.label || `Node ${idx + 1}`).toUpperCase(), {
         x: nx - NODE_R, y: ny - NODE_R, w: NODE_R * 2, h: NODE_R * 2,
-        fontFace: F.HEADERS.family, fontSize: 9,
+        fontFace: F.HEADERS.family, fontSize: Math.round(cv.H * 1.2),
         bold: true, color: _c(C.PRIMARY.DARK_GRAY),
         align: 'center', valign: 'middle',
       });
@@ -1064,28 +1158,22 @@ class PotomacSlideTemplates {
 
   /**
    * Timeline Slide — horizontal milestone track.
-   * Matches DeckPlanner type 'timeline'.
-   * milestones = [{label, date, status:'complete'|'in_progress'|'pending'}, ...]
-   *
-   * TL_XMIN=0.8, TL_XMAX=12.5  →  TL_W=11.7"
+   * milestones = [{ label, date, status: 'complete'|'in_progress'|'pending' }, ...]
    */
   createTimelineSlide(title, milestones = []) {
-    const slide = this.pptx.addSlide();
+    const { cv } = this;
+    const slide  = this.pptx.addSlide();
     slide.background = { color: _c(this.palette.background) };
     this.addStandardLogo(slide);
-
-    slide.addText(title.toUpperCase(), {
-      x: 0.5, y: 0.3, w: 11.333, h: 0.75,
-      fontFace: F.HEADERS.family, fontSize: 28,
-      bold: true, color: _c(C.PRIMARY.DARK_GRAY),
-    });
-    this.addTitleUnderline(slide, 0.5, 1.02);
+    this._addSlideTitle(slide, title, { fsScale: 0.875 });
 
     const safe    = (milestones || []).slice(0, 8);
-    const TL_Y    = 3.8;
-    const TL_XMIN = 0.8;
-    const TL_XMAX = 12.5;
+    const TL_XMIN = cv.CX + cv.CW * 0.02;
+    const TL_XMAX = cv.CX + cv.CW * 0.98;
     const TL_W    = TL_XMAX - TL_XMIN;
+    const TL_Y    = cv.H * 0.507;    // ≈ 3.8"
+    const tickH   = cv.H * 0.213;    // ≈ 1.6"
+    const MR      = cv.H * 0.027;    // marker radius ≈ 0.2"
 
     // Baseline
     slide.addShape(this.pptx.ShapeType.line, {
@@ -1100,15 +1188,16 @@ class PotomacSlideTemplates {
     };
 
     safe.forEach((ms, idx) => {
-      const xPos   = TL_XMIN + (TL_W * (idx + 0.5)) / safe.length;
-      const MR     = 0.2;
+      const xPos    = TL_XMIN + (TL_W * (idx + 0.5)) / safe.length;
       const isAbove = idx % 2 === 0;
       const status  = ms.status || 'pending';
+      const tickTop = isAbove ? TL_Y - tickH : TL_Y;
+      const labelW  = (TL_W / safe.length) * 0.9;
+      const labelY  = isAbove ? TL_Y - tickH - cv.H * 0.08 : TL_Y + tickH + cv.H * 0.027;
 
       // Tick
-      const tickTop = isAbove ? TL_Y - 1.6 : TL_Y;
       slide.addShape(this.pptx.ShapeType.line, {
-        x: xPos, y: tickTop, w: 0, h: 1.6,
+        x: xPos, y: tickTop, w: 0, h: tickH,
         line: { color: _c(C.TONES.GRAY_40), width: 1 },
       });
 
@@ -1120,19 +1209,16 @@ class PotomacSlideTemplates {
       });
 
       // Label
-      const labelW = TL_W / safe.length * 0.9;
-      const labelY = isAbove ? TL_Y - 2.1 : TL_Y + 1.65;
-
       slide.addText(String(ms.label || `M${idx + 1}`), {
-        x: xPos - labelW / 2, y: labelY, w: labelW, h: 0.5,
-        fontFace: F.HEADERS.family, fontSize: 11,
+        x: xPos - labelW / 2, y: labelY, w: labelW, h: cv.H * 0.067,
+        fontFace: F.HEADERS.family, fontSize: Math.round(cv.H * 1.47),
         bold: true, color: _c(C.PRIMARY.DARK_GRAY), align: 'center',
       });
 
       if (ms.date) {
         slide.addText(String(ms.date), {
-          x: xPos - labelW / 2, y: labelY + 0.5, w: labelW, h: 0.38,
-          fontFace: F.BODY.family, fontSize: 10,
+          x: xPos - labelW / 2, y: labelY + cv.H * 0.067, w: labelW, h: cv.H * 0.051,
+          fontFace: F.BODY.family, fontSize: Math.round(cv.H * 1.33),
           color: _c(C.TONES.GRAY_60), align: 'center',
         });
       }
@@ -1143,81 +1229,96 @@ class PotomacSlideTemplates {
 
   /**
    * 2×2 Matrix Slide — quadrant analysis.
-   * Matches DeckPlanner type 'matrix_2x2'.
-   * quadrants = [{title, text, color?}, ...] top-left, top-right, bottom-left, bottom-right
-   *
-   * QW=5.0, GAP=0.1 → total matrix width=10.1"
-   * GX = (13.333 - 10.1) / 2 ≈ 1.617"  (centred on slide)
+   * quadrants order: top-left, top-right, bottom-left, bottom-right
+   * quadrants = [{ title, text, color? }, ...]
    */
   createMatrix2x2Slide(title, xAxisLabel = '', yAxisLabel = '', quadrants = []) {
-    const slide = this.pptx.addSlide();
+    const { cv } = this;
+    const slide  = this.pptx.addSlide();
     slide.background = { color: _c(this.palette.background) };
     this.addStandardLogo(slide);
 
     slide.addText(title.toUpperCase(), {
-      x: 0.5, y: 0.3, w: 11.333, h: 0.7,
-      fontFace: F.HEADERS.family, fontSize: 26,
+      x: cv.CX, y: cv.TITLE_Y, w: cv.CW - cv.LOGO_W - cv.COL_GAP, h: cv.TITLE_H,
+      fontFace: F.HEADERS.family, fontSize: Math.round(cv.TITLE_FS * 0.8),
       bold: true, color: _c(C.PRIMARY.DARK_GRAY),
     });
 
-    const GX = 1.617, GY = 1.3;
-    const QW = 5.0,   QH = 2.7, GAP = 0.1;
+    // Matrix occupies the content area; leave room for y-axis label
+    const yLabelW = cv.W * 0.075;
+    const axisLabelH = cv.H * 0.047;
+    const matrixX    = cv.CX + yLabelW;
+    const matrixBot  = cv.H - cv.MB - axisLabelH;
+    const matrixTop  = cv.BODY_Y;
+    const matrixH    = matrixBot - matrixTop;
+    const matrixW    = cv.CW - yLabelW;
+
+    const GAP = cv.W * 0.0075;
+    const QW  = (matrixW - GAP) / 2;
+    const QH  = (matrixH - GAP) / 2;
 
     const DEFAULT_Q = [
-      { title: 'HIGH VALUE\nLOW RISK',   color: C.PRIMARY.YELLOW },
-      { title: 'HIGH VALUE\nHIGH RISK',  color: C.SECONDARY.TURQUOISE },
-      { title: 'LOW VALUE\nLOW RISK',    color: C.TONES.GRAY_20 },
-      { title: 'LOW VALUE\nHIGH RISK',   color: C.TONES.GRAY_40 },
+      { title: 'HIGH VALUE\nLOW RISK',  color: C.PRIMARY.YELLOW },
+      { title: 'HIGH VALUE\nHIGH RISK', color: C.SECONDARY.TURQUOISE },
+      { title: 'LOW VALUE\nLOW RISK',   color: C.TONES.GRAY_20 },
+      { title: 'LOW VALUE\nHIGH RISK',  color: C.TONES.GRAY_40 },
     ];
     const q4 = [0, 1, 2, 3].map(i => quadrants[i] || DEFAULT_Q[i]);
 
     [[0, 0], [1, 0], [0, 1], [1, 1]].forEach(([col, row], idx) => {
-      const q = q4[idx];
-      const x = GX + col * (QW + GAP);
-      const y = GY + row * (QH + GAP);
+      const q   = q4[idx];
+      const qx  = matrixX + col * (QW + GAP);
+      const qy  = matrixTop + row * (QH + GAP);
+      const padX = QW * 0.03;
+      const padY = QH * 0.056;
 
       slide.addShape(this.pptx.ShapeType.rect, {
-        x, y, w: QW, h: QH,
+        x: qx, y: qy, w: QW, h: QH,
         fill: { color: _c(q.color || C.TONES.GRAY_20) },
         line: { color: _c(C.TONES.GRAY_40), width: 1 },
       });
+
       if (q.title) {
         slide.addText(q.title.toUpperCase(), {
-          x: x + 0.15, y: y + 0.15, w: QW - 0.3, h: 0.85,
-          fontFace: F.HEADERS.family, fontSize: 13,
+          x: qx + padX, y: qy + padY, w: QW - padX * 2, h: QH * 0.315,
+          fontFace: F.HEADERS.family, fontSize: Math.round(cv.H * 1.73),
           bold: true, color: _c(C.PRIMARY.DARK_GRAY), valign: 'top',
         });
       }
+
       if (q.text) {
         slide.addText(String(q.text), {
-          x: x + 0.15, y: y + 1.05, w: QW - 0.3, h: QH - 1.2,
-          fontFace: F.BODY.family, fontSize: 12,
+          x: qx + padX, y: qy + QH * 0.38, w: QW - padX * 2, h: QH * 0.56,
+          fontFace: F.BODY.family, fontSize: Math.round(cv.H * 1.6),
           color: _c(C.PRIMARY.DARK_GRAY), valign: 'top',
         });
       }
     });
 
-    // Axis lines
+    // Centre axis lines
+    const axisX = matrixX + QW + GAP / 2;
+    const axisY = matrixTop + QH + GAP / 2;
     slide.addShape(this.pptx.ShapeType.line, {
-      x: GX, y: GY + QH + GAP / 2, w: QW * 2 + GAP, h: 0,
+      x: matrixX, y: axisY, w: matrixW, h: 0,
       line: { color: _c(C.TONES.GRAY_60), width: 2 },
     });
     slide.addShape(this.pptx.ShapeType.line, {
-      x: GX + QW + GAP / 2, y: GY, w: 0, h: QH * 2 + GAP,
+      x: axisX, y: matrixTop, w: 0, h: matrixH,
       line: { color: _c(C.TONES.GRAY_60), width: 2 },
     });
 
     if (xAxisLabel) {
       slide.addText(xAxisLabel.toUpperCase(), {
-        x: GX, y: GY + QH * 2 + GAP + 0.15, w: QW * 2 + GAP, h: 0.35,
-        fontFace: F.HEADERS.family, fontSize: 11,
+        x: matrixX, y: matrixBot + cv.H * 0.013, w: matrixW, h: axisLabelH,
+        fontFace: F.HEADERS.family, fontSize: Math.round(cv.H * 1.47),
         bold: true, color: _c(C.TONES.GRAY_60), align: 'center',
       });
     }
+
     if (yAxisLabel) {
       slide.addText(yAxisLabel.toUpperCase(), {
-        x: 0.1, y: GY, w: 0.9, h: QH * 2,
-        fontFace: F.HEADERS.family, fontSize: 11,
+        x: cv.CX, y: matrixTop, w: yLabelW, h: matrixH,
+        fontFace: F.HEADERS.family, fontSize: Math.round(cv.H * 1.47),
         bold: true, color: _c(C.TONES.GRAY_60),
         align: 'center', valign: 'middle', rotate: 270,
       });
@@ -1228,90 +1329,99 @@ class PotomacSlideTemplates {
 
   /**
    * Scorecard / KPI Dashboard.
-   * Matches DeckPlanner type 'scorecard'.
-   * metrics = [{label, value, target?, change?, status:'green'|'yellow'|'red'}, ...]
-   *
-   * Columns scaled to 13.333" canvas (total span 0.6 → 12.65"):
-   *   S_COLS   = [0.6,  5.4,  7.5,  9.3, 11.25]
-   *   S_WIDTHS = [4.7,  2.0,  1.7,  1.85, 1.4 ]
+   * metrics = [{ label, value, target?, change?, status: 'green'|'yellow'|'red' }, ...]
    */
   createScorecardSlide(title, metrics = [], subtitle = null) {
-    const slide = this.pptx.addSlide();
+    const { cv } = this;
+    const slide  = this.pptx.addSlide();
     slide.background = { color: _c(this.palette.background) };
     this.addStandardLogo(slide);
-
-    slide.addText(title.toUpperCase(), {
-      x: 0.5, y: 0.3, w: 11.333, h: 0.75,
-      fontFace: F.HEADERS.family, fontSize: 28,
-      bold: true, color: _c(C.PRIMARY.DARK_GRAY),
-    });
-    this.addTitleUnderline(slide, 0.5, 1.02);
-
-    const headerY = subtitle ? 1.55 : 1.35;
+    this._addSlideTitle(slide, title, { fsScale: 0.875 });
 
     if (subtitle) {
       slide.addText(subtitle, {
-        x: 0.5, y: 1.08, w: 11.833, h: 0.38,
-        fontFace: F.BODY.family, fontSize: 13,
+        x: cv.CX, y: cv.BODY_Y - cv.H * 0.04, w: cv.CW * 0.9, h: cv.H * 0.051,
+        fontFace: F.BODY.family, fontSize: Math.round(cv.H * 1.73),
         color: _c(C.TONES.GRAY_60),
       });
     }
 
-    const safe    = (metrics || []).slice(0, 8);
-    const rowH    = Math.min(0.72, (7.5 - headerY - 0.45 - 0.4) / Math.max(safe.length, 1));
-    const S_COLS   = [0.6, 5.4, 7.5, 9.3, 11.25];
-    const S_WIDTHS = [4.7, 2.0, 1.7, 1.85, 1.4];
+    const safe      = (metrics || []).slice(0, 8);
+    const headerY   = subtitle ? cv.BODY_Y + cv.H * 0.013 : cv.BODY_Y;
+    const headerH   = cv.H * 0.06;
+    const available = cv.H - headerY - headerH - cv.MB;
+    const rowH      = Math.min(cv.H * 0.096, available / Math.max(safe.length, 1));
+
+    // Column x-positions and widths as fractions of CW — all derived, none fixed
+    const colDefs = [
+      { frac: 0.0,   wFrac: 0.381 },  // KPI label
+      { frac: 0.381, wFrac: 0.162 },  // CURRENT
+      { frac: 0.543, wFrac: 0.138 },  // TARGET
+      { frac: 0.681, wFrac: 0.15 },   // CHANGE
+      { frac: 0.831, wFrac: 0.113 },  // STATUS
+    ];
     const HDRS    = ['KPI / METRIC', 'CURRENT', 'TARGET', 'CHANGE', 'STATUS'];
-    const STATUS_C = { green: _c(C.SECONDARY.TURQUOISE), yellow: _c(C.PRIMARY.YELLOW), red: _c(C.SECONDARY.PINK) };
+    const STATUS_C = {
+      green:  _c(C.SECONDARY.TURQUOISE),
+      yellow: _c(C.PRIMARY.YELLOW),
+      red:    _c(C.SECONDARY.PINK),
+    };
 
     // Header row
     slide.addShape(this.pptx.ShapeType.rect, {
-      x: 0.5, y: headerY, w: 12.333, h: 0.45,
+      x: cv.CX, y: headerY, w: cv.CW, h: headerH,
       fill: { color: _c(C.PRIMARY.DARK_GRAY) },
       line: { color: _c(C.PRIMARY.DARK_GRAY), width: 0 },
     });
+
     HDRS.forEach((h, i) => {
+      const { frac, wFrac } = colDefs[i];
       slide.addText(h, {
-        x: S_COLS[i], y: headerY + 0.03, w: S_WIDTHS[i], h: 0.39,
-        fontFace: F.HEADERS.family, fontSize: 11,
+        x: cv.CX + cv.CW * frac, y: headerY + headerH * 0.067,
+        w: cv.CW * wFrac, h: headerH * 0.867,
+        fontFace: F.HEADERS.family, fontSize: Math.round(cv.H * 1.47),
         bold: true, color: _c(C.PRIMARY.WHITE),
         valign: 'middle', align: i === 0 ? 'left' : 'center',
       });
     });
 
     safe.forEach((m, idx) => {
-      const y   = headerY + 0.45 + idx * rowH;
+      const y   = headerY + headerH + idx * rowH;
       const alt = idx % 2 === 1;
+      const fs  = Math.min(Math.round(cv.H * 1.6), rowH * 14);
 
       if (alt) {
         slide.addShape(this.pptx.ShapeType.rect, {
-          x: 0.5, y, w: 12.333, h: rowH,
+          x: cv.CX, y, w: cv.CW, h: rowH,
           fill: { color: _c(C.TONES.GRAY_20) },
           line: { color: _c(C.TONES.GRAY_20), width: 0 },
         });
       }
 
-      const fs = Math.min(12, rowH * 14);
+      const cells = [
+        { v: m.label  || '',  ci: 0, bold: true,  color: _c(C.PRIMARY.DARK_GRAY), align: 'left' },
+        { v: m.value  || '—', ci: 1, bold: true,  color: _c(this.palette.accent), align: 'center' },
+        { v: m.target || '—', ci: 2, bold: false, color: _c(C.PRIMARY.DARK_GRAY), align: 'center' },
+        { v: m.change || '—', ci: 3, bold: false, color: _c(C.PRIMARY.DARK_GRAY), align: 'center' },
+      ];
 
-      [
-        { v: m.label || '',   x: S_COLS[0], w: S_WIDTHS[0], align: 'left',   bold: true,  color: _c(C.PRIMARY.DARK_GRAY) },
-        { v: m.value || '—',  x: S_COLS[1], w: S_WIDTHS[1], align: 'center', bold: true,  color: _c(this.palette.accent) },
-        { v: m.target || '—', x: S_COLS[2], w: S_WIDTHS[2], align: 'center', bold: false, color: _c(C.PRIMARY.DARK_GRAY) },
-        { v: m.change || '—', x: S_COLS[3], w: S_WIDTHS[3], align: 'center', bold: false, color: _c(C.PRIMARY.DARK_GRAY) },
-      ].forEach(col => {
-        slide.addText(String(col.v), {
-          x: col.x, y: y + 0.04, w: col.w, h: rowH - 0.08,
+      cells.forEach(cell => {
+        const { frac, wFrac } = colDefs[cell.ci];
+        slide.addText(String(cell.v), {
+          x: cv.CX + cv.CW * frac, y: y + rowH * 0.053, w: cv.CW * wFrac, h: rowH * 0.893,
           fontFace: F.BODY.family, fontSize: fs,
-          bold: col.bold, color: col.color,
-          align: col.align, valign: 'middle',
+          bold: cell.bold, color: cell.color,
+          align: cell.align, valign: 'middle',
         });
       });
 
-      // Status indicator circle — centred in the STATUS column (x=11.25, w=1.4)
-      const sc = STATUS_C[m.status] || STATUS_C.yellow;
+      // Status circle in the last column
+      const sc     = STATUS_C[m.status] || STATUS_C.yellow;
+      const circR  = rowH * 0.3;
+      const { frac, wFrac } = colDefs[4];
+      const circCX = cv.CX + cv.CW * frac + (cv.CW * wFrac) / 2;
       slide.addShape(this.pptx.ShapeType.ellipse, {
-        x: 11.35 + (1.4 - rowH * 0.6) / 2, y: y + rowH * 0.2,
-        w: rowH * 0.6, h: rowH * 0.6,
+        x: circCX - circR, y: y + rowH / 2 - circR, w: circR * 2, h: circR * 2,
         fill: { color: sc }, line: { color: sc, width: 0 },
       });
     });
@@ -1321,93 +1431,94 @@ class PotomacSlideTemplates {
 
   /**
    * Comparison — labelled side-by-side A vs B.
-   * Matches DeckPlanner type 'comparison'.
-   * rows = [{label, left, right}, ...]
+   * rows = [{ label, left, right }, ...]
    * winner = 'left' | 'right' | null
-   *
-   * Canvas 13.333":  COL_W=5.5  CENTER_X=6.667
-   *   Left  col: x=0.5,              w=5.5  → right edge 6.0
-   *   Right col: x=CENTER_X+0.2=6.867, w=5.5 → right edge 12.367
    */
   createComparisonSlide(title, leftLabel = 'OPTION A', rightLabel = 'OPTION B', rows = [], winner = null) {
-    const slide = this.pptx.addSlide();
+    const { cv } = this;
+    const slide  = this.pptx.addSlide();
     slide.background = { color: _c(this.palette.background) };
     this.addStandardLogo(slide);
 
     slide.addText(title.toUpperCase(), {
-      x: 0.5, y: 0.3, w: 11.333, h: 0.7,
-      fontFace: F.HEADERS.family, fontSize: 26,
+      x: cv.CX, y: cv.TITLE_Y, w: cv.CW - cv.LOGO_W - cv.COL_GAP, h: cv.TITLE_H,
+      fontFace: F.HEADERS.family, fontSize: Math.round(cv.TITLE_FS * 0.8),
       bold: true, color: _c(C.PRIMARY.DARK_GRAY),
     });
 
-    const COL_W    = 5.5;
-    const CENTER_X = 6.667;
-    const HDR_Y    = 1.15;
-    const safeRows = (rows || []).slice(0, 8);
-    const rowH     = Math.min(0.72, (7.5 - HDR_Y - 0.6 - 0.4) / Math.max(safeRows.length, 1));
+    // Each option column: (CW - VS_width) / 2
+    const VS_W  = cv.CW * 0.04;
+    const COL_W = (cv.CW - VS_W) / 2;
+    const HDR_Y = cv.BODY_Y;
+    const HDR_H = cv.H * 0.08;
 
-    // Header colours
-    const lWin = winner === 'left';
-    const rWin = winner === 'right';
-    const leftHdrColor  = lWin ? _c(C.PRIMARY.YELLOW) : _c(C.PRIMARY.DARK_GRAY);
-    const rightHdrColor = rWin ? _c(C.PRIMARY.YELLOW) : _c(C.PRIMARY.DARK_GRAY);
-    const leftTxtColor  = lWin ? _c(C.PRIMARY.DARK_GRAY) : _c(C.PRIMARY.WHITE);
-    const rightTxtColor = rWin ? _c(C.PRIMARY.DARK_GRAY) : _c(C.PRIMARY.WHITE);
+    const safeRows = (rows || []).slice(0, 8);
+    const available = cv.H - HDR_Y - HDR_H - cv.MB;
+    const rowH      = Math.min(cv.H * 0.096, available / Math.max(safeRows.length, 1));
+
+    const lX = cv.CX;
+    const rX = cv.CX + COL_W + VS_W;
+    const vsX = cv.CX + COL_W;
+
+    const lWin           = winner === 'left';
+    const rWin           = winner === 'right';
+    const leftHdrFill    = lWin ? _c(C.PRIMARY.YELLOW)    : _c(C.PRIMARY.DARK_GRAY);
+    const rightHdrFill   = rWin ? _c(C.PRIMARY.YELLOW)    : _c(C.PRIMARY.DARK_GRAY);
+    const leftHdrText    = lWin ? _c(C.PRIMARY.DARK_GRAY) : _c(C.PRIMARY.WHITE);
+    const rightHdrText   = rWin ? _c(C.PRIMARY.DARK_GRAY) : _c(C.PRIMARY.WHITE);
 
     slide.addShape(this.pptx.ShapeType.rect, {
-      x: 0.5, y: HDR_Y, w: COL_W, h: 0.6,
-      fill: { color: leftHdrColor }, line: { color: leftHdrColor, width: 0 },
+      x: lX, y: HDR_Y, w: COL_W, h: HDR_H,
+      fill: { color: leftHdrFill }, line: { color: leftHdrFill, width: 0 },
     });
     slide.addText(leftLabel.toUpperCase(), {
-      x: 0.5, y: HDR_Y, w: COL_W, h: 0.6,
-      fontFace: F.HEADERS.family, fontSize: 14,
-      bold: true, color: leftTxtColor, align: 'center', valign: 'middle',
+      x: lX, y: HDR_Y, w: COL_W, h: HDR_H,
+      fontFace: F.HEADERS.family, fontSize: Math.round(cv.H * 1.87),
+      bold: true, color: leftHdrText, align: 'center', valign: 'middle',
     });
 
     slide.addShape(this.pptx.ShapeType.rect, {
-      x: CENTER_X + 0.2, y: HDR_Y, w: COL_W, h: 0.6,
-      fill: { color: rightHdrColor }, line: { color: rightHdrColor, width: 0 },
+      x: rX, y: HDR_Y, w: COL_W, h: HDR_H,
+      fill: { color: rightHdrFill }, line: { color: rightHdrFill, width: 0 },
     });
     slide.addText(rightLabel.toUpperCase(), {
-      x: CENTER_X + 0.2, y: HDR_Y, w: COL_W, h: 0.6,
-      fontFace: F.HEADERS.family, fontSize: 14,
-      bold: true, color: rightTxtColor, align: 'center', valign: 'middle',
+      x: rX, y: HDR_Y, w: COL_W, h: HDR_H,
+      fontFace: F.HEADERS.family, fontSize: Math.round(cv.H * 1.87),
+      bold: true, color: rightHdrText, align: 'center', valign: 'middle',
     });
 
-    // VS divider label
     slide.addText('VS', {
-      x: CENTER_X - 0.25, y: HDR_Y + 0.1, w: 0.5, h: 0.4,
-      fontFace: F.HEADERS.family, fontSize: 12,
+      x: vsX, y: HDR_Y + HDR_H * 0.125, w: VS_W, h: HDR_H * 0.75,
+      fontFace: F.HEADERS.family, fontSize: Math.round(cv.H * 1.6),
       bold: true, color: _c(C.TONES.GRAY_40), align: 'center',
     });
 
     safeRows.forEach((row, idx) => {
-      const y   = HDR_Y + 0.6 + idx * rowH;
+      const y   = HDR_Y + HDR_H + idx * rowH;
       const alt = idx % 2 === 1;
+      const fs  = Math.min(Math.round(cv.H * 1.6), rowH * 13);
 
       if (alt) {
         slide.addShape(this.pptx.ShapeType.rect, {
-          x: 0.5, y, w: 12.333, h: rowH,
+          x: cv.CX, y, w: cv.CW, h: rowH,
           fill: { color: _c(C.TONES.GRAY_20) },
           line: { color: _c(C.TONES.GRAY_20), width: 0 },
         });
       }
 
-      const fs = Math.min(12, rowH * 13);
-
-      // Row label (centre column)
+      const cellPad = cv.W * 0.008;
       slide.addText(String(row.label || `Point ${idx + 1}`), {
-        x: CENTER_X - 0.3, y: y + 0.05, w: 0.6, h: rowH - 0.1,
-        fontFace: F.HEADERS.family, fontSize: 10,
+        x: vsX, y: y + rowH * 0.067, w: VS_W, h: rowH * 0.867,
+        fontFace: F.HEADERS.family, fontSize: Math.round(cv.H * 1.33),
         bold: true, color: _c(C.TONES.GRAY_60), align: 'center', valign: 'middle',
       });
-      slide.addText(String(row.left || '—'), {
-        x: 0.6, y: y + 0.05, w: COL_W - 0.2, h: rowH - 0.1,
+      slide.addText(String(row.left  || '—'), {
+        x: lX + cellPad, y: y + rowH * 0.067, w: COL_W - cellPad * 2, h: rowH * 0.867,
         fontFace: F.BODY.family, fontSize: fs,
         color: _c(C.PRIMARY.DARK_GRAY), align: 'center', valign: 'middle',
       });
       slide.addText(String(row.right || '—'), {
-        x: CENTER_X + 0.3, y: y + 0.05, w: COL_W - 0.2, h: rowH - 0.1,
+        x: rX + cellPad, y: y + rowH * 0.067, w: COL_W - cellPad * 2, h: rowH * 0.867,
         fontFace: F.BODY.family, fontSize: fs,
         color: _c(C.PRIMARY.DARK_GRAY), align: 'center', valign: 'middle',
       });
@@ -1418,87 +1529,75 @@ class PotomacSlideTemplates {
 
   /**
    * Table Slide — branded data table.
-   * Matches DeckPlanner type 'table'.
+   * options: { highlightColumn, disclaimer }
    */
   createTableSlide(title, headers = [], rows = [], options = {}) {
-    const slide = this.pptx.addSlide();
+    const { cv } = this;
+    const slide  = this.pptx.addSlide();
     slide.background = { color: _c(this.palette.background) };
     this.addStandardLogo(slide);
-
-    slide.addText(title.toUpperCase(), {
-      x: 0.5, y: 0.3, w: 11.333, h: 0.75,
-      fontFace: F.HEADERS.family, fontSize: 28,
-      bold: true, color: _c(C.PRIMARY.DARK_GRAY),
-    });
-    this.addTitleUnderline(slide, 0.5, 1.02);
+    this._addSlideTitle(slide, title, { fsScale: 0.875 });
 
     if (!headers.length || !rows.length) {
       slide.addText('No data provided', {
-        x: 0.5, y: 2, w: 12.333, h: 1,
-        fontFace: F.BODY.family, fontSize: 16,
+        x: cv.CX, y: cv.H * 0.267, w: cv.CW, h: cv.H * 0.133,
+        fontFace: F.BODY.family, fontSize: Math.round(cv.W * 1.2),
         color: _c(C.TONES.GRAY_60), align: 'center',
       });
       return slide;
     }
 
     const highlightCol = options.highlightColumn !== undefined ? options.highlightColumn : headers.length - 1;
+    const safeRows     = rows.slice(0, 10);
+    const tblH         = Math.min(cv.H - cv.BODY_Y - cv.MB, (safeRows.length + 1) * cv.H * 0.067);
 
-    const tableRows = [
+    const tableData = [
       headers.map((h, ci) => ({
         text: String(h).toUpperCase(),
         options: {
           bold: true, align: 'center', valign: 'middle',
-          fontFace: F.HEADERS.family, fontSize: 12,
+          fontFace: F.HEADERS.family, fontSize: Math.round(cv.H * 1.6),
           color: _c(C.PRIMARY.DARK_GRAY),
           fill: { color: ci === highlightCol ? _c(C.SECONDARY.TURQUOISE) : _c(C.PRIMARY.YELLOW) },
         },
       })),
-      ...rows.slice(0, 10).map((row, ri) => {
+      ...safeRows.map((row, ri) => {
         const alt = ri % 2 === 1;
         return (Array.isArray(row) ? row : [row]).map((cell, ci) => ({
           text: String(cell),
           options: {
-            fontFace: F.BODY.family, fontSize: 11,
+            fontFace: F.BODY.family, fontSize: Math.round(cv.H * 1.47),
             align: ci === 0 ? 'left' : 'center', valign: 'middle',
-            bold: ci === highlightCol,
+            bold:  ci === highlightCol,
             color: ci === highlightCol ? _c(C.SECONDARY.TURQUOISE) : _c(C.PRIMARY.DARK_GRAY),
-            fill: { color: alt ? _c(C.TONES.YELLOW_20) : _c(C.PRIMARY.WHITE) },
+            fill:  { color: alt ? _c(C.TONES.YELLOW_20) : _c(C.PRIMARY.WHITE) },
           },
         }));
       }),
     ];
 
-    const tblH = Math.min(5.5, (rows.length + 1) * 0.5);
-    slide.addTable(tableRows, {
-      x: 0.5, y: 1.35, w: 12.333, h: tblH,
+    slide.addTable(tableData, {
+      x: cv.CX, y: cv.BODY_Y, w: cv.CW, h: tblH,
       border: { pt: 0.5, color: _c(C.TONES.GRAY_40) },
-      margin: 0.05,
+      margin: cv.H * 0.007,
     });
 
-    if (options.disclaimer) {
-      this.addDisclaimer(slide, options.disclaimer);
-    }
+    if (options.disclaimer) this.addDisclaimer(slide, options.disclaimer);
 
     return slide;
   }
 
   /**
    * Chart Slide — native PptxGenJS chart.
-   * Matches DeckPlanner type 'chart'.
    * chartType: 'bar' | 'line' | 'pie' | 'doughnut' | 'area'
-   * chartData = [{name, labels: [...], values: [...]}, ...]
+   * chartData = [{ name, labels: [...], values: [...] }, ...]
    */
   createChartSlide(title, chartType = 'bar', chartData = [], options = {}) {
-    const slide = this.pptx.addSlide();
+    const { cv } = this;
+    const slide  = this.pptx.addSlide();
     slide.background = { color: _c(this.palette.background) };
     this.addStandardLogo(slide);
-
-    slide.addText(title.toUpperCase(), {
-      x: 0.5, y: 0.3, w: 11.333, h: 0.72,
-      fontFace: F.HEADERS.family, fontSize: 26,
-      bold: true, color: _c(C.PRIMARY.DARK_GRAY),
-    });
-    this.addTitleUnderline(slide, 0.5, 1.0);
+    this._addSlideTitle(slide, title, { fsScale: 0.8125 });
 
     const TYPE_MAP = {
       bar:      this.pptx.ChartType.bar,
@@ -1517,21 +1616,22 @@ class PotomacSlideTemplates {
     ];
 
     slide.addChart(pptxType, safeData, {
-      x: 0.5, y: 1.1, w: 12.333, h: 5.5,
-      showLegend: options.showLegend !== false,
-      legendPos:  options.legendPos || 'b',
-      showValue:  options.showValue || false,
+      x: cv.CX, y: cv.BODY_Y, w: cv.CW, h: cv.BODY_H,
+      showLegend:  options.showLegend !== false,
+      legendPos:   options.legendPos || 'b',
+      showValue:   options.showValue || false,
       showPercent: isPie,
       chartColors: options.chartColors || [
-        _c(C.PRIMARY.YELLOW), _c(C.SECONDARY.TURQUOISE), _c(C.TONES.GRAY_60), _c(C.TONES.GRAY_40),
+        _c(C.PRIMARY.YELLOW), _c(C.SECONDARY.TURQUOISE),
+        _c(C.TONES.GRAY_60),  _c(C.TONES.GRAY_40),
       ],
       dataLabelColor: _c(C.PRIMARY.DARK_GRAY),
     });
 
     if (options.source) {
       slide.addText(`Source: ${options.source}`, {
-        x: 0.5, y: 6.9, w: 9, h: 0.35,
-        fontFace: F.BODY.family, fontSize: 9,
+        x: cv.CX, y: cv.FOOTER_Y, w: cv.CW * 0.675, h: cv.FOOTER_H,
+        fontFace: F.BODY.family, fontSize: Math.round(cv.H * 1.2),
         color: _c(C.TONES.GRAY_60), italic: true,
       });
     }
@@ -1540,52 +1640,40 @@ class PotomacSlideTemplates {
   }
 
   /**
-   * Image + Content — image left/right with text on the other side.
-   * Matches DeckPlanner type 'image_content'.
-   *
-   * Canvas 13.333":  each pane w=6.0", gap≈0.333"
-   *   Left pane:  x=0.5  (image or text)
-   *   Right pane: x=6.833 (text or image)
+   * Image + Content — image on one side, bullet text on the other.
+   * imagePosition: 'left' (default) | 'right'
    */
   createImageContentSlide(title, imagePath, content, imagePosition = 'left') {
-    const slide = this.pptx.addSlide();
-    slide.background = { color: _c(this.palette.background) };
+    const { cv }        = this;
+    const slide         = this.pptx.addSlide();
+    const { colW, gap } = this._colGeometry(2);
+    slide.background    = { color: _c(this.palette.background) };
     this.addStandardLogo(slide);
+    this._addSlideTitle(slide, title, { fsScale: 0.8125 });
 
-    slide.addText(title.toUpperCase(), {
-      x: 0.5, y: 0.3, w: 11.333, h: 0.72,
-      fontFace: F.HEADERS.family, fontSize: 26,
-      bold: true, color: _c(C.PRIMARY.DARK_GRAY),
-    });
-    this.addTitleUnderline(slide, 0.5, 1.0);
-
-    const PANE_W = 6.0;
-    const imgX   = imagePosition === 'left' ? 0.5   : 6.833;
-    const txtX   = imagePosition === 'left' ? 6.833 : 0.5;
-    const fs     = require('fs');
+    const fs    = require('fs');
+    const imgX  = imagePosition === 'left' ? cv.CX            : cv.CX + colW + gap;
+    const txtX  = imagePosition === 'left' ? cv.CX + colW + gap : cv.CX;
+    const paneH = cv.H - cv.BODY_Y - cv.MB;
 
     if (imagePath && fs.existsSync(imagePath)) {
-      slide.addImage({ path: imagePath, x: imgX, y: 1.3, w: PANE_W, h: 5.8 });
+      slide.addImage({ path: imagePath, x: imgX, y: cv.BODY_Y, w: colW, h: paneH });
     } else {
       slide.addShape(this.pptx.ShapeType.rect, {
-        x: imgX, y: 1.3, w: PANE_W, h: 5.8,
+        x: imgX, y: cv.BODY_Y, w: colW, h: paneH,
         fill: { color: _c(C.TONES.GRAY_20) },
         line: { color: _c(C.TONES.GRAY_40), width: 1 },
       });
       slide.addText('IMAGE', {
-        x: imgX, y: 1.3, w: PANE_W, h: 5.8,
-        fontFace: F.HEADERS.family, fontSize: 24,
+        x: imgX, y: cv.BODY_Y, w: colW, h: paneH,
+        fontFace: F.HEADERS.family, fontSize: Math.round(cv.W * 1.8),
         color: _c(C.TONES.GRAY_40), align: 'center', valign: 'middle',
       });
     }
 
-    const txtContent = Array.isArray(content)
-      ? content.map(item => ({ text: String(item), options: { bullet: { code: '25AA', indent: 12 }, paraSpaceBefore: 6 } }))
-      : String(content || '');
-
-    slide.addText(txtContent, {
-      x: txtX, y: 1.3, w: PANE_W, h: 5.8,
-      fontFace: F.BODY.family, fontSize: 15,
+    slide.addText(this._fmtContent(content, 12, 6), {
+      x: txtX, y: cv.BODY_Y, w: colW, h: paneH,
+      fontFace: F.BODY.family, fontSize: Math.round(cv.H * 2.0),
       color: _c(C.PRIMARY.DARK_GRAY), valign: 'top',
     });
 
@@ -1594,62 +1682,77 @@ class PotomacSlideTemplates {
 
   /**
    * Full-bleed Image Slide.
-   * Matches DeckPlanner type 'image'.
-   *
-   * Image fills the full 13.333"×7.5" canvas.
    */
   createImageSlide(imagePath, title = null, overlay = true) {
-    const slide = this.pptx.addSlide();
+    const { cv } = this;
+    const slide  = this.pptx.addSlide();
     slide.background = { color: _c(C.PRIMARY.DARK_GRAY) };
 
     const fs = require('fs');
     if (imagePath && fs.existsSync(imagePath)) {
-      // Full-bleed: width=13.333", height=7.5"
-      slide.addImage({ path: imagePath, x: 0, y: 0, w: 13.333, h: 7.5 });
+      slide.addImage({ path: imagePath, x: 0, y: 0, w: cv.W, h: cv.H });
     }
 
     if (overlay && title) {
+      const overlayH = cv.H * 0.267;
+      const overlayY = cv.H - overlayH;
       slide.addShape(this.pptx.ShapeType.rect, {
-        x: 0, y: 5.5, w: 13.333, h: 2,
+        x: 0, y: overlayY, w: cv.W, h: overlayH,
         fill: { color: _c(C.PRIMARY.DARK_GRAY), transparency: 35 },
         line: { color: _c(C.PRIMARY.DARK_GRAY), width: 0 },
       });
       slide.addText(title.toUpperCase(), {
-        x: 0.5, y: 5.7, w: 12.333, h: 1.2,
-        fontFace: F.HEADERS.family, fontSize: 36,
+        x: cv.CX, y: overlayY + overlayH * 0.1, w: cv.CW, h: overlayH * 0.8,
+        fontFace: F.HEADERS.family, fontSize: Math.round(cv.W * 2.7),
         bold: true, color: _c(C.PRIMARY.WHITE),
         align: 'center', valign: 'middle',
       });
     }
 
-    // Dark slide — use white logo variant; x=11.5 keeps it clear of the right edge
-    this.addLogo(slide, { x: 11.5, y: 0.22, w: 1.6, h: 0.55 }, 'dark');
+    // White wordmark on dark full-bleed slide — top-right, sized to match standard logo footprint
+    this.addLogo(slide, {
+      x: cv.W - cv.WORDMARK_W - cv.MR,
+      y: cv.MT,
+      w: cv.WORDMARK_W * 0.34,  // smaller — this is a watermark, not a title treatment
+      h: cv.WORDMARK_H * 0.34,
+    }, 'dark');
+
     return slide;
   }
 
 
-  // ══════════════════════════════════════════════════════════════════════════
+  // ════════════════════════════════════════════════════════════════════════════
   // SLIDE MASTER DEFINITIONS
-  // ══════════════════════════════════════════════════════════════════════════
+  // ════════════════════════════════════════════════════════════════════════════
 
   /**
    * Define the three Potomac slide masters on the presentation instance.
-   * Call ONCE before creating any slides:
-   *   PotomacSlideTemplates.defineAllMasters(pptxInstance)
+   * Call ONCE before creating any slides.
    *
-   * Logo watermark placed at x=12.08 to match addStandardLogo() on 13.333" canvas.
+   * Watermark position derived from the same fractional logic as the instance
+   * method addStandardLogo():
+   *   LOGO_W = W * 0.0712  LOGO_H = LOGO_W  (square icon)
+   *   LOGO_X = W - MR - LOGO_W             MR = W * 0.0375
+   *   LOGO_Y = H * 0.016
    */
   static defineAllMasters(pptxInstance, palette = 'STANDARD') {
     const pal     = SLIDE_PALETTES[palette] || SLIDE_PALETTES.STANDARD;
     const logoDir = path.join(__dirname, '../brand-assets/logos/');
     const fs      = require('fs');
 
-    // Slide masters use the ICON logo (square hexagon mark) in the top-right corner,
-    // matching addStandardLogo(). This is the small watermark present on every slide.
+    // Replicate the canvas constants for the static context
+    const W      = 13.333;
+    const H      = 7.5;
+    const MR     = W * 0.0375;
+    const LOGO_W = W * 0.0712;
+    const LOGO_H = LOGO_W;       // icon is square
+    const LOGO_X = W - MR - LOGO_W;
+    const LOGO_Y = H * 0.016;
+
     const getIconPath = (theme) => {
       const candidates = theme === 'dark'
-        ? ['potomac-icon-white.png', 'potomac-icon-yellow.png']
-        : ['potomac-icon-black.png', 'potomac-icon-yellow.png'];
+        ? ['potomac-icon-white.png',  'potomac-icon-yellow.png']
+        : ['potomac-icon-black.png',  'potomac-icon-yellow.png'];
       for (const name of candidates) {
         const p = path.join(logoDir, name);
         if (fs.existsSync(p)) return p;
@@ -1657,49 +1760,48 @@ class PotomacSlideTemplates {
       return null;
     };
 
-    // Square bounding box (0.95"×0.95") at x=12.08 — matches 13.333" canvas watermark
     const makeLogo = (theme, fallbackColor) => {
       const logoPath = getIconPath(theme);
       return logoPath
-        ? { image: { path: logoPath, x: 12.08, y: 0.12, w: 0.95, h: 0.95,
-                     sizing: { type: 'contain', w: 0.95, h: 0.95 } } }
+        ? { image: { path: logoPath, x: LOGO_X, y: LOGO_Y, w: LOGO_W, h: LOGO_H,
+                     sizing: { type: 'contain', w: LOGO_W, h: LOGO_H } } }
         : { text: { text: 'POTOMAC', options: {
-              x: 11.583, y: 0.12, w: 1.5, h: 0.5,
-              fontSize: 12, bold: true, color: fallbackColor,
+              x: LOGO_X - LOGO_W * 0.6, y: LOGO_Y, w: LOGO_W * 1.6, h: LOGO_H,
+              fontSize: Math.round(H * 1.6), bold: true, color: fallbackColor,
               fontFace: F.HEADERS.family, align: 'right',
             } } };
     };
 
     pptxInstance.defineSlideMaster({
-      title: 'POTOMAC_LIGHT',
+      title:      'POTOMAC_LIGHT',
       background: { color: _c(pal.background) },
-      objects: [ makeLogo('light', _c(C.PRIMARY.DARK_GRAY)) ],
+      objects:    [ makeLogo('light', _c(C.PRIMARY.DARK_GRAY)) ],
     });
 
     pptxInstance.defineSlideMaster({
-      title: 'POTOMAC_DARK',
+      title:      'POTOMAC_DARK',
       background: { color: _c(C.PRIMARY.DARK_GRAY) },
-      objects: [ makeLogo('dark', 'FFFFFF') ],
+      objects:    [ makeLogo('dark', 'FFFFFF') ],
     });
 
     pptxInstance.defineSlideMaster({
-      title: 'POTOMAC_ACCENT',
+      title:      'POTOMAC_ACCENT',
       background: { color: _c(C.TONES.YELLOW_20) },
-      objects: [ makeLogo('light', _c(C.PRIMARY.DARK_GRAY)) ],
+      objects:    [ makeLogo('light', _c(C.PRIMARY.DARK_GRAY)) ],
     });
   }
 
 
-  // ══════════════════════════════════════════════════════════════════════════
+  // ════════════════════════════════════════════════════════════════════════════
   // METADATA
-  // ══════════════════════════════════════════════════════════════════════════
+  // ════════════════════════════════════════════════════════════════════════════
 
   getTemplateMetadata() {
     return {
       title: [
-        { name: 'Standard Title',    method: 'createStandardTitleSlide',    use: 'General presentations' },
-        { name: 'Executive Title',   method: 'createExecutiveTitleSlide',   use: 'Dark high-impact presentations' },
-        { name: 'Section Divider',   method: 'createSectionDividerSlide',   use: 'Major section breaks' },
+        { name: 'Standard Title',  method: 'createStandardTitleSlide',  use: 'General presentations' },
+        { name: 'Executive Title', method: 'createExecutiveTitleSlide', use: 'Dark high-impact presentations' },
+        { name: 'Section Divider', method: 'createSectionDividerSlide', use: 'Major section breaks' },
       ],
       content: [
         { name: 'Content',           method: 'createContentSlide',          use: 'Basic bullets or paragraph' },

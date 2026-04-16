@@ -6,16 +6,20 @@
  *
  * Usage (Node.js CLI, called from Python via subprocess):
  *
- *   node pptxgenjs-renderer.js --input plan.json --output presentation.pptx
+ *   node pptxgenjs-renderer.js --input plan.json --output presentation.pptx [--palette STANDARD|DARK|INVESTMENT|FUNDS]
  *
  * Input JSON format (DeckPlan.to_pptx_specs() output):
  * {
- *   "title": "...",
+ *   "title":    "...",
  *   "audience": "investors",
- *   "tone": "executive",
- *   "palette": "STANDARD",
- *   "slides": [ { slide spec objects } ]
+ *   "tone":     "executive",
+ *   "palette":  "STANDARD",
+ *   "slides":   [ { slide spec objects } ]
  * }
+ *
+ * All layout dimensions are derived at runtime from pptx.presLayout so that
+ * nothing is hardcoded.  Changing pptx.layout automatically propagates to
+ * every helper that asks for W / H.
  *
  * Each slide spec has a "type" field matching DeckPlanner VALID_SLIDE_TYPES.
  */
@@ -27,7 +31,9 @@ const path    = require('path');
 const fs      = require('fs');
 const { PotomacSlideTemplates } = require('./slide-templates.js');
 
+
 // ── CLI argument parsing ────────────────────────────────────────────────────
+
 function parseArgs() {
   const args   = process.argv.slice(2);
   const result = { input: '', output: '', palette: 'STANDARD' };
@@ -41,13 +47,68 @@ function parseArgs() {
 }
 
 
+// ── Layout geometry helper ──────────────────────────────────────────────────
+
+/**
+ * Returns the live slide dimensions from the pptx instance.
+ * All callers use this instead of any literal number so that switching
+ * layouts (LAYOUT_WIDE → custom, etc.) only requires changing one line.
+ *
+ * @param {pptxgen} pptx
+ * @returns {{ W: number, H: number }}
+ */
+function getDims(pptx) {
+  const { width: W, height: H } = pptx.presLayout;
+  return { W, H };
+}
+
+/**
+ * Compute a set of commonly needed geometry values from the slide dimensions.
+ * All values are in inches.  No number literal appears outside this function.
+ *
+ * @param {pptxgen} pptx
+ * @param {object}  [opts]
+ * @param {number}  [opts.marginX=0.4]   - left/right margin
+ * @param {number}  [opts.marginY=0.3]   - top/bottom margin
+ * @param {number}  [opts.titleH=0.65]   - standard title bar height
+ * @param {number}  [opts.gap=0.15]      - standard inter-element gap
+ * @returns {object}
+ */
+function geo(pptx, opts = {}) {
+  const { W, H } = getDims(pptx);
+  const mX    = opts.marginX ?? 0.40;
+  const mY    = opts.marginY ?? 0.30;
+  const titleH = opts.titleH ?? 0.65;
+  const gap    = opts.gap    ?? 0.15;
+
+  const contentX = mX;
+  const contentY = mY + titleH + gap;
+  const contentW = W - mX * 2;
+  const contentH = H - contentY - mY;
+
+  return {
+    W, H,
+    mX, mY,
+    titleH,
+    gap,
+    titleX: mX,
+    titleY: mY,
+    titleW: W - mX * 2,
+    contentX,
+    contentY,
+    contentW,
+    contentH,
+  };
+}
+
+
 // ── Main renderer ───────────────────────────────────────────────────────────
 
 /**
  * Render a deck plan to a PPTX buffer/file.
  *
- * @param {Object} plan   - DeckPlan dict (title, slides[], palette, etc.)
- * @param {string} [outFile] - Optional output path. If omitted returns buffer.
+ * @param {object}  plan       - DeckPlan dict (title, slides[], palette, …)
+ * @param {string}  [outFile]  - Optional output path. Omit to return Buffer.
  * @returns {Promise<Buffer|void>}
  */
 async function renderDeckPlan(plan, outFile = null) {
@@ -55,32 +116,39 @@ async function renderDeckPlan(plan, outFile = null) {
   const palette   = plan.palette || 'STANDARD';
   const templates = new PotomacSlideTemplates(pptx, { palette });
 
-  // Set presentation metadata
+  // ── Presentation metadata ────────────────────────────────────────────────
   pptx.author   = plan.author   || 'Potomac';
   pptx.company  = plan.company  || 'Potomac';
   pptx.title    = plan.title    || 'Potomac Presentation';
   pptx.subject  = plan.audience || '';
   pptx.revision = '1';
 
-  // Standard 10"×7.5" layout
+  // ── Layout — LAYOUT_WIDE = 13.3 × 7.5 in ────────────────────────────────
+  // All downstream code reads pptx.presLayout so this is the single source.
   pptx.layout = 'LAYOUT_WIDE';
 
-  // Define slide masters
+  // ── Slide masters ────────────────────────────────────────────────────────
   PotomacSlideTemplates.defineAllMasters(pptx, palette);
 
+  // ── Slide rendering ──────────────────────────────────────────────────────
   const slides = Array.isArray(plan.slides) ? plan.slides : [];
-  console.log(`🎨 Rendering ${slides.length} slide(s) — palette: ${palette}`);
+  const { W, H } = getDims(pptx);
+  console.log(`🎨 Rendering ${slides.length} slide(s) — palette: ${palette}  layout: ${W}"×${H}"`);
 
   slides.forEach((spec, idx) => {
     try {
-      renderSlide(templates, spec);
+      renderSlide(pptx, templates, spec);
       console.log(`  ✓ Slide ${idx + 1}: ${spec.type} — "${spec.title || '(no title)'}"`);
     } catch (err) {
       console.error(`  ✗ Slide ${idx + 1} failed (${spec.type}): ${err.message} — falling back to content slide`);
-      templates.createContentSlide(spec.title || `Slide ${idx + 1}`, spec.bullets || spec.body_text || '');
+      templates.createContentSlide(
+        spec.title  || `Slide ${idx + 1}`,
+        spec.bullets || spec.body_text || ''
+      );
     }
   });
 
+  // ── Output ───────────────────────────────────────────────────────────────
   if (outFile) {
     await pptx.writeFile({ fileName: outFile });
     console.log(`\n📄 Saved: ${outFile}  (${slides.length} slides)`);
@@ -91,41 +159,58 @@ async function renderDeckPlan(plan, outFile = null) {
 }
 
 
+// ── Slide router ────────────────────────────────────────────────────────────
+
 /**
  * Route a single slide spec to the appropriate template method.
- * Handles all DeckPlanner VALID_SLIDE_TYPES.
+ * `pptx` is passed through so every template can call geo(pptx) and derive
+ * all positions from the live presLayout — no hardcoded inches anywhere.
+ *
+ * @param {pptxgen}               pptx
+ * @param {PotomacSlideTemplates} templates
+ * @param {object}                spec
  */
-function renderSlide(templates, spec) {
-  const type = spec.type || 'content';
+function renderSlide(pptx, templates, spec) {
+  const type = (spec.type || 'content').toLowerCase();
 
   switch (type) {
 
-    // ── Title variants ────────────────────────────────────────────────────
+    // ── Title variants ───────────────────────────────────────────────────
     case 'title': {
       const style = spec.style || spec.background;
       if (style === 'executive' || style === 'dark') {
         return templates.createExecutiveTitleSlide(
-          spec.title, spec.subtitle || spec.tagline, spec.tagline
+          pptx,
+          spec.title,
+          spec.subtitle || spec.tagline || null,
+          spec.tagline  || null
         );
       }
-      return templates.createStandardTitleSlide(spec.title, spec.subtitle);
+      return templates.createStandardTitleSlide(
+        pptx,
+        spec.title,
+        spec.subtitle || null
+      );
     }
 
     case 'section_divider':
       return templates.createSectionDividerSlide(
+        pptx,
         spec.title,
         spec.description || spec.body_text || spec.subtitle || null
       );
 
-    // ── Content variants ──────────────────────────────────────────────────
+    // ── Content variants ─────────────────────────────────────────────────
     case 'content':
       return templates.createContentSlide(
+        pptx,
         spec.title,
-        spec.bullets && spec.bullets.length > 0 ? spec.bullets : (spec.text || spec.body_text || '')
+        bulletOrText(spec)
       );
 
     case 'executive_summary':
       return templates.createExecutiveSummarySlide(
+        pptx,
         spec.headline || spec.title,
         spec.supporting_points || spec.bullets || [],
         spec.body_text || null
@@ -133,9 +218,10 @@ function renderSlide(templates, spec) {
 
     case 'two_column':
       return templates.createTwoColumnSlide(
+        pptx,
         spec.title,
-        spec.left_content  || (spec.columns && spec.columns[0]) || '',
-        spec.right_content || (spec.columns && spec.columns[1]) || '',
+        spec.left_content  || columnAt(spec, 0) || '',
+        spec.right_content || columnAt(spec, 1) || '',
         {
           leftHeader:  spec.left_header  || null,
           rightHeader: spec.right_header || null,
@@ -144,51 +230,60 @@ function renderSlide(templates, spec) {
 
     case 'three_column':
       return templates.createThreeColumnSlide(
+        pptx,
         spec.title,
-        (spec.columns && spec.columns[0]) || spec.left_content   || '',
-        (spec.columns && spec.columns[1]) || spec.center_content || '',
-        (spec.columns && spec.columns[2]) || spec.right_content  || '',
+        spec.left_content   || columnAt(spec, 0) || '',
+        spec.center_content || columnAt(spec, 1) || '',
+        spec.right_content  || columnAt(spec, 2) || '',
         { headers: spec.column_headers || [] }
       );
 
     case 'metrics':
       return templates.createMetricSlide(
+        pptx,
         spec.title,
-        spec.metrics || _bulletsToMetrics(spec.bullets),
+        spec.metrics || bulletsToMetrics(spec.bullets),
         spec.context || null
       );
 
     case 'process':
       return templates.createProcessSlide(
+        pptx,
         spec.title,
-        spec.steps || _bulletsToSteps(spec.bullets),
+        spec.steps || bulletsToSteps(spec.bullets),
         { layout: spec.layout || 'horizontal' }
       );
 
     case 'quote':
       return templates.createQuoteSlide(
+        pptx,
         spec.quote || spec.body_text || '',
         spec.attribution || spec.subtitle || null,
-        spec.context || null
+        spec.context     || null
       );
 
-    // ── New DeckPlanner types ─────────────────────────────────────────────
     case 'card_grid':
       return templates.createCardGridSlide(
+        pptx,
         spec.title,
-        spec.cards || _bulletsToCards(spec.bullets)
+        spec.cards || bulletsToCards(spec.bullets)
       );
 
     case 'icon_grid':
       return templates.createIconGridSlide(
+        pptx,
         spec.title,
-        spec.items || _bulletsToIconItems(spec.bullets)
+        spec.items || bulletsToIconItems(spec.bullets)
       );
 
     case 'hub_spoke':
       return templates.createHubSpokeSlide(
+        pptx,
         spec.title,
-        { title: spec.center_title || 'POTOMAC', subtitle: spec.center_subtitle || '' },
+        {
+          title:    spec.center_title    || 'POTOMAC',
+          subtitle: spec.center_subtitle || '',
+        },
         (spec.nodes || spec.columns || []).map(n =>
           typeof n === 'string' ? { label: n } : n
         )
@@ -196,92 +291,106 @@ function renderSlide(templates, spec) {
 
     case 'timeline':
       return templates.createTimelineSlide(
+        pptx,
         spec.title,
-        spec.milestones || _bulletsToMilestones(spec.bullets)
+        spec.milestones || bulletsToMilestones(spec.bullets)
       );
 
     case 'matrix_2x2':
       return templates.createMatrix2x2Slide(
+        pptx,
         spec.title,
         spec.x_axis_label || '',
         spec.y_axis_label || '',
-        spec.quadrants || []
+        spec.quadrants    || []
       );
 
     case 'scorecard':
       return templates.createScorecardSlide(
+        pptx,
         spec.title,
-        spec.metrics || [],
+        spec.metrics  || [],
         spec.subtitle || null
       );
 
     case 'comparison':
       return templates.createComparisonSlide(
+        pptx,
         spec.title,
         spec.left_label  || 'OPTION A',
         spec.right_label || 'OPTION B',
-        spec.rows || [],
+        spec.rows   || [],
         spec.winner || null
       );
 
     case 'table':
       return templates.createTableSlide(
+        pptx,
         spec.title,
         spec.headers      || spec.table_headers || [],
         spec.rows         || spec.table_rows    || [],
-        { highlightColumn: spec.highlight_column, disclaimer: spec.disclaimer }
+        {
+          highlightColumn: spec.highlight_column ?? null,
+          disclaimer:      spec.disclaimer       || null,
+        }
       );
 
     case 'chart':
       return templates.createChartSlide(
+        pptx,
         spec.title,
-        spec.chart_type || 'bar',
-        spec.chart_data || spec.data || [],
+        spec.chart_type  || 'bar',
+        spec.chart_data  || spec.data || [],
         {
-          showLegend:  spec.show_legend,
-          showValue:   spec.show_value,
-          source:      spec.source || null,
+          showLegend:  spec.show_legend  ?? true,
+          showValue:   spec.show_value   ?? false,
+          source:      spec.source       || null,
           chartColors: spec.chart_colors || null,
         }
       );
 
     case 'image_content':
       return templates.createImageContentSlide(
+        pptx,
         spec.title,
-        spec.image_path || null,
-        spec.bullets && spec.bullets.length > 0 ? spec.bullets : (spec.text || spec.body_text || ''),
+        spec.image_path    || null,
+        bulletOrText(spec),
         spec.image_position || 'left'
       );
 
     case 'image':
       return templates.createImageSlide(
+        pptx,
         spec.image_path || null,
-        spec.title || null,
-        spec.overlay !== false
+        spec.title      || null,
+        spec.overlay    !== false
       );
 
-    // ── Closing variants ──────────────────────────────────────────────────
+    // ── Closing variants ─────────────────────────────────────────────────
     case 'closing':
       return templates.createClosingSlide(
-        spec.title || 'THANK YOU',
+        pptx,
+        spec.title        || 'THANK YOU',
         spec.contact_info || null
       );
 
     case 'call_to_action':
     case 'cta':
       return templates.createCallToActionSlide(
+        pptx,
         spec.title,
-        spec.action_text || spec.body_text || '',
+        spec.action_text  || spec.body_text    || '',
         spec.contact_info || 'potomac.com | (305) 824-2702 | info@potomac.com',
-        spec.button_text || 'GET STARTED'
+        spec.button_text  || 'GET STARTED'
       );
 
-    // ── Fallback ──────────────────────────────────────────────────────────
+    // ── Fallback ─────────────────────────────────────────────────────────
     default:
-      console.warn(`  ⚠  Unknown slide type "${type}", using content slide`);
+      console.warn(`  ⚠  Unknown slide type "${type}", falling back to content slide`);
       return templates.createContentSlide(
+        pptx,
         spec.title || 'SLIDE',
-        spec.bullets && spec.bullets.length > 0 ? spec.bullets : (spec.body_text || spec.text || '')
+        bulletOrText(spec)
       );
   }
 }
@@ -289,38 +398,92 @@ function renderSlide(templates, spec) {
 
 // ── Data coercion helpers ───────────────────────────────────────────────────
 
-function _bulletsToMetrics(bullets = []) {
+/**
+ * Return bullets array if non-empty, else fall back to body text string.
+ * @param {object} spec
+ * @returns {string[]|string}
+ */
+function bulletOrText(spec) {
+  if (Array.isArray(spec.bullets) && spec.bullets.length > 0) return spec.bullets;
+  return spec.text || spec.body_text || '';
+}
+
+/**
+ * Safe column accessor — returns spec.columns[idx] or empty string.
+ * @param {object} spec
+ * @param {number} idx
+ * @returns {string}
+ */
+function columnAt(spec, idx) {
+  return (Array.isArray(spec.columns) && spec.columns[idx]) || '';
+}
+
+/**
+ * Split "VALUE : LABEL" bullets into metric objects.
+ * @param {string[]} bullets
+ * @returns {{ value: string, label: string }[]}
+ */
+function bulletsToMetrics(bullets = []) {
   return bullets.slice(0, 6).map(b => {
     const parts = String(b).split(':');
-    return { value: parts[0].trim(), label: (parts[1] || '').trim() };
+    return {
+      value: parts[0].trim(),
+      label: parts.slice(1).join(':').trim(),
+    };
   });
 }
 
-function _bulletsToSteps(bullets = []) {
+/**
+ * Convert plain bullets into numbered step objects.
+ * @param {string[]} bullets
+ * @returns {{ title: string, description: string }[]}
+ */
+function bulletsToSteps(bullets = []) {
   return bullets.slice(0, 5).map((b, i) => ({
-    title: `Step ${i + 1}`,
+    title:       `Step ${i + 1}`,
     description: String(b),
   }));
 }
 
-function _bulletsToCards(bullets = []) {
+/**
+ * Convert plain bullets into card objects with alternating palette colors.
+ * @param {string[]} bullets
+ * @returns {{ title: string, text: string, color: string }[]}
+ */
+function bulletsToCards(bullets = []) {
   const colors = ['yellow', 'dark', 'white', 'turquoise'];
-  return bullets.slice(0, 4).map((b, i) => ({
-    title: String(b).split(':')[0].trim(),
-    text:  String(b).split(':').slice(1).join(':').trim() || '',
-    color: colors[i % 4],
-  }));
+  return bullets.slice(0, 4).map((b, i) => {
+    const [head, ...rest] = String(b).split(':');
+    return {
+      title: head.trim(),
+      text:  rest.join(':').trim(),
+      color: colors[i % colors.length],
+    };
+  });
 }
 
-function _bulletsToIconItems(bullets = []) {
-  return bullets.slice(0, 6).map((b, i) => ({
-    icon:        String(i + 1),
-    title:       String(b).split(':')[0].trim(),
-    description: String(b).split(':').slice(1).join(':').trim() || '',
-  }));
+/**
+ * Convert plain bullets into icon-grid item objects.
+ * @param {string[]} bullets
+ * @returns {{ icon: string, title: string, description: string }[]}
+ */
+function bulletsToIconItems(bullets = []) {
+  return bullets.slice(0, 6).map((b, i) => {
+    const [head, ...rest] = String(b).split(':');
+    return {
+      icon:        String(i + 1),
+      title:       head.trim(),
+      description: rest.join(':').trim(),
+    };
+  });
 }
 
-function _bulletsToMilestones(bullets = []) {
+/**
+ * Convert plain bullets into timeline milestone objects.
+ * @param {string[]} bullets
+ * @returns {{ label: string, status: string }[]}
+ */
+function bulletsToMilestones(bullets = []) {
   return bullets.slice(0, 8).map(b => ({
     label:  String(b),
     status: 'pending',
@@ -328,12 +491,30 @@ function _bulletsToMilestones(bullets = []) {
 }
 
 
+// ── Exported geometry utilities (consumed by slide-templates.js) ────────────
+// slide-templates.js should import { geo, getDims } and use them instead of
+// any literal inch values so that all slides remain layout-agnostic.
+
+module.exports = {
+  renderDeckPlan,
+  renderSlide,
+  // geometry helpers — re-exported so slide-templates.js can share them
+  geo,
+  getDims,
+};
+
+
 // ── CLI entry point ─────────────────────────────────────────────────────────
+
 if (require.main === module) {
   const args = parseArgs();
 
   if (!args.input || !args.output) {
-    console.error('Usage: node pptxgenjs-renderer.js --input plan.json --output output.pptx [--palette STANDARD|DARK|INVESTMENT|FUNDS]');
+    console.error(
+      'Usage: node pptxgenjs-renderer.js ' +
+      '--input plan.json --output output.pptx ' +
+      '[--palette STANDARD|DARK|INVESTMENT|FUNDS]'
+    );
     process.exit(1);
   }
 
@@ -344,6 +525,8 @@ if (require.main === module) {
   }
 
   const plan = JSON.parse(fs.readFileSync(planPath, 'utf8'));
+
+  // CLI --palette flag overrides whatever is in the JSON
   if (args.palette) plan.palette = args.palette;
 
   renderDeckPlan(plan, path.resolve(args.output))
@@ -353,6 +536,3 @@ if (require.main === module) {
       process.exit(1);
     });
 }
-
-
-module.exports = { renderDeckPlan, renderSlide };

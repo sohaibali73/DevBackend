@@ -16,6 +16,14 @@ Usage
     if result.success:
         entry = store_file(result.data, result.filename, "pptx", "generate_pptx")
         download_url = f"/files/{entry.file_id}/download"
+
+Layout
+------
+All slides use PptxGenJS LAYOUT_WIDE (13.333" × 7.5").
+See: https://gitbrent.github.io/PptxGenJS/docs/usage-pres-options/
+
+Every dimension inside the JS builder is derived at runtime from SLIDE_W / SLIDE_H
+and the margin constants — there is no hardcoded positional math.
 """
 
 from __future__ import annotations
@@ -28,7 +36,7 @@ import subprocess
 import tempfile
 import time
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional
 
 logger = logging.getLogger(__name__)
 
@@ -49,1530 +57,95 @@ _LOGO_FILES = [
     "potomac-icon-yellow.png",
 ]
 
-# ── Slide Dimension Constants ─────────────────────────────────────────────────
-# Standard PowerPoint 16:9 widescreen dimensions
-SLIDE_WIDTH  = 13.333   # inches
-SLIDE_HEIGHT = 7.5      # inches
-SLIDE_LAYOUT = 'LAYOUT_WIDE'
+# ── Slide Dimension Constants (documentation only — JS derives these itself) ──
+SLIDE_WIDTH  = 13.333   # inches  (LAYOUT_WIDE)
+SLIDE_HEIGHT = 7.5      # inches  (LAYOUT_WIDE)
 
 # ── Brand Palette ─────────────────────────────────────────────────────────────
-YELLOW     = 'FEC00F'
-DARK_GRAY  = '212121'
-WHITE      = 'FFFFFF'
-GRAY_60    = '999999'
-GRAY_20    = 'DDDDDD'
-YELLOW_20  = 'FEF7D8'
+YELLOW        = 'FEC00F'
+DARK_GRAY     = '212121'
+WHITE         = 'FFFFFF'
+GRAY_60       = '999999'
+GRAY_20       = 'DDDDDD'
+YELLOW_20     = 'FEF7D8'
 SUCCESS_GREEN = '22C55E'
-ALERT_RED   = 'EB2F5C'
+ALERT_RED     = 'EB2F5C'
 
 # ── Brand Fonts ───────────────────────────────────────────────────────────────
-FONT_H = 'Rajdhani'    # Headline font - ALWAYS ALL CAPS per Potomac brand
+FONT_H = 'Rajdhani'    # Headline font — ALWAYS ALL CAPS per Potomac brand
 FONT_B = 'Quicksand'   # Body / caption font
 
 
-# ── Embedded Node.js presentation builder ────────────────────────────────────
+# ─────────────────────────────────────────────────────────────────────────────
+# Embedded Node.js presentation builder
+# Every position is computed from the top-level dimension/margin constants.
+# NO hardcoded coordinate numbers appear below those constants.
+# ─────────────────────────────────────────────────────────────────────────────
 _BUILDER_SCRIPT = r"""
 'use strict';
 const fs      = require('fs');
 const path    = require('path');
 const pptxgen = require('pptxgenjs');
 
-// ── Constants (from Python) ───────────────────────────────────────────────────
+// ═══════════════════════════════════════════════════════════════════════════
+// SLIDE CANVAS  —  LAYOUT_WIDE  (PptxGenJS built-in, 13.333" × 7.5")
+// https://gitbrent.github.io/PptxGenJS/docs/usage-pres-options/
+// Every coordinate in this file is derived from these two numbers.
+// ═══════════════════════════════════════════════════════════════════════════
 const SLIDE_W = 13.333;
 const SLIDE_H = 7.5;
-
-// ── Brand palette ─────────────────────────────────────────────────────────────
-const YELLOW     = 'FEC00F';
-const DARK_GRAY  = '212121';
-const WHITE      = 'FFFFFF';
-const GRAY_60    = '999999';
-const GRAY_20    = 'DDDDDD';
-const YELLOW_20  = 'FEF7D8';
-const GREEN      = '22C55E';
-const RED        = 'EB2F5C';
-
-// ── Brand fonts ──────────────────────────────────────────────────────────────
-const FONT_H = 'Rajdhani';
-const FONT_B = 'Quicksand';
-
-// ── Logos ─────────────────────────────────────────────────────────────────────
-const assetsDir = path.join(__dirname, 'assets');
-function loadLogoData(name) {
-  const p = path.join(assetsDir, name);
-  if (fs.existsSync(p)) {
-    return 'data:image/png;base64,' + fs.readFileSync(p).toString('base64');
-  }
-  return null;
-}
-const LOGOS = {
-  full:   loadLogoData('potomac-full-logo.png'),
-  black:  loadLogoData('potomac-icon-black.png'),
-  yellow: loadLogoData('potomac-icon-yellow.png'),
-};
-
-// ── Logo dimensions cache (pre-computed for each logo variant) ──────────────
-const LOGO_DIMS = {
-  // Store natural dimensions if available, otherwise use common ratios
-  full:   { aspect: 3.6 },   // Full logo is wider
-  black:  { aspect: 1.0 },   // Icon is square
-  yellow: { aspect: 1.0 },   // Icon is square
-};
-
-// ── Logo helper - NEVER stretches logos ──────────────────────────────────────
-// Calculate display dimensions that preserve aspect ratio
-function getLogoDisplayDims(variant, maxW, maxH) {
-  const dims = LOGO_DIMS[variant] || LOGO_DIMS.full;
-  const aspect = dims.aspect;
-
-  // Calculate the largest size that fits within maxW x maxH while preserving aspect ratio
-  let w, h;
-  if (maxW / maxH > aspect) {
-    // Constrained by height
-    h = maxH;
-    w = h * aspect;
-  } else {
-    // Constrained by width
-    w = maxW;
-    h = w / aspect;
-  }
-  return { w, h };
-}
-
-function addLogo(slide, x, y, maxW, maxH, variant) {
-  const data = variant === 'black'  ? LOGOS.black  :
-               variant === 'yellow' ? LOGOS.yellow :
-               LOGOS.full;
-  if (data) {
-    const { w, h } = getLogoDisplayDims(variant, maxW, maxH);
-    // Center within the bounding box
-    const xOff = x + (maxW - w) / 2;
-    const yOff = y + (maxH - h) / 2;
-    slide.addImage({ data, x: xOff, y: yOff, w, h });
-  } else {
-    slide.addText('POTOMAC', {
-      x, y, maxW, maxH, fontFace: FONT_H, fontSize: 14, bold: true,
-      color: DARK_GRAY, align: 'center', valign: 'middle'
-    });
-  }
-}
-
-// ── Create presentation ─────────────────────────────────────────────────────
-const spec = JSON.parse(fs.readFileSync('spec.json', 'utf8'));
-const pres = new pptxgen();
-pres.author  = 'Potomac';
-pres.company = 'Potomac';
-pres.title   = spec.title || 'POTOMAC PRESENTATION';
-pres.defineLayout({ name: 'WIDE', width: 13.333, height: 7.5 });
-pres.layout  = 'WIDE';
-
-// ── Theme helper ──────────────────────────────────────────────────────────────
-function getTheme(d) {
-  const dark = d.background === 'dark' || d.theme === 'dark';
-  return {
-    dark,
-    bg:       dark ? DARK_GRAY : WHITE,
-    titleClr: dark ? WHITE     : DARK_GRAY,
-    bodyClr:  dark ? 'CCCCCC'  : DARK_GRAY,
-    muted:    dark ? '888888'  : GRAY_60,
-    cardBg:   dark ? '323232'  : 'F0F0F0',
-    border:   dark ? '505050'  : GRAY_20,
-    logo:     dark ? 'yellow'  : 'full',
-  };
-}
-
-// ── Layout constants (flexible grid system) ──────────────────────────────────
-const MARGIN = { left: 0.5, right: 0.5, top: 0.3, bottom: 0.3 };
-const LOGO_AREA = { x: 11.5, y: 0.15, w: 1.5, h: 0.6 };
-const CONTENT_W = SLIDE_W - MARGIN.left - MARGIN.right;  // 12.333"
-const TITLE_W   = LOGO_AREA.x - MARGIN.left - 0.2;      // 10.8" — title row stays clear of top-right logo
-const TITLE_AREA_H = 0.9;
-const TITLE_UNDERLINE_H = 0.06;
-
-// ── Slide builders ────────────────────────────────────────────────────────────
-
-// Title Slide
-function buildTitleSlide(d) {
-  const slide  = pres.addSlide();
-  const isExec = (d.style === 'executive');
-  const t     = getTheme(d);
-  slide.background = { color: t.bg };
-
-  // Logo with proper aspect ratio preservation
-  const logoBox = { x: 5.77, y: 0.45, w: 1.8, h: 1.5 };
-  addLogo(slide, logoBox.x, logoBox.y, logoBox.w, logoBox.h, isExec ? 'yellow' : 'full');
-
-  // Title
-  slide.addText((d.title || '').toUpperCase(), {
-    x: MARGIN.left, y: 2.4, w: CONTENT_W, h: 1.5,
-    fontFace: FONT_H, fontSize: 44, bold: true,
-    color: t.titleClr, align: 'center', valign: 'middle'
-  });
-
-  if (d.subtitle) {
-    slide.addText(d.subtitle, {
-      x: MARGIN.left, y: 4.1, w: CONTENT_W, h: 0.9,
-      fontFace: FONT_B, fontSize: 20, italic: isExec,
-      color: isExec ? YELLOW : GRAY_60, align: 'center', valign: 'middle'
-    });
-  }
-
-  // Accent bar
-  slide.addShape(pres.shapes.RECTANGLE, {
-    x: 0.5, y: 5.5, w: CONTENT_W, h: 0.08, fill: { color: YELLOW }
-  });
-
-  const tagline = d.tagline || (isExec ? 'Built to Conquer Risk' : null);
-  if (tagline) {
-    slide.addText(tagline, {
-      x: MARGIN.left, y: 5.8, w: CONTENT_W, h: 0.5,
-      fontFace: FONT_B, fontSize: 15, italic: true,
-      color: YELLOW, align: 'center', valign: 'middle'
-    });
-  }
-  return slide;
-}
-
-// Content Slide with bullets
-function buildContentSlide(d) {
-  const slide = pres.addSlide();
-  const t     = getTheme(d);
-  slide.background = { color: t.bg };
-
-  // Logo
-  addLogo(slide, LOGO_AREA.x, LOGO_AREA.y, LOGO_AREA.w, LOGO_AREA.h, t.logo);
-
-  // Left accent bar
-  slide.addShape(pres.shapes.RECTANGLE, {
-    x: 0, y: 0, w: 0.15, h: SLIDE_H, fill: { color: YELLOW }
-  });
-
-  // Title
-  const titleY = MARGIN.top + 0.1;
-  slide.addText((d.title || '').toUpperCase(), {
-    x: MARGIN.left, y: titleY, w: CONTENT_W, h: TITLE_AREA_H,
-    fontFace: FONT_H, fontSize: 30, bold: true,
-    color: t.titleClr, valign: 'middle'
-  });
-
-  // Title underline
-  slide.addShape(pres.shapes.RECTANGLE, {
-    x: MARGIN.left, y: titleY + TITLE_AREA_H, w: 2.5, h: TITLE_UNDERLINE_H, fill: { color: YELLOW }
-  });
-
-  const contentY = titleY + TITLE_AREA_H + TITLE_UNDERLINE_H + 0.2;
-  const contentH = SLIDE_H - contentY - MARGIN.bottom;
-  const bullets = d.bullets || (Array.isArray(d.content) ? d.content : null);
-  const text    = d.text   || (!Array.isArray(d.content) ? d.content : null);
-
-  if (bullets && bullets.length > 0) {
-    const items = bullets.map(b => ({
-      text: String(b),
-      options: { bullet: { type: 'bullet' }, paraSpaceBef: 6, paraSpaceAft: 6 }
-    }));
-    slide.addText(items, {
-      x: MARGIN.left, y: contentY, w: CONTENT_W, h: contentH,
-      fontFace: FONT_B, fontSize: 18, color: t.bodyClr, valign: 'top'
-    });
-  } else if (text) {
-    slide.addText(String(text), {
-      x: MARGIN.left, y: contentY, w: CONTENT_W, h: contentH,
-      fontFace: FONT_B, fontSize: 16, color: t.bodyClr, valign: 'top'
-    });
-  }
-  return slide;
-}
-
-// Two Column Slide
-function buildTwoColumnSlide(d) {
-  const slide = pres.addSlide();
-  const t     = getTheme(d);
-  slide.background = { color: t.bg };
-
-  addLogo(slide, LOGO_AREA.x, LOGO_AREA.y, LOGO_AREA.w, LOGO_AREA.h, t.logo);
-  slide.addShape(pres.shapes.RECTANGLE, {
-    x: 0, y: 0, w: 0.15, h: SLIDE_H, fill: { color: YELLOW }
-  });
-
-  const titleY = MARGIN.top + 0.1;
-  slide.addText((d.title || '').toUpperCase(), {
-    x: MARGIN.left, y: titleY, w: CONTENT_W, h: TITLE_AREA_H,
-    fontFace: FONT_H, fontSize: 26, bold: true, color: t.titleClr, valign: 'middle'
-  });
-  slide.addShape(pres.shapes.RECTANGLE, {
-    x: MARGIN.left, y: titleY + TITLE_AREA_H, w: 2.5, h: TITLE_UNDERLINE_H, fill: { color: YELLOW }
-  });
-
-  const gap     = 0.6;
-  const colW    = (CONTENT_W - gap) / 2;
-  const lX      = MARGIN.left;
-  const rX      = lX + colW + gap;
-  const hasHdrs = d.left_header || d.right_header;
-  const contentY = titleY + TITLE_AREA_H + TITLE_UNDERLINE_H + 0.25;
-
-  if (d.left_header) {
-    slide.addText(String(d.left_header), {
-      x: lX, y: contentY, w: colW, h: 0.42,
-      fontFace: FONT_H, fontSize: 14, bold: true, color: YELLOW, valign: 'middle'
-    });
-  }
-  if (d.right_header) {
-    slide.addText(String(d.right_header), {
-      x: rX, y: contentY, w: colW, h: 0.42,
-      fontFace: FONT_H, fontSize: 14, bold: true, color: YELLOW, valign: 'middle'
-    });
-  }
-
-  const cy = hasHdrs ? contentY + 0.55 : contentY;
-  const ch = SLIDE_H - cy - MARGIN.bottom;
-  const lT = d.left_content  || (d.columns && d.columns[0]) || '';
-  const rT = d.right_content || (d.columns && d.columns[1]) || '';
-
-  slide.addText(String(lT), {
-    x: lX, y: cy, w: colW, h: ch, fontFace: FONT_B, fontSize: 15, color: t.bodyClr, valign: 'top'
-  });
-
-  // Divider
-  slide.addShape(pres.shapes.RECTANGLE, {
-    x: lX + colW + gap / 2 - 0.02, y: contentY - 0.2, w: 0.04, h: ch + 0.2, fill: { color: GRAY_20 }
-  });
-
-  slide.addText(String(rT), {
-    x: rX, y: cy, w: colW, h: ch, fontFace: FONT_B, fontSize: 15, color: t.bodyClr, valign: 'top'
-  });
-  return slide;
-}
-
-// Three Column Slide
-function buildThreeColumnSlide(d) {
-  const slide = pres.addSlide();
-  const t     = getTheme(d);
-  slide.background = { color: t.bg };
-
-  addLogo(slide, LOGO_AREA.x, LOGO_AREA.y, LOGO_AREA.w, LOGO_AREA.h, t.logo);
-  slide.addShape(pres.shapes.RECTANGLE, {
-    x: 0, y: 0, w: 0.15, h: SLIDE_H, fill: { color: YELLOW }
-  });
-
-  const titleY = MARGIN.top + 0.1;
-  slide.addText((d.title || '').toUpperCase(), {
-    x: MARGIN.left, y: titleY, w: CONTENT_W, h: TITLE_AREA_H,
-    fontFace: FONT_H, fontSize: 24, bold: true, color: t.titleClr, valign: 'middle'
-  });
-  slide.addShape(pres.shapes.RECTANGLE, {
-    x: MARGIN.left, y: titleY + TITLE_AREA_H, w: 2.5, h: TITLE_UNDERLINE_H, fill: { color: YELLOW }
-  });
-
-  const columns = d.columns || [];
-  const headers = d.column_headers || [];
-  const gap     = 0.25;
-  const colW    = (CONTENT_W - gap * 2) / 3;
-  const contentY = titleY + TITLE_AREA_H + TITLE_UNDERLINE_H + 0.25;
-
-  for (let i = 0; i < 3; i++) {
-    const xPos = MARGIN.left + i * (colW + gap);
-    if (headers[i]) {
-      slide.addShape(pres.shapes.RECTANGLE, {
-        x: xPos, y: contentY, w: colW, h: 0.45, fill: { color: YELLOW }
-      });
-      slide.addText(String(headers[i]), {
-        x: xPos, y: contentY, w: colW, h: 0.45,
-        fontFace: FONT_H, fontSize: 13, bold: true,
-        color: DARK_GRAY, align: 'center', valign: 'middle'
-      });
-    }
-    const cY = headers[i] ? contentY + 0.55 : contentY;
-    const cH = SLIDE_H - cY - MARGIN.bottom;
-    slide.addText(String(columns[i] || ''), {
-      x: xPos, y: cY, w: colW, h: cH,
-      fontFace: FONT_B, fontSize: 13, color: t.bodyClr, valign: 'top'
-    });
-  }
-  return slide;
-}
-
-// Metrics / KPI Slide
-function buildMetricsSlide(d) {
-  const slide = pres.addSlide();
-  const t     = getTheme(d);
-  slide.background = { color: t.bg };
-
-  addLogo(slide, LOGO_AREA.x, LOGO_AREA.y, LOGO_AREA.w, LOGO_AREA.h, t.logo);
-  slide.addShape(pres.shapes.RECTANGLE, {
-    x: 0, y: 0, w: 0.15, h: SLIDE_H, fill: { color: YELLOW }
-  });
-
-  const titleY = MARGIN.top + 0.1;
-  slide.addText((d.title || '').toUpperCase(), {
-    x: MARGIN.left, y: titleY, w: CONTENT_W, h: TITLE_AREA_H,
-    fontFace: FONT_H, fontSize: 28, bold: true, color: t.titleClr, valign: 'middle'
-  });
-  slide.addShape(pres.shapes.RECTANGLE, {
-    x: MARGIN.left, y: titleY + TITLE_AREA_H, w: 2.5, h: TITLE_UNDERLINE_H, fill: { color: YELLOW }
-  });
-
-  const metrics  = d.metrics || [];
-  const perRow   = Math.min(3, Math.max(1, metrics.length));
-  const mW       = CONTENT_W / perRow;
-  const startY   = titleY + TITLE_AREA_H + TITLE_UNDERLINE_H + 0.7;
-  const bottomR  = (d.context ? 0.8 : 0) + MARGIN.bottom;
-  const mH       = SLIDE_H - startY - bottomR;
-
-  metrics.forEach((m, i) => {
-    const row  = Math.floor(i / perRow);
-    const col  = i % perRow;
-    const xPos = MARGIN.left + col * mW + 0.1;
-    const yPos = startY + row * (mH / Math.ceil(metrics.length / perRow));
-
-    slide.addText(String(m.value || ''), {
-      x: xPos, y: yPos, w: mW - 0.2, h: mH * 0.55,
-      fontFace: FONT_H, fontSize: 48, bold: true,
-      color: YELLOW, align: 'center', valign: 'middle'
-    });
-    slide.addText(String(m.label || ''), {
-      x: xPos, y: yPos + mH * 0.55, w: mW - 0.2, h: mH * 0.45,
-      fontFace: FONT_B, fontSize: 14, color: t.muted, align: 'center'
-    });
-  });
-
-  if (d.context) {
-    slide.addText(String(d.context), {
-      x: MARGIN.left, y: SLIDE_H - 0.8, w: CONTENT_W, h: 0.5,
-      fontFace: FONT_B, fontSize: 11, italic: true, color: t.muted, align: 'center'
-    });
-  }
-  return slide;
-}
-
-// Process / Steps Slide
-function buildProcessSlide(d) {
-  const slide = pres.addSlide();
-  const t     = getTheme(d);
-  slide.background = { color: t.bg };
-
-  addLogo(slide, LOGO_AREA.x, LOGO_AREA.y, LOGO_AREA.w, LOGO_AREA.h, t.logo);
-  slide.addShape(pres.shapes.RECTANGLE, {
-    x: 0, y: 0, w: 0.15, h: SLIDE_H, fill: { color: YELLOW }
-  });
-
-  const titleY = MARGIN.top + 0.1;
-  slide.addText((d.title || '').toUpperCase(), {
-    x: MARGIN.left, y: titleY, w: CONTENT_W, h: TITLE_AREA_H,
-    fontFace: FONT_H, fontSize: 26, bold: true, color: t.titleClr, valign: 'middle'
-  });
-  slide.addShape(pres.shapes.RECTANGLE, {
-    x: MARGIN.left, y: titleY + TITLE_AREA_H, w: 2.5, h: TITLE_UNDERLINE_H, fill: { color: YELLOW }
-  });
-
-  const steps = d.steps || [];
-  const n     = Math.max(1, steps.length);
-  const stepW = CONTENT_W / n;
-  const r     = 0.3;
-  const cy    = 2.5;
-
-  steps.forEach((step, i) => {
-    const xPos = MARGIN.left + i * stepW;
-    const cx   = xPos + stepW / 2 - r;
-
-    slide.addShape(pres.shapes.ELLIPSE, {
-      x: cx, y: cy, w: r * 2, h: r * 2,
-      fill: { color: YELLOW }, line: { color: YELLOW }
-    });
-    slide.addText(String(i + 1), {
-      x: cx, y: cy, w: r * 2, h: r * 2,
-      fontFace: FONT_H, fontSize: 16, bold: true,
-      color: DARK_GRAY, align: 'center', valign: 'middle'
-    });
-
-    if (i < steps.length - 1) {
-      slide.addShape(pres.shapes.RECTANGLE, {
-        x: cx + r * 2, y: cy + r - 0.02,
-        w: stepW - r * 2, h: 0.04, fill: { color: GRAY_20 }
-      });
-    }
-
-    slide.addText(String(step.title || '').toUpperCase(), {
-      x: xPos, y: cy + r * 2 + 0.15, w: stepW - 0.05, h: 0.6,
-      fontFace: FONT_H, fontSize: 12, bold: true, color: t.titleClr, align: 'center'
-    });
-    slide.addText(String(step.description || ''), {
-      x: xPos, y: cy + r * 2 + 0.82, w: stepW - 0.05, h: 2.8,
-      fontFace: FONT_B, fontSize: 11, color: t.muted, align: 'center', valign: 'top'
-    });
-  });
-  return slide;
-}
-
-// Quote Slide
-function buildQuoteSlide(d) {
-  const slide = pres.addSlide();
-  slide.background = { color: YELLOW_20 };
-
-  addLogo(slide, LOGO_AREA.x, LOGO_AREA.y, LOGO_AREA.w, LOGO_AREA.h, 'full');
-
-  slide.addText('"', {
-    x: 0.4, y: 1.1, w: 1.2, h: 1.4,
-    fontFace: FONT_H, fontSize: 96, bold: true,
-    color: YELLOW, align: 'center', valign: 'middle'
-  });
-  slide.addText(String(d.quote || ''), {
-    x: 1.4, y: 1.8, w: CONTENT_W + 0.1, h: 3.0,
-    fontFace: FONT_B, fontSize: 22, italic: true,
-    color: DARK_GRAY, align: 'center', valign: 'middle'
-  });
-  if (d.attribution) {
-    slide.addText('— ' + String(d.attribution), {
-      x: 1.4, y: 5.0, w: CONTENT_W + 0.1, h: 0.7,
-      fontFace: FONT_H, fontSize: 16, bold: true, color: GRAY_60, align: 'center'
-    });
-  }
-  if (d.context) {
-    slide.addText(String(d.context), {
-      x: 1.4, y: 5.8, w: CONTENT_W + 0.1, h: 0.5,
-      fontFace: FONT_B, fontSize: 12, italic: true, color: GRAY_60, align: 'center'
-    });
-  }
-  return slide;
-}
-
-// Section Divider Slide
-function buildSectionDividerSlide(d) {
-  const slide = pres.addSlide();
-  const t     = getTheme(d);
-  slide.background = { color: t.bg };
-
-  addLogo(slide, LOGO_AREA.x, LOGO_AREA.y, LOGO_AREA.w, LOGO_AREA.h, t.logo);
-
-  slide.addShape(pres.shapes.RECTANGLE, {
-    x: 0, y: 0, w: 0.45, h: SLIDE_H, fill: { color: YELLOW }
-  });
-  slide.addText((d.title || '').toUpperCase(), {
-    x: 0.8, y: 2.4, w: CONTENT_W - 0.3, h: 1.6,
-    fontFace: FONT_H, fontSize: 42, bold: true, color: t.titleClr, valign: 'middle'
-  });
-  if (d.description) {
-    slide.addText(String(d.description), {
-      x: 0.8, y: 4.2, w: CONTENT_W - 0.3, h: 1.5,
-      fontFace: FONT_B, fontSize: 18, color: t.muted, valign: 'middle'
-    });
-  }
-  return slide;
-}
-
-// CTA / Call to Action Slide
-function buildCtaSlide(d) {
-  const slide = pres.addSlide();
-  const t     = getTheme(d);
-  slide.background = { color: t.bg };
-
-  const logoBox = { x: 5.77, y: 0.4, w: 1.8, h: 1.0 };
-  addLogo(slide, logoBox.x, logoBox.y, logoBox.w, logoBox.h, 'full');
-
-  slide.addText((d.title || '').toUpperCase(), {
-    x: MARGIN.left, y: 1.8, w: CONTENT_W, h: 1.0,
-    fontFace: FONT_H, fontSize: 34, bold: true,
-    color: t.titleClr, align: 'center', valign: 'middle'
-  });
-  if (d.action_text) {
-    slide.addText(String(d.action_text), {
-      x: MARGIN.left, y: 3.0, w: CONTENT_W, h: 1.5,
-      fontFace: FONT_B, fontSize: 18, color: t.bodyClr, align: 'center', valign: 'middle'
-    });
-  }
-
-  // Button
-  const btnW = 3.0, btnH = 0.7;
-  const btnX = MARGIN.left + (CONTENT_W - btnW) / 2;
-  slide.addShape(pres.shapes.RECTANGLE, {
-    x: btnX, y: 4.8, w: btnW, h: btnH,
-    fill: { color: YELLOW }, line: { color: YELLOW }
-  });
-  slide.addText((d.button_text || 'GET STARTED').toUpperCase(), {
-    x: btnX, y: 4.8, w: btnW, h: btnH,
-    fontFace: FONT_H, fontSize: 15, bold: true,
-    color: DARK_GRAY, align: 'center', valign: 'middle'
-  });
-
-  slide.addText('Built to Conquer Risk', {
-    x: MARGIN.left, y: 5.7, w: CONTENT_W, h: 0.5,
-    fontFace: FONT_B, fontSize: 14, italic: true, color: YELLOW, align: 'center'
-  });
-  if (d.contact_info) {
-    slide.addText(String(d.contact_info), {
-      x: MARGIN.left, y: 6.3, w: CONTENT_W, h: 0.8,
-      fontFace: FONT_B, fontSize: 12, color: t.muted, align: 'center'
-    });
-  }
-  return slide;
-}
-
-// Image Slide
-function buildImageSlide(d) {
-  const slide = pres.addSlide();
-  const t     = getTheme(d);
-  slide.background = { color: t.bg };
-
-  addLogo(slide, LOGO_AREA.x, LOGO_AREA.y, LOGO_AREA.w, LOGO_AREA.h, t.logo);
-
-  if (d.title) {
-    const titleY = MARGIN.top + 0.1;
-    slide.addText(d.title.toUpperCase(), {
-      x: MARGIN.left, y: titleY, w: CONTENT_W, h: TITLE_AREA_H,
-      fontFace: FONT_H, fontSize: 26, bold: true, color: t.titleClr, valign: 'middle'
-    });
-  }
-
-  if (!d.data) return slide;
-
-  try {
-    const imgData = 'data:image/' + (d.format || 'png') + ';base64,' + d.data;
-    let   w    = d.width  || 6;
-    let   h    = d.height || w * 0.667;
-    const yOff = d.title ? 1.8 : 1.5;
-    const maxH = SLIDE_H - yOff - MARGIN.bottom;
-    const maxW = CONTENT_W;
-    if (h > maxH) { const sc = maxH / h; h = maxH; w = w * sc; }
-    if (w > maxW) { const sc = maxW / w; w = maxW; h = h * sc; }
-    const xOff = d.align === 'center' ? (SLIDE_W - w) / 2 :
-                 d.align === 'right'  ? SLIDE_W - w - 0.5 : MARGIN.left;
-    slide.addImage({ data: imgData, x: xOff, y: yOff, w, h });
-    if (d.caption) {
-      slide.addText(String(d.caption), {
-        x: MARGIN.left, y: yOff + h + 0.15, w: CONTENT_W, h: 0.45,
-        fontFace: FONT_B, fontSize: 12, italic: true, color: t.muted,
-        align: d.align === 'center' ? 'center' : 'left'
-      });
-    }
-  } catch (e) {
-    process.stderr.write('WARN: image slide error: ' + e.message + '\n');
-  }
-  return slide;
-}
-
-// Table Slide
-function buildTableSlide(d) {
-  const slide = pres.addSlide();
-  const t     = getTheme(d);
-  slide.background = { color: t.bg };
-
-  addLogo(slide, LOGO_AREA.x, LOGO_AREA.y, LOGO_AREA.w, LOGO_AREA.h, t.logo);
-  slide.addShape(pres.shapes.RECTANGLE, {
-    x: 0, y: 0, w: 0.15, h: SLIDE_H, fill: { color: YELLOW }
-  });
-
-  const titleY = MARGIN.top + 0.1;
-  slide.addText((d.title || '').toUpperCase(), {
-    x: MARGIN.left, y: titleY, w: CONTENT_W, h: TITLE_AREA_H,
-    fontFace: FONT_H, fontSize: 26, bold: true, color: t.titleClr, valign: 'middle'
-  });
-  slide.addShape(pres.shapes.RECTANGLE, {
-    x: MARGIN.left, y: titleY + TITLE_AREA_H, w: 2.5, h: TITLE_UNDERLINE_H, fill: { color: YELLOW }
-  });
-
-  const headers = d.headers || [];
-  const rows    = d.rows    || [];
-  const tableRows = [];
-
-  if (headers.length > 0) {
-    tableRows.push(headers.map(h => ({
-      text: String(h).toUpperCase(),
-      options: {
-        bold: true, color: DARK_GRAY, fill: { color: YELLOW },
-        align: 'center', valign: 'middle', fontSize: 11, fontFace: FONT_H,
-        border: { type: 'solid', color: DARK_GRAY, pt: 0.5 }
-      }
-    })));
-  }
-  rows.forEach((row, ri) => {
-    const isAlt = ri % 2 === 1;
-    const bg    = isAlt ? 'F5F5F5' : WHITE;
-    tableRows.push((Array.isArray(row) ? row : [row]).map((cell, ci) => {
-      const isNum = d.number_cols && d.number_cols.includes(ci + 1);
-      return {
-        text: String(cell === null || cell === undefined ? '' : cell),
-        options: {
-          color: t.bodyClr, fill: { color: bg },
-          align: isNum ? 'center' : 'left', fontSize: 11, fontFace: FONT_B,
-          border: { type: 'solid', color: GRAY_20, pt: 0.5 }
-        }
-      };
-    }));
-  });
-  if (d.totals_row) {
-    const tRow = d.totals_row;
-    const cells = tRow.values ? [tRow.label, ...tRow.values] : [tRow.label || 'TOTAL'];
-    tableRows.push(cells.map(c => ({
-      text: String(c || ''),
-      options: {
-        bold: true, color: t.titleClr, fill: { color: YELLOW_20 },
-        align: 'center', fontSize: 11, fontFace: FONT_H,
-        border: { type: 'solid', color: DARK_GRAY, pt: 0.5 }
-      }
-    })));
-  }
-
-  if (tableRows.length > 0) {
-    const numCols = Math.max(...tableRows.map(r => r.length));
-    const colW    = CONTENT_W / Math.max(numCols, 1);
-    const tableY  = titleY + TITLE_AREA_H + TITLE_UNDERLINE_H + 0.2;
-    const tableH  = SLIDE_H - tableY - 0.5;
-    slide.addTable(tableRows, {
-      x: MARGIN.left, y: tableY, w: CONTENT_W,
-      colW: Array(numCols).fill(colW),
-      rowH: Math.min(0.42, tableH / tableRows.length)
-    });
-  }
-  if (d.caption) {
-    slide.addText(String(d.caption), {
-      x: MARGIN.left, y: SLIDE_H - 0.6, w: CONTENT_W, h: 0.4,
-      fontFace: FONT_B, fontSize: 10, italic: true, color: t.muted
-    });
-  }
-  return slide;
-}
-
-// Chart Slide
-function buildChartSlide(d) {
-  const slide = pres.addSlide();
-  const t     = getTheme(d);
-  slide.background = { color: t.bg };
-
-  addLogo(slide, LOGO_AREA.x, LOGO_AREA.y, LOGO_AREA.w, LOGO_AREA.h, t.logo);
-  slide.addShape(pres.shapes.RECTANGLE, {
-    x: 0, y: 0, w: 0.15, h: SLIDE_H, fill: { color: YELLOW }
-  });
-
-  const titleY = MARGIN.top + 0.1;
-  slide.addText((d.title || '').toUpperCase(), {
-    x: MARGIN.left, y: titleY, w: CONTENT_W, h: TITLE_AREA_H,
-    fontFace: FONT_H, fontSize: 26, bold: true, color: t.titleClr, valign: 'middle'
-  });
-  slide.addShape(pres.shapes.RECTANGLE, {
-    x: MARGIN.left, y: titleY + TITLE_AREA_H, w: 2.5, h: TITLE_UNDERLINE_H, fill: { color: YELLOW }
-  });
-
-  const chartType  = (d.chart_type || 'bar').toLowerCase();
-  const categories = d.categories || d.labels || [];
-  const values     = d.values     || [];
-  const seriesData = d.series     || [];
-
-  const chartX = MARGIN.left;
-  const chartY = titleY + TITLE_AREA_H + TITLE_UNDERLINE_H + 0.2;
-  const chartH = SLIDE_H - chartY - 0.6;
-  const chartW = CONTENT_W;
-
-  if (chartType === 'waterfall') {
-    const n      = categories.length;
-    const maxVal = Math.max(...values.map(Math.abs)) * 1.3 || 100;
-    let running  = 0;
-    const baseY  = chartY + chartH;
-    slide.addShape(pres.shapes.RECTANGLE, {
-      x: chartX, y: baseY, w: chartW, h: 0.025, fill: { color: DARK_GRAY }
-    });
-    categories.forEach((cat, i) => {
-      const val    = values[i] || 0;
-      const barW   = chartW / (n * 1.5);
-      const barH   = Math.abs(val) / maxVal * chartH * 0.85;
-      const isStart = i === 0, isEnd = i === n - 1;
-      const color  = isStart || isEnd ? YELLOW : (val >= 0 ? GREEN : RED);
-      const barX   = chartX + i * (chartW / n) + (chartW / n - barW) / 2;
-      const barY   = val >= 0 ? baseY - ((running + val) / maxVal) * chartH * 0.85
-                              : baseY - (running / maxVal) * chartH * 0.85;
-      slide.addShape(pres.shapes.RECTANGLE, {
-        x: barX, y: barY, w: barW, h: barH,
-        fill: { color }, line: { color: WHITE, pt: 1 }
-      });
-      const valStr = (val >= 0 && !isStart ? '+' : '') + val;
-      slide.addText(String(valStr), {
-        x: barX, y: barY - 0.32, w: barW, h: 0.3,
-        fontFace: FONT_B, fontSize: 10, bold: true, color: t.titleClr, align: 'center'
-      });
-      slide.addText(String(cat), {
-        x: barX - 0.1, y: baseY + 0.05, w: barW + 0.2, h: 0.4,
-        fontFace: FONT_B, fontSize: 9, color: t.titleClr, align: 'center'
-      });
-      if (i > 0 && i < n - 1) running += val;
-    });
-  } else {
-    let pptxChartType;
-    const chartOpts = {
-      x: chartX, y: chartY, w: chartW, h: chartH,
-      chartColors: [YELLOW, DARK_GRAY, GRAY_60, RED, GREEN],
-      showLegend: seriesData.length > 1, legendPos: 'b', legendFontSize: 10,
-      dataLabelFontSize: 10, dataLabelColor: t.titleClr,
-    };
-    switch (chartType) {
-      case 'line':          pptxChartType = pres.charts.LINE;      break;
-      case 'pie':           pptxChartType = pres.charts.PIE;       chartOpts.showLegend = true; break;
-      case 'donut':         pptxChartType = pres.charts.DOUGHNUT;  chartOpts.showLegend = true; break;
-      case 'scatter':       pptxChartType = pres.charts.SCATTER;   break;
-      case 'area':          pptxChartType = pres.charts.AREA;      break;
-      case 'stacked_bar':   pptxChartType = pres.charts.BAR;       chartOpts.barGrouping = 'stacked'; break;
-      case 'clustered_bar': pptxChartType = pres.charts.BAR;       chartOpts.barGrouping = 'clustered'; break;
-      default:              pptxChartType = pres.charts.BAR;       break;
-    }
-    const chartData = seriesData.length > 0
-      ? seriesData.map(s => ({ name: s.name || '', labels: categories, values: s.values || [] }))
-      : [{ name: d.y_axis_label || 'Value', labels: categories, values }];
-    slide.addChart(pptxChartType, chartData, chartOpts);
-  }
-
-  if (d.caption) {
-    slide.addText(String(d.caption), {
-      x: MARGIN.left, y: SLIDE_H - 0.4, w: CONTENT_W, h: 0.3,
-      fontFace: FONT_B, fontSize: 10, italic: true, color: t.muted, align: 'center'
-    });
-  }
-  return slide;
-}
-
-// Timeline Slide
-function buildTimelineSlide(d) {
-  const slide = pres.addSlide();
-  const t     = getTheme(d);
-  slide.background = { color: t.bg };
-
-  addLogo(slide, LOGO_AREA.x, LOGO_AREA.y, LOGO_AREA.w, LOGO_AREA.h, t.logo);
-  slide.addShape(pres.shapes.RECTANGLE, {
-    x: 0, y: 0, w: 0.15, h: SLIDE_H, fill: { color: YELLOW }
-  });
-
-  const titleY = MARGIN.top + 0.1;
-  slide.addText((d.title || '').toUpperCase(), {
-    x: MARGIN.left, y: titleY, w: CONTENT_W, h: TITLE_AREA_H,
-    fontFace: FONT_H, fontSize: 26, bold: true, color: t.titleClr, valign: 'middle'
-  });
-  slide.addShape(pres.shapes.RECTANGLE, {
-    x: MARGIN.left, y: titleY + TITLE_AREA_H, w: 2.5, h: TITLE_UNDERLINE_H, fill: { color: YELLOW }
-  });
-
-  const milestones = d.milestones || [];
-  const n = Math.max(1, milestones.length);
-  const timelineY = 3.8;
-  const lineX = 0.8;
-  const lineW = SLIDE_W - lineX - 0.8;
-  const r = 0.18;
-  const stepW = n > 1 ? lineW / (n - 1) : lineW;
-
-  slide.addShape(pres.shapes.RECTANGLE, {
-    x: lineX, y: timelineY - 0.02, w: lineW, h: 0.04, fill: { color: YELLOW }
-  });
-
-  milestones.forEach((m, i) => {
-    const xC = n === 1 ? lineX + lineW / 2 : lineX + i * stepW;
-    const isDone    = (m.status || '').toLowerCase() === 'complete';
-    const isCurrent = (m.status || '').toLowerCase() === 'in_progress';
-    const dotFill   = isDone ? YELLOW : (isCurrent ? 'FEE896' : WHITE);
-    const dotLine   = isDone ? YELLOW : DARK_GRAY;
-    const textColor = isDone || isCurrent ? t.titleClr : t.muted;
-    const isAbove   = i % 2 === 0;
-    const labelY    = isAbove ? timelineY - r - 1.2 : timelineY + r + 0.15;
-    const dateY     = isAbove ? timelineY - r - 0.55 : timelineY + r + 0.75;
-
-    slide.addShape(pres.shapes.ELLIPSE, {
-      x: xC - r, y: timelineY - r, w: r * 2, h: r * 2,
-      fill: { color: dotFill }, line: { color: dotLine, pt: 1.5 }
-    });
-    slide.addText(String(m.label || '').toUpperCase(), {
-      x: xC - 1.0, y: labelY, w: 2.0, h: 0.5,
-      fontFace: FONT_H, fontSize: 11, bold: true, color: textColor, align: 'center'
-    });
-    slide.addText(String(m.date  || ''), {
-      x: xC - 1.0, y: dateY,  w: 2.0, h: 0.35,
-      fontFace: FONT_B, fontSize: 10, color: t.muted, align: 'center'
-    });
-    const connY1 = isAbove ? labelY + 0.5 : timelineY + r;
-    const connY2 = isAbove ? timelineY - r : dateY;
-    slide.addShape(pres.shapes.RECTANGLE, {
-      x: xC - 0.01, y: Math.min(connY1, connY2),
-      w: 0.02, h: Math.abs(connY2 - connY1), fill: { color: dotFill }
-    });
-  });
-
-  if (d.caption) {
-    slide.addText(String(d.caption), {
-      x: MARGIN.left, y: SLIDE_H - 0.5, w: CONTENT_W, h: 0.4,
-      fontFace: FONT_B, fontSize: 10, italic: true, color: t.muted, align: 'center'
-    });
-  }
-  return slide;
-}
-
-// Matrix 2x2 Slide
-function buildMatrix2x2Slide(d) {
-  const slide = pres.addSlide();
-  const t     = getTheme(d);
-  slide.background = { color: t.bg };
-
-  addLogo(slide, LOGO_AREA.x, LOGO_AREA.y, LOGO_AREA.w, LOGO_AREA.h, t.logo);
-  slide.addShape(pres.shapes.RECTANGLE, {
-    x: 0, y: 0, w: 0.15, h: SLIDE_H, fill: { color: YELLOW }
-  });
-
-  const titleY = MARGIN.top + 0.1;
-  slide.addText((d.title || '').toUpperCase(), {
-    x: MARGIN.left, y: titleY, w: CONTENT_W, h: TITLE_AREA_H,
-    fontFace: FONT_H, fontSize: 26, bold: true, color: t.titleClr, valign: 'middle'
-  });
-  slide.addShape(pres.shapes.RECTANGLE, {
-    x: MARGIN.left, y: titleY + TITLE_AREA_H, w: 2.5, h: TITLE_UNDERLINE_H, fill: { color: YELLOW }
-  });
-
-  const matrixX = 1.0, matrixY = titleY + TITLE_AREA_H + TITLE_UNDERLINE_H + 0.3;
-  const matrixW = SLIDE_W - matrixX - 0.5;
-  const matrixH = SLIDE_H - matrixY - 0.5;
-  const midX = matrixX + matrixW / 2;
-  const midY = matrixY + matrixH / 2;
-
-  // Quadrant backgrounds
-  [
-    [matrixX, matrixY, matrixW/2, matrixH/2, 'F9F9F9'],
-    [midX, matrixY, matrixW/2, matrixH/2, YELLOW_20],
-    [matrixX, midY, matrixW/2, matrixH/2, YELLOW_20],
-    [midX, midY, matrixW/2, matrixH/2, 'F9F9F9']
-  ].forEach(([x, y, w, h, bg]) => slide.addShape(pres.shapes.RECTANGLE, {
-    x, y, w, h, fill: { color: bg }, line: { color: t.border, pt: 1 }
-  }));
-
-  // Cross lines
-  slide.addShape(pres.shapes.RECTANGLE, {
-    x: matrixX, y: midY - 0.025, w: matrixW, h: 0.05, fill: { color: YELLOW }
-  });
-  slide.addShape(pres.shapes.RECTANGLE, {
-    x: midX - 0.025, y: matrixY, w: 0.05, h: matrixH, fill: { color: YELLOW }
-  });
-
-  // Quadrant labels
-  const qLabels = d.quadrant_labels || ['', '', '', ''];
-  [
-    [matrixX + 0.1, matrixY + 0.1],
-    [midX + 0.1, matrixY + 0.1],
-    [matrixX + 0.1, midY + 0.1],
-    [midX + 0.1, midY + 0.1]
-  ].forEach(([qx, qy], qi) => {
-    if (qLabels[qi]) slide.addText(String(qLabels[qi]).toUpperCase(), {
-      x: qx, y: qy, w: matrixW/2 - 0.2, h: 0.55,
-      fontFace: FONT_H, fontSize: 9, bold: true, color: t.muted, valign: 'top'
-    });
-  });
-
-  if (d.x_label) slide.addText(String(d.x_label).toUpperCase(), {
-    x: matrixX, y: matrixY + matrixH + 0.1, w: matrixW, h: 0.35,
-    fontFace: FONT_H, fontSize: 11, bold: true, color: t.titleClr, align: 'center'
-  });
-  if (d.y_label) slide.addText(String(d.y_label).toUpperCase(), {
-    x: 0.1, y: matrixY, w: 0.7, h: matrixH,
-    fontFace: FONT_H, fontSize: 11, bold: true, color: t.titleClr,
-    align: 'center', valign: 'middle', rotate: 270
-  });
-
-  // Scatter items
-  (d.items || []).forEach(item => {
-    const px = matrixX + (item.x || 0.5) * matrixW - 0.15;
-    const py = matrixY + (1 - (item.y || 0.5)) * matrixH - 0.15;
-    const sz = Math.max(0.2, Math.min(0.5, (item.size || 20) / 60));
-    slide.addShape(pres.shapes.ELLIPSE, {
-      x: px, y: py, w: sz, h: sz,
-      fill: { color: YELLOW }, line: { color: t.titleClr, pt: 1 }
-    });
-    slide.addText(String(item.label || ''), {
-      x: px + sz + 0.06, y: py, w: 1.5, h: sz,
-      fontFace: FONT_B, fontSize: 10, bold: true, color: t.titleClr, valign: 'middle'
-    });
-  });
-  return slide;
-}
-
-// Scorecard / RAG Table Slide
-function buildScorecardSlide(d) {
-  const slide = pres.addSlide();
-  const t     = getTheme(d);
-  slide.background = { color: t.bg };
-
-  addLogo(slide, LOGO_AREA.x, LOGO_AREA.y, LOGO_AREA.w, LOGO_AREA.h, t.logo);
-  slide.addShape(pres.shapes.RECTANGLE, {
-    x: 0, y: 0, w: 0.15, h: SLIDE_H, fill: { color: YELLOW }
-  });
-
-  const titleY = MARGIN.top + 0.1;
-  slide.addText((d.title || '').toUpperCase(), {
-    x: MARGIN.left, y: titleY, w: CONTENT_W, h: TITLE_AREA_H,
-    fontFace: FONT_H, fontSize: 26, bold: true, color: t.titleClr, valign: 'middle'
-  });
-  slide.addShape(pres.shapes.RECTANGLE, {
-    x: MARGIN.left, y: titleY + TITLE_AREA_H, w: 2.5, h: TITLE_UNDERLINE_H, fill: { color: YELLOW }
-  });
-
-  const items = d.items || [];
-  const tableRows = [[
-    { text: 'METRIC',  options: { bold: true, color: DARK_GRAY, fill: { color: YELLOW }, fontSize: 11, fontFace: FONT_H, border: { type: 'solid', color: DARK_GRAY, pt: 0.5 } } },
-    { text: 'STATUS',  options: { bold: true, color: DARK_GRAY, fill: { color: YELLOW }, fontSize: 11, fontFace: FONT_H, align: 'center', border: { type: 'solid', color: DARK_GRAY, pt: 0.5 } } },
-    { text: 'VALUE',   options: { bold: true, color: DARK_GRAY, fill: { color: YELLOW }, fontSize: 11, fontFace: FONT_H, align: 'center', border: { type: 'solid', color: DARK_GRAY, pt: 0.5 } } },
-    { text: 'COMMENT', options: { bold: true, color: DARK_GRAY, fill: { color: YELLOW }, fontSize: 11, fontFace: FONT_H, border: { type: 'solid', color: DARK_GRAY, pt: 0.5 } } },
-  ]];
-
-  items.forEach((item, ri) => {
-    const bg     = ri % 2 === 1 ? 'F5F5F5' : WHITE;
-    const status = (item.status || 'green').toLowerCase();
-    const ragColor = status === 'green' ? GREEN : status === 'red' ? RED : YELLOW;
-    const ragLabel = status === 'green' ? '● ON TRACK' : status === 'red' ? '● BREACH' : '● AT RISK';
-    tableRows.push([
-      { text: String(item.metric || '').toUpperCase(), options: { bold: true, color: t.titleClr, fill: { color: bg }, fontSize: 11, fontFace: FONT_H, border: { type: 'solid', color: GRAY_20, pt: 0.5 } } },
-      { text: ragLabel, options: { color: ragColor, fill: { color: bg }, fontSize: 11, fontFace: FONT_H, bold: true, align: 'center', border: { type: 'solid', color: GRAY_20, pt: 0.5 } } },
-      { text: String(item.value   || ''), options: { color: t.bodyClr, fill: { color: bg }, fontSize: 11, fontFace: FONT_B, align: 'center', border: { type: 'solid', color: GRAY_20, pt: 0.5 } } },
-      { text: String(item.comment || ''), options: { color: t.muted,   fill: { color: bg }, fontSize: 11, fontFace: FONT_B, border: { type: 'solid', color: GRAY_20, pt: 0.5 } } },
-    ]);
-  });
-
-  const tableY = titleY + TITLE_AREA_H + TITLE_UNDERLINE_H + 0.2;
-  const tableH = SLIDE_H - tableY - 0.5;
-  slide.addTable(tableRows, {
-    x: MARGIN.left, y: tableY, w: CONTENT_W,
-    colW: [CONTENT_W * 0.28, CONTENT_W * 0.20, CONTENT_W * 0.24, CONTENT_W * 0.28],
-    rowH: Math.min(0.72, tableH / (items.length + 1))
-  });
-  return slide;
-}
-
-// Comparison Slide (A vs B)
-function buildComparisonSlide(d) {
-  const slide = pres.addSlide();
-  const t     = getTheme(d);
-  slide.background = { color: t.bg };
-
-  addLogo(slide, LOGO_AREA.x, LOGO_AREA.y, LOGO_AREA.w, LOGO_AREA.h, t.logo);
-  slide.addShape(pres.shapes.RECTANGLE, {
-    x: 0, y: 0, w: 0.15, h: SLIDE_H, fill: { color: YELLOW }
-  });
-
-  const titleY = MARGIN.top + 0.1;
-  slide.addText((d.title || '').toUpperCase(), {
-    x: MARGIN.left, y: titleY, w: CONTENT_W, h: TITLE_AREA_H,
-    fontFace: FONT_H, fontSize: 26, bold: true, color: t.titleClr, valign: 'middle'
-  });
-  slide.addShape(pres.shapes.RECTANGLE, {
-    x: MARGIN.left, y: titleY + TITLE_AREA_H, w: 2.5, h: TITLE_UNDERLINE_H, fill: { color: YELLOW }
-  });
-
-  const rows   = d.rows   || [];
-  const winner = d.winner || 'right';
-  const lLabel = d.left_label  || 'OPTION A';
-  const rLabel = d.right_label || 'OPTION B';
-  const contentY = titleY + TITLE_AREA_H + TITLE_UNDERLINE_H + 0.3;
-  const col1W = 2.5, col2W = (CONTENT_W - col1W - 0.1) / 2, col3W = col2W;
-
-  // Header row
-  slide.addShape(pres.shapes.RECTANGLE, {
-    x: MARGIN.left, y: contentY, w: col1W, h: 0.52, fill: { color: GRAY_20 }
-  });
-  slide.addShape(pres.shapes.RECTANGLE, {
-    x: MARGIN.left + col1W + 0.05, y: contentY, w: col2W, h: 0.52,
-    fill: { color: winner === 'left' ? YELLOW : 'F5F5F5' }
-  });
-  slide.addShape(pres.shapes.RECTANGLE, {
-    x: MARGIN.left + col1W + col2W + 0.1, y: contentY, w: col3W, h: 0.52,
-    fill: { color: winner === 'right' ? YELLOW : 'F5F5F5' }
-  });
-
-  slide.addText('', {
-    x: MARGIN.left, y: contentY, w: col1W, h: 0.52,
-    fontFace: FONT_B, fontSize: 12, color: t.titleClr, valign: 'middle'
-  });
-  slide.addText(String(lLabel).toUpperCase(), {
-    x: MARGIN.left + col1W + 0.05, y: contentY, w: col2W, h: 0.52,
-    fontFace: FONT_H, fontSize: 12, bold: true, color: t.titleClr, align: 'center', valign: 'middle'
-  });
-  slide.addText(String(rLabel).toUpperCase(), {
-    x: MARGIN.left + col1W + col2W + 0.1, y: contentY, w: col3W, h: 0.52,
-    fontFace: FONT_H, fontSize: 12, bold: true, color: t.titleClr, align: 'center', valign: 'middle'
-  });
-
-  // Winner indicator
-  if (winner === 'right') {
-    slide.addShape(pres.shapes.RECTANGLE, {
-      x: MARGIN.left + col1W + col2W + 0.07, y: contentY, w: 0.06, h: 0.52, fill: { color: YELLOW }
-    });
-  } else {
-    slide.addShape(pres.shapes.RECTANGLE, {
-      x: MARGIN.left + col1W + 0.02, y: contentY, w: 0.06, h: 0.52, fill: { color: YELLOW }
-    });
-  }
-
-  // Data rows
-  rows.forEach((row, ri) => {
-    const rowY = contentY + 0.57 + ri * 0.65;
-    const bg   = ri % 2 === 1 ? 'F5F5F5' : WHITE;
-    slide.addShape(pres.shapes.RECTANGLE, {
-      x: MARGIN.left, y: rowY, w: col1W, h: 0.62, fill: { color: bg }
-    });
-    slide.addShape(pres.shapes.RECTANGLE, {
-      x: MARGIN.left + col1W + 0.05, y: rowY, w: col2W, h: 0.62,
-      fill: { color: winner === 'left' ? YELLOW_20 : bg }
-    });
-    slide.addShape(pres.shapes.RECTANGLE, {
-      x: MARGIN.left + col1W + col2W + 0.1, y: rowY, w: col3W, h: 0.62,
-      fill: { color: winner === 'right' ? YELLOW_20 : bg }
-    });
-    slide.addText(String(row.label || '').toUpperCase(), {
-      x: MARGIN.left, y: rowY, w: col1W, h: 0.62,
-      fontFace: FONT_H, fontSize: 11, bold: true, color: t.titleClr, valign: 'middle'
-    });
-    slide.addText(String(row.left  || ''), {
-      x: MARGIN.left + col1W + 0.05, y: rowY, w: col2W, h: 0.62,
-      fontFace: FONT_B, fontSize: 11, color: t.bodyClr, align: 'center', valign: 'middle'
-    });
-    slide.addText(String(row.right || ''), {
-      x: MARGIN.left + col1W + col2W + 0.1, y: rowY, w: col3W, h: 0.62,
-      fontFace: FONT_B, fontSize: 11, color: t.bodyClr, align: 'center', valign: 'middle'
-    });
-    slide.addShape(pres.shapes.RECTANGLE, {
-      x: MARGIN.left, y: rowY + 0.61, w: CONTENT_W, h: 0.015, fill: { color: GRAY_20 }
-    });
-  });
-  return slide;
-}
-
-// Icon Grid Slide
-function buildIconGridSlide(d) {
-  const slide = pres.addSlide();
-  const t     = getTheme(d);
-  slide.background = { color: t.bg };
-
-  addLogo(slide, LOGO_AREA.x, LOGO_AREA.y, LOGO_AREA.w, LOGO_AREA.h, t.logo);
-  slide.addShape(pres.shapes.RECTANGLE, {
-    x: 0, y: 0, w: 0.15, h: SLIDE_H, fill: { color: YELLOW }
-  });
-
-  const titleY = MARGIN.top + 0.1;
-  slide.addText((d.title || '').toUpperCase(), {
-    x: MARGIN.left, y: titleY, w: CONTENT_W, h: TITLE_AREA_H,
-    fontFace: FONT_H, fontSize: 26, bold: true, color: t.titleClr, valign: 'middle'
-  });
-  slide.addShape(pres.shapes.RECTANGLE, {
-    x: MARGIN.left, y: titleY + TITLE_AREA_H, w: 2.5, h: TITLE_UNDERLINE_H, fill: { color: YELLOW }
-  });
-
-  const items = d.items || [];
-  const cols  = d.columns || Math.min(4, Math.max(1, Math.ceil(Math.sqrt(items.length))));
-  const rows  = Math.ceil(items.length / cols);
-  const contentY = titleY + TITLE_AREA_H + TITLE_UNDERLINE_H + 0.3;
-  const contentH = SLIDE_H - contentY - 0.3;
-  const cellW = CONTENT_W / cols;
-  const cellH = contentH / rows;
-  const iconMap = {
-    shield: '🛡', chart: '📊', clock: '⏱', star: '★', check: '✓',
-    lock: '🔒', globe: '🌐', dollar: '$', people: '👥', trophy: '🏆',
-    lightning: '⚡', target: '🎯', default: '●'
-  };
-
-  items.forEach((item, idx) => {
-    const col = idx % cols, row = Math.floor(idx / cols);
-    const cx  = MARGIN.left + col * cellW + 0.1;
-    const cy  = contentY + row * cellH + 0.05;
-    const iconChar = iconMap[item.icon] || iconMap.default;
-    const iconSz = Math.min(0.7, cellW * 0.3, cellH * 0.3);
-    const iconX = cx + (cellW - 0.2) / 2 - iconSz / 2;
-
-    slide.addShape(pres.shapes.ROUNDED_RECTANGLE, {
-      x: iconX, y: cy + 0.1, w: iconSz, h: iconSz,
-      fill: { color: YELLOW }, line: { color: YELLOW }, rectRadius: 0.15
-    });
-    slide.addText(iconChar, {
-      x: iconX, y: cy + 0.1, w: iconSz, h: iconSz,
-      fontFace: 'Arial', fontSize: Math.round(iconSz * 30), color: DARK_GRAY,
-      align: 'center', valign: 'middle'
-    });
-    slide.addText((item.title || '').toUpperCase(), {
-      x: cx, y: cy + iconSz + 0.25, w: cellW - 0.2, h: 0.45,
-      fontFace: FONT_H, fontSize: 12, bold: true, color: t.titleClr, align: 'center'
-    });
-    if (item.body) slide.addText(String(item.body), {
-      x: cx, y: cy + iconSz + 0.75, w: cellW - 0.2, h: cellH - iconSz - 0.85,
-      fontFace: FONT_B, fontSize: 11, color: t.muted, align: 'center', valign: 'top'
-    });
-  });
-  return slide;
-}
-
-// Executive Summary Slide
-function buildExecutiveSummarySlide(d) {
-  const slide = pres.addSlide();
-  const t     = getTheme(d);
-  slide.background = { color: t.bg };
-
-  addLogo(slide, LOGO_AREA.x, LOGO_AREA.y, LOGO_AREA.w, LOGO_AREA.h, t.logo);
-
-  // Thick yellow bar for executive emphasis
-  slide.addShape(pres.shapes.RECTANGLE, {
-    x: 0, y: 0, w: 0.5, h: SLIDE_H, fill: { color: YELLOW }
-  });
-
-  const contentX = 0.75;
-  slide.addText((d.headline || d.title || '').toUpperCase(), {
-    x: contentX, y: 1.0, w: CONTENT_W - 0.25, h: 2.5,
-    fontFace: FONT_H, fontSize: 28, bold: true, color: t.titleClr, valign: 'middle'
-  });
-  slide.addShape(pres.shapes.RECTANGLE, {
-    x: contentX, y: 3.6, w: CONTENT_W - 0.25, h: TITLE_UNDERLINE_H, fill: { color: YELLOW }
-  });
-
-  const points = d.supporting_points || d.bullets || [];
-  if (points.length > 0) {
-    slide.addText(points.map(p => ({
-      text: String(p),
-      options: { bullet: { type: 'bullet' }, paraSpaceBef: 8, paraSpaceAft: 8 }
-    })), {
-      x: contentX, y: 3.8, w: CONTENT_W - 0.25, h: 2.8,
-      fontFace: FONT_B, fontSize: 16, color: t.bodyClr, valign: 'top'
-    });
-  }
-  if (d.call_to_action) {
-    slide.addShape(pres.shapes.RECTANGLE, {
-      x: contentX, y: 6.7, w: CONTENT_W - 0.25, h: 0.62, fill: { color: YELLOW_20 }
-    });
-    slide.addText(String(d.call_to_action), {
-      x: contentX + 0.2, y: 6.7, w: CONTENT_W - 0.45, h: 0.62,
-      fontFace: FONT_H, fontSize: 13, bold: true, color: t.titleClr, valign: 'middle'
-    });
-  }
-  return slide;
-}
-
-// Image + Content Slide (side by side)
-function buildImageContentSlide(d) {
-  const slide = pres.addSlide();
-  const t     = getTheme(d);
-  slide.background = { color: t.bg };
-
-  addLogo(slide, LOGO_AREA.x, LOGO_AREA.y, LOGO_AREA.w, LOGO_AREA.h, t.logo);
-  slide.addShape(pres.shapes.RECTANGLE, {
-    x: 0, y: 0, w: 0.15, h: SLIDE_H, fill: { color: YELLOW }
-  });
-
-  const titleY = MARGIN.top + 0.1;
-  slide.addText((d.title || '').toUpperCase(), {
-    x: MARGIN.left, y: titleY, w: CONTENT_W, h: TITLE_AREA_H,
-    fontFace: FONT_H, fontSize: 26, bold: true, color: t.titleClr, valign: 'middle'
-  });
-  slide.addShape(pres.shapes.RECTANGLE, {
-    x: MARGIN.left, y: titleY + TITLE_AREA_H, w: 2.5, h: TITLE_UNDERLINE_H, fill: { color: YELLOW }
-  });
-
-  const imgSide = d.image_side === 'right' ? 'right' : 'left';
-  const contentY = titleY + TITLE_AREA_H + TITLE_UNDERLINE_H + 0.3;
-  const contentH = SLIDE_H - contentY - 0.3;
-  const imgX = imgSide === 'left' ? MARGIN.left : MARGIN.left + CONTENT_W / 2 + 0.3;
-  const textX = imgSide === 'left' ? MARGIN.left + CONTENT_W / 2 + 0.3 : MARGIN.left;
-  const colW = CONTENT_W / 2 - 0.15;
-
-  if (d.data) {
-    try {
-      slide.addImage({
-        data: 'data:image/' + (d.format || 'png') + ';base64,' + d.data,
-        x: imgX, y: contentY, w: colW, h: contentH
-      });
-    } catch (e) {
-      slide.addShape(pres.shapes.RECTANGLE, {
-        x: imgX, y: contentY, w: colW, h: contentH,
-        fill: { color: YELLOW_20 }, line: { color: t.border }
-      });
-    }
-  } else {
-    slide.addShape(pres.shapes.RECTANGLE, {
-      x: imgX, y: contentY, w: colW, h: contentH,
-      fill: { color: YELLOW_20 }, line: { color: YELLOW }
-    });
-    slide.addText(String(d.image_placeholder || 'IMAGE'), {
-      x: imgX, y: contentY, w: colW, h: contentH,
-      fontFace: FONT_B, fontSize: 12, italic: true, color: t.muted,
-      align: 'center', valign: 'middle'
-    });
-  }
-
-  const bullets = d.bullets || [];
-  if (bullets.length > 0) {
-    slide.addText(bullets.map(b => ({
-      text: String(b),
-      options: { bullet: { type: 'bullet' }, paraSpaceBef: 8, paraSpaceAft: 8 }
-    })), {
-      x: textX, y: contentY, w: colW, h: contentH,
-      fontFace: FONT_B, fontSize: 15, color: t.bodyClr, valign: 'top'
-    });
-  } else if (d.text) {
-    slide.addText(String(d.text), {
-      x: textX, y: contentY, w: colW, h: contentH,
-      fontFace: FONT_B, fontSize: 15, color: t.bodyClr, valign: 'top'
-    });
-  }
-  return slide;
-}
-
-// Card Grid Slide (flexible N-column layout)
-function buildCardGridSlide(d) {
-  const t = getTheme(d);
-  const slide = pres.addSlide();
-  slide.background = { color: t.bg };
-
-  addLogo(slide, LOGO_AREA.x, LOGO_AREA.y, LOGO_AREA.w, LOGO_AREA.h, t.logo);
-
-  // Section label
-  if (d.section_label) {
-    slide.addText(String(d.section_label).toUpperCase(), {
-      x: 0.35, y: 0.2, w: 4.5, h: 0.35,
-      fontFace: FONT_H, fontSize: 11, bold: true, color: t.muted
-    });
-  }
-
-  const headY = d.section_label ? 0.65 : 0.8;
-  if (d.title) {
-    slide.addText(d.title.toUpperCase(), {
-      x: MARGIN.left, y: headY, w: CONTENT_W, h: 1.5,
-      fontFace: FONT_H, fontSize: 32, bold: true,
-      color: t.titleClr, align: 'center', valign: 'middle'
-    });
-  }
-
-  const subY = headY + 1.6;
-  if (d.subtitle) {
-    slide.addText(d.subtitle, {
-      x: MARGIN.left, y: subY, w: CONTENT_W, h: 0.55,
-      fontFace: FONT_B, fontSize: 15, italic: true,
-      color: YELLOW, align: 'center', valign: 'middle'
-    });
-  }
-
-  const cards  = d.cards || [];
-  if (!cards.length) return slide;
-
-  const cols   = Math.min(6, d.columns || Math.min(4, cards.length));
-  const gap    = 0.16;
-  const cardY  = d.subtitle ? subY + 0.8 : subY + 0.2;
-  const cardH  = d.card_height || Math.max(1.8, SLIDE_H - cardY - 0.3);
-  const cardW  = (CONTENT_W - gap * (cols + 1)) / cols;
-  const startX = MARGIN.left;
-
-  cards.forEach((card, idx) => {
-    const col = idx % cols;
-    const row = Math.floor(idx / cols);
-    const cx  = startX + gap + col * (cardW + gap);
-    const cy  = cardY + row * (cardH + 0.15);
-
-    const raw       = (card.color || 'yellow').replace('#', '');
-    const cardFill  = raw === 'yellow'  ? YELLOW      :
-                      raw === 'dark'    ? DARK_GRAY   :
-                      raw === 'white'   ? WHITE       :
-                      raw === 'gray'    ? t.cardBg    : raw;
-    const onYellow  = cardFill === YELLOW;
-    const onDark    = cardFill === DARK_GRAY;
-    const cardTxt   = onYellow ? DARK_GRAY : onDark ? WHITE : t.bodyClr;
-
-    slide.addShape(pres.shapes.RECTANGLE, {
-      x: cx, y: cy, w: cardW, h: cardH,
-      fill: { color: cardFill }, line: { color: cardFill }
-    });
-
-    const px = 0.18, textH = cardH - 0.6;
-    slide.addText(card.title || card.text || '', {
-      x: cx + px, y: cy + 0.3, w: cardW - px * 2, h: textH,
-      fontFace: FONT_B, fontSize: card.font_size || 14,
-      bold: !!card.bold,
-      color: cardTxt, align: 'center', valign: 'middle'
-    });
-
-    if (card.subtitle) {
-      slide.addText(card.subtitle, {
-        x: cx + px, y: cy + cardH - 0.5, w: cardW - px * 2, h: 0.38,
-        fontFace: FONT_B, fontSize: 10,
-        color: onYellow ? '555555' : YELLOW, align: 'center'
-      });
-    }
-  });
-  return slide;
-}
-
-// Hub-Spoke Slide (process / data-flow diagram)
-function buildHubSpokeSlide(d) {
-  const t = getTheme(d);
-  const slide = pres.addSlide();
-  slide.background = { color: t.bg };
-
-  addLogo(slide, LOGO_AREA.x, LOGO_AREA.y, LOGO_AREA.w, LOGO_AREA.h, t.logo);
-
-  if (d.section_label) {
-    slide.addText(String(d.section_label).toUpperCase(), {
-      x: 0.35, y: 0.2, w: 4.5, h: 0.35,
-      fontFace: FONT_H, fontSize: 11, bold: true, color: t.muted
-    });
-  }
-
-  slide.addText((d.title || '').toUpperCase(), {
-    x: MARGIN.left, y: 0.65, w: CONTENT_W, h: 0.9,
-    fontFace: FONT_H, fontSize: 24, bold: true,
-    color: t.titleClr, align: 'center', valign: 'middle'
-  });
-
-  const hub       = d.hub || {};
-  const rawHubClr = (hub.color || 'yellow').replace('#', '');
-  const hubFill   = rawHubClr === 'yellow' ? YELLOW : rawHubClr;
-  const hubTxt    = hubFill === YELLOW ? DARK_GRAY : WHITE;
-  const hubX = 4.3, hubY = 1.7, hubW = 4.8, hubH = 5.3;
-
-  slide.addShape(pres.shapes.RECTANGLE, {
-    x: hubX, y: hubY, w: hubW, h: hubH,
-    fill: { color: hubFill }, line: { color: hubFill }
-  });
-
-  const hubLabel = hub.label || hub.title || '';
-  if (hubLabel) {
-    slide.addText(hubLabel.toUpperCase(), {
-      x: hubX + 0.15, y: hubY + 0.15, w: hubW - 0.3, h: 0.5,
-      fontFace: FONT_H, fontSize: 13, bold: true,
-      color: hubTxt, align: 'center'
-    });
-  }
-
-  const hubItems = hub.items || [];
-  if (hubItems.length > 0) {
-    const paras = hubItems.map(it => ({
-      text: String(it), options: { paraSpaceBef: 4, paraSpaceAft: 4 }
-    }));
-    slide.addText(paras, {
-      x: hubX + 0.15, y: hubY + (hubLabel ? 0.75 : 0.3),
-      w: hubW - 0.3, h: hubH - (hubLabel ? 1.0 : 0.6),
-      fontFace: FONT_B, fontSize: 12.5,
-      color: hubTxt, align: 'center', valign: 'middle'
-    });
-  }
-
-  const spokes = d.spokes || [];
-  const boxW = 3.8;
-  const leftX = 0.3, rightX = hubX + hubW + 0.1;
-  const slots = { left: [], right: [] };
-  spokes.forEach(s => {
-    (slots[(s.side || 'left').toLowerCase()] = slots[(s.side || 'left').toLowerCase()] || []).push(s);
-  });
-
-  ['left', 'right'].forEach(side => {
-    const list = slots[side] || [];
-    if (!list.length) return;
-    const xs = side === 'left' ? leftX : rightX;
-    const bH = (hubH - 0.18 * (list.length - 1)) / list.length;
-
-    list.forEach((spoke, ri) => {
-      const by    = hubY + ri * (bH + 0.18);
-      const label = spoke.label || spoke.title || '';
-      const items = spoke.items || [];
-
-      slide.addShape(pres.shapes.RECTANGLE, {
-        x: xs, y: by, w: boxW, h: bH,
-        fill: { color: t.cardBg }, line: { color: t.border }
-      });
-
-      if (label) {
-        slide.addText(label.toUpperCase(), {
-          x: xs + 0.15, y: by + 0.1, w: boxW - 0.3, h: 0.42,
-          fontFace: FONT_H, fontSize: 12, bold: true,
-          color: t.dark ? YELLOW : t.titleClr, align: 'center'
-        });
-      }
-
-      if (items.length > 0) {
-        slide.addText(items.join('\n'), {
-          x: xs + 0.15, y: by + (label ? 0.57 : 0.2),
-          w: boxW - 0.3, h: bH - (label ? 0.75 : 0.4),
-          fontFace: FONT_B, fontSize: 12, color: t.muted,
-          align: 'center', valign: 'middle'
-        });
-      }
-
-      // Connector line
-      const arY = by + bH / 2 - 0.02;
-      const connX = side === 'left' ? (xs + boxW) : (hubX);
-      const connW = Math.abs(side === 'left' ? (hubX - xs - boxW) : (xs - hubX - hubW)) - 0.22;
-      slide.addShape(pres.shapes.RECTANGLE, {
-        x: connX, y: arY, w: connW, h: 0.04,
-        fill: { color: t.border }
-      });
-      slide.addText(side === 'left' ? '▶' : '◀', {
-        x: side === 'left' ? (hubX - 0.28) : (xs - 0.06),
-        y: arY - 0.14, w: 0.28, h: 0.28,
-        fontFace: FONT_B, fontSize: 11, color: t.border, align: 'center'
-      });
-    });
-  });
-
-  return slide;
-}
-
-// ── Build all slides ──────────────────────────────────────────────────────────
-for (const s of (spec.slides || [])) {
-  try {
-    switch (s.type) {
-      case 'title':             buildTitleSlide(s);           break;
-      case 'content':           buildContentSlide(s);         break;
-      case 'two_column':        buildTwoColumnSlide(s);       break;
-      case 'three_column':      buildThreeColumnSlide(s);     break;
-      case 'metrics':           buildMetricsSlide(s);         break;
-      case 'process':           buildProcessSlide(s);         break;
-      case 'quote':             buildQuoteSlide(s);           break;
-      case 'section_divider':   buildSectionDividerSlide(s);  break;
-      case 'cta':               buildCtaSlide(s);             break;
-      case 'image':             buildImageSlide(s);           break;
-      case 'table':             buildTableSlide(s);           break;
-      case 'chart':             buildChartSlide(s);           break;
-      case 'timeline':          buildTimelineSlide(s);        break;
-      case 'matrix_2x2':        buildMatrix2x2Slide(s);       break;
-      case 'scorecard':         buildScorecardSlide(s);       break;
-      case 'comparison':        buildComparisonSlide(s);      break;
-      case 'icon_grid':         buildIconGridSlide(s);        break;
-      case 'executive_summary': buildExecutiveSummarySlide(s);break;
-      case 'image_content':     buildImageContentSlide(s);    break;
-      case 'card_grid':         buildCardGridSlide(s);        break;
-      case 'hub_spoke':         buildHubSpokeSlide(s);        break;
-      default:                  buildContentSlide(s);         break;
-    }
-  } catch (err) {
-    process.stderr.write('WARN: slide[' + s.type + '] error: ' + err.message + '\n');
-  }
-}
-
-// ── Write output ──────────────────────────────────────────────────────────────
-const outName = spec.filename || 'output.pptx';
-pres.writeFile({ fileName: outName })
-  .then(() => {
-    process.stdout.write('SUCCESS:' + outName + '\n');
-  })
-  .catch(err => {
-    process.stderr.write('ERROR:' + err.message + '\n');
-    process.exit(1);
-  });
-""".strip()
-
-
-# ── Embedded Node.js freestyle wrapper ───────────────────────────────────────
-_FREESTYLE_WRAPPER = r"""
-'use strict';
-const fs      = require('fs');
-const path    = require('path');
-const pptxgen = require('pptxgenjs');
-
-// ── Constants ────────────────────────────────────────────────────────────────
-const SLIDE_W = 13.333;
-const SLIDE_H = 7.5;
-const CONTENT_W = SLIDE_W - 1.0;  // Accounting for margins
 
 // ── Brand palette ─────────────────────────────────────────────────────────
-const YELLOW     = 'FEC00F';
-const DARK_GRAY  = '212121';
-const WHITE      = 'FFFFFF';
-const GRAY_60    = '999999';
-const GRAY_20    = 'DDDDDD';
-const YELLOW_20  = 'FEF7D8';
+const YELLOW    = 'FEC00F';
+const DARK_GRAY = '212121';
+const WHITE     = 'FFFFFF';
+const GRAY_60   = '999999';
+const GRAY_20   = 'DDDDDD';
+const YELLOW_20 = 'FEF7D8';
+const GREEN     = '22C55E';
+const RED       = 'EB2F5C';
 
-// ── Brand fonts ─────────────────────────────────────────────────────────────
+// ── Brand fonts ───────────────────────────────────────────────────────────
 const FONT_H = 'Rajdhani';
 const FONT_B = 'Quicksand';
 
-// ── Logos ─────────────────────────────────────────────────────────────────
+// ── Margin / chrome constants (all derived from SLIDE_W / SLIDE_H) ────────
+const M_LEFT   = SLIDE_W * 0.0375;   // ~0.5"
+const M_RIGHT  = SLIDE_W * 0.0375;   // ~0.5"
+const M_TOP    = SLIDE_H * 0.04;     // ~0.3"
+const M_BOTTOM = SLIDE_H * 0.04;     // ~0.3"
+
+// Usable content area
+const CONTENT_W = SLIDE_W - M_LEFT - M_RIGHT;
+const CONTENT_H = SLIDE_H - M_TOP  - M_BOTTOM;
+
+// Logo bounding box in the top-right corner
+const LOGO_X   = SLIDE_W - M_RIGHT - CONTENT_W * 0.135;
+const LOGO_Y   = M_TOP;
+const LOGO_MAX_W = CONTENT_W * 0.135;
+const LOGO_MAX_H = SLIDE_H * 0.09;
+
+// Standard title band
+const TITLE_Y   = M_TOP + SLIDE_H * 0.013;
+const TITLE_H   = SLIDE_H * 0.12;
+const ULINE_H   = SLIDE_H * 0.008;
+const ULINE_W   = CONTENT_W * 0.2;
+
+// Y coordinate where body content begins (below title + underline + gap)
+const BODY_Y    = TITLE_Y + TITLE_H + ULINE_H + SLIDE_H * 0.027;
+const BODY_H    = SLIDE_H - BODY_Y - M_BOTTOM;
+
+// Left accent bar
+const ACCENT_W  = SLIDE_W * 0.011;
+
+// ── Logo aspect-ratio table ────────────────────────────────────────────────
+const LOGO_DIMS = {
+  full:   { aspect: 3.6 },
+  black:  { aspect: 1.0 },
+  yellow: { aspect: 1.0 },
+};
+
+// ── Logo helpers ──────────────────────────────────────────────────────────
 const assetsDir = path.join(__dirname, 'assets');
 function loadLogoData(name) {
   const p = path.join(assetsDir, name);
@@ -1585,58 +158,1577 @@ const LOGOS = {
   yellow: loadLogoData('potomac-icon-yellow.png'),
 };
 
-// Logo aspect ratios (pre-computed for proper scaling)
+// Return {w, h} that fits inside maxW × maxH while preserving aspect ratio.
+function fitDims(aspect, maxW, maxH) {
+  if (maxW / maxH > aspect) {
+    const h = maxH;
+    return { w: h * aspect, h };
+  }
+  const w = maxW;
+  return { w, h: w / aspect };
+}
+
+// Place a logo centered inside a bounding box, preserving aspect ratio.
+function addLogo(slide, bx, by, bw, bh, variant) {
+  const data = variant === 'black'  ? LOGOS.black
+             : variant === 'yellow' ? LOGOS.yellow
+             :                        LOGOS.full;
+  const asp  = (LOGO_DIMS[variant] || LOGO_DIMS.full).aspect;
+  if (data) {
+    const { w, h } = fitDims(asp, bw, bh);
+    slide.addImage({ data, x: bx + (bw - w) / 2, y: by + (bh - h) / 2, w, h });
+  } else {
+    slide.addText('POTOMAC', {
+      x: bx, y: by, w: bw, h: bh,
+      fontFace: FONT_H, fontSize: 14, bold: true,
+      color: DARK_GRAY, align: 'center', valign: 'middle',
+    });
+  }
+}
+
+// ── Theme resolver ────────────────────────────────────────────────────────
+function getTheme(d) {
+  const dark = d.background === 'dark' || d.theme === 'dark';
+  return {
+    dark,
+    bg:      dark ? DARK_GRAY : WHITE,
+    titleClr: dark ? WHITE    : DARK_GRAY,
+    bodyClr:  dark ? 'CCCCCC' : DARK_GRAY,
+    muted:    dark ? '888888' : GRAY_60,
+    cardBg:   dark ? '323232' : 'F0F0F0',
+    border:   dark ? '505050' : GRAY_20,
+    logo:     dark ? 'yellow' : 'full',
+  };
+}
+
+// ── Shared chrome helpers ─────────────────────────────────────────────────
+// Draw the left accent bar, logo, title text, and underline that most slides share.
+function addStandardChrome(slide, d, t, fontSize) {
+  // Left accent bar
+  slide.addShape(pres.shapes.RECTANGLE, {
+    x: 0, y: 0, w: ACCENT_W, h: SLIDE_H, fill: { color: YELLOW },
+  });
+
+  // Top-right logo
+  addLogo(slide, LOGO_X, LOGO_Y, LOGO_MAX_W, LOGO_MAX_H, t.logo);
+
+  // Title — capped so it never reaches the logo
+  const titleW = LOGO_X - M_LEFT - SLIDE_W * 0.015;
+  slide.addText((d.title || '').toUpperCase(), {
+    x: M_LEFT, y: TITLE_Y, w: titleW, h: TITLE_H,
+    fontFace: FONT_H, fontSize: fontSize || 26, bold: true,
+    color: t.titleClr, valign: 'middle',
+  });
+
+  // Yellow underline beneath the title
+  slide.addShape(pres.shapes.RECTANGLE, {
+    x: M_LEFT, y: TITLE_Y + TITLE_H, w: ULINE_W, h: ULINE_H,
+    fill: { color: YELLOW },
+  });
+}
+
+// ── Create presentation ───────────────────────────────────────────────────
+const spec = JSON.parse(fs.readFileSync('spec.json', 'utf8'));
+const pres  = new pptxgen();
+pres.author  = 'Potomac';
+pres.company = 'Potomac';
+pres.title   = spec.title || 'POTOMAC PRESENTATION';
+
+// Use the PptxGenJS built-in LAYOUT_WIDE preset (13.333" × 7.5").
+// https://gitbrent.github.io/PptxGenJS/docs/usage-pres-options/
+pres.layout = 'LAYOUT_WIDE';
+
+// ═══════════════════════════════════════════════════════════════════════════
+// SLIDE BUILDERS
+// Every x/y/w/h is an expression of SLIDE_W, SLIDE_H, and the margin/chrome
+// constants defined above. No literal coordinate numbers are allowed.
+// ═══════════════════════════════════════════════════════════════════════════
+
+// ── Title Slide ───────────────────────────────────────────────────────────
+function buildTitleSlide(d) {
+  const slide  = pres.addSlide();
+  const isExec = d.style === 'executive';
+  const t      = getTheme(d);
+  slide.background = { color: t.bg };
+
+  // Logo — centred in a generous box
+  const lgW = SLIDE_W * 0.135;
+  const lgH = SLIDE_H * 0.2;
+  const lgX = (SLIDE_W - lgW) / 2;
+  const lgY = SLIDE_H * 0.06;
+  addLogo(slide, lgX, lgY, lgW, lgH, isExec ? 'yellow' : 'full');
+
+  // Main title
+  slide.addText((d.title || '').toUpperCase(), {
+    x: M_LEFT, y: SLIDE_H * 0.32, w: CONTENT_W, h: SLIDE_H * 0.2,
+    fontFace: FONT_H, fontSize: 44, bold: true,
+    color: t.titleClr, align: 'center', valign: 'middle',
+  });
+
+  // Subtitle
+  if (d.subtitle) {
+    slide.addText(d.subtitle, {
+      x: M_LEFT, y: SLIDE_H * 0.547, w: CONTENT_W, h: SLIDE_H * 0.12,
+      fontFace: FONT_B, fontSize: 20, italic: isExec,
+      color: isExec ? YELLOW : GRAY_60, align: 'center', valign: 'middle',
+    });
+  }
+
+  // Accent bar
+  slide.addShape(pres.shapes.RECTANGLE, {
+    x: M_LEFT, y: SLIDE_H * 0.733, w: CONTENT_W, h: SLIDE_H * 0.011,
+    fill: { color: YELLOW },
+  });
+
+  // Tagline
+  const tagline = d.tagline || (isExec ? 'Built to Conquer Risk' : null);
+  if (tagline) {
+    slide.addText(tagline, {
+      x: M_LEFT, y: SLIDE_H * 0.773, w: CONTENT_W, h: SLIDE_H * 0.067,
+      fontFace: FONT_B, fontSize: 15, italic: true,
+      color: YELLOW, align: 'center', valign: 'middle',
+    });
+  }
+
+  return slide;
+}
+
+// ── Content / Bullets Slide ───────────────────────────────────────────────
+function buildContentSlide(d) {
+  const slide = pres.addSlide();
+  const t     = getTheme(d);
+  slide.background = { color: t.bg };
+  addStandardChrome(slide, d, t, 30);
+
+  const bullets = d.bullets || (Array.isArray(d.content) ? d.content : null);
+  const text    = d.text   || (!Array.isArray(d.content) ? d.content : null);
+
+  if (bullets && bullets.length > 0) {
+    const items = bullets.map(b => ({
+      text: String(b),
+      options: { bullet: { type: 'bullet' }, paraSpaceBef: 6, paraSpaceAft: 6 },
+    }));
+    slide.addText(items, {
+      x: M_LEFT, y: BODY_Y, w: CONTENT_W, h: BODY_H,
+      fontFace: FONT_B, fontSize: 18, color: t.bodyClr, valign: 'top',
+    });
+  } else if (text) {
+    slide.addText(String(text), {
+      x: M_LEFT, y: BODY_Y, w: CONTENT_W, h: BODY_H,
+      fontFace: FONT_B, fontSize: 16, color: t.bodyClr, valign: 'top',
+    });
+  }
+
+  return slide;
+}
+
+// ── Two-Column Slide ──────────────────────────────────────────────────────
+function buildTwoColumnSlide(d) {
+  const slide = pres.addSlide();
+  const t     = getTheme(d);
+  slide.background = { color: t.bg };
+  addStandardChrome(slide, d, t, 26);
+
+  const gap  = CONTENT_W * 0.048;
+  const colW = (CONTENT_W - gap) / 2;
+  const lX   = M_LEFT;
+  const rX   = lX + colW + gap;
+
+  const hasHdrs = d.left_header || d.right_header;
+  const hdrH    = SLIDE_H * 0.056;
+  const hdrGap  = SLIDE_H * 0.02;
+
+  if (d.left_header) {
+    slide.addText(String(d.left_header), {
+      x: lX, y: BODY_Y, w: colW, h: hdrH,
+      fontFace: FONT_H, fontSize: 14, bold: true, color: YELLOW, valign: 'middle',
+    });
+  }
+  if (d.right_header) {
+    slide.addText(String(d.right_header), {
+      x: rX, y: BODY_Y, w: colW, h: hdrH,
+      fontFace: FONT_H, fontSize: 14, bold: true, color: YELLOW, valign: 'middle',
+    });
+  }
+
+  const cy = hasHdrs ? BODY_Y + hdrH + hdrGap : BODY_Y;
+  const ch = SLIDE_H - cy - M_BOTTOM;
+  const lT = d.left_content  || (d.columns && d.columns[0]) || '';
+  const rT = d.right_content || (d.columns && d.columns[1]) || '';
+
+  slide.addText(String(lT), {
+    x: lX, y: cy, w: colW, h: ch,
+    fontFace: FONT_B, fontSize: 15, color: t.bodyClr, valign: 'top',
+  });
+
+  // Divider line
+  slide.addShape(pres.shapes.RECTANGLE, {
+    x: lX + colW + gap / 2 - SLIDE_W * 0.0015, y: BODY_Y - SLIDE_H * 0.027,
+    w: SLIDE_W * 0.003, h: ch + SLIDE_H * 0.027,
+    fill: { color: GRAY_20 },
+  });
+
+  slide.addText(String(rT), {
+    x: rX, y: cy, w: colW, h: ch,
+    fontFace: FONT_B, fontSize: 15, color: t.bodyClr, valign: 'top',
+  });
+
+  return slide;
+}
+
+// ── Three-Column Slide ────────────────────────────────────────────────────
+function buildThreeColumnSlide(d) {
+  const slide = pres.addSlide();
+  const t     = getTheme(d);
+  slide.background = { color: t.bg };
+  addStandardChrome(slide, d, t, 24);
+
+  const columns = d.columns        || [];
+  const headers = d.column_headers || [];
+  const gap     = CONTENT_W * 0.02;
+  const colW    = (CONTENT_W - gap * 2) / 3;
+  const hdrH    = SLIDE_H * 0.06;
+  const hdrGap  = SLIDE_H * 0.013;
+
+  for (let i = 0; i < 3; i++) {
+    const xPos = M_LEFT + i * (colW + gap);
+
+    if (headers[i]) {
+      slide.addShape(pres.shapes.RECTANGLE, {
+        x: xPos, y: BODY_Y, w: colW, h: hdrH,
+        fill: { color: YELLOW },
+      });
+      slide.addText(String(headers[i]), {
+        x: xPos, y: BODY_Y, w: colW, h: hdrH,
+        fontFace: FONT_H, fontSize: 13, bold: true,
+        color: DARK_GRAY, align: 'center', valign: 'middle',
+      });
+    }
+
+    const cY = headers[i] ? BODY_Y + hdrH + hdrGap : BODY_Y;
+    const cH = SLIDE_H - cY - M_BOTTOM;
+    slide.addText(String(columns[i] || ''), {
+      x: xPos, y: cY, w: colW, h: cH,
+      fontFace: FONT_B, fontSize: 13, color: t.bodyClr, valign: 'top',
+    });
+  }
+
+  return slide;
+}
+
+// ── Metrics / KPI Slide ───────────────────────────────────────────────────
+function buildMetricsSlide(d) {
+  const slide = pres.addSlide();
+  const t     = getTheme(d);
+  slide.background = { color: t.bg };
+  addStandardChrome(slide, d, t, 28);
+
+  const metrics = d.metrics || [];
+  const perRow  = Math.min(3, Math.max(1, metrics.length));
+  const numRows = Math.ceil(metrics.length / perRow);
+  const ctxH    = d.context ? SLIDE_H * 0.107 : 0;
+  const mW      = CONTENT_W / perRow;
+  const startY  = BODY_Y + SLIDE_H * 0.093;
+  const mH      = (SLIDE_H - startY - M_BOTTOM - ctxH) / numRows;
+
+  metrics.forEach((m, i) => {
+    const row  = Math.floor(i / perRow);
+    const col  = i % perRow;
+    const xPos = M_LEFT + col * mW + CONTENT_W * 0.008;
+    const yPos = startY + row * mH;
+    const valH = mH * 0.55;
+    const lblH = mH * 0.45;
+
+    slide.addText(String(m.value || ''), {
+      x: xPos, y: yPos, w: mW - CONTENT_W * 0.016, h: valH,
+      fontFace: FONT_H, fontSize: 48, bold: true,
+      color: YELLOW, align: 'center', valign: 'middle',
+    });
+    slide.addText(String(m.label || ''), {
+      x: xPos, y: yPos + valH, w: mW - CONTENT_W * 0.016, h: lblH,
+      fontFace: FONT_B, fontSize: 14, color: t.muted, align: 'center',
+    });
+  });
+
+  if (d.context) {
+    slide.addText(String(d.context), {
+      x: M_LEFT, y: SLIDE_H - M_BOTTOM - ctxH, w: CONTENT_W, h: ctxH,
+      fontFace: FONT_B, fontSize: 11, italic: true, color: t.muted, align: 'center',
+    });
+  }
+
+  return slide;
+}
+
+// ── Process / Steps Slide ─────────────────────────────────────────────────
+function buildProcessSlide(d) {
+  const slide = pres.addSlide();
+  const t     = getTheme(d);
+  slide.background = { color: t.bg };
+  addStandardChrome(slide, d, t, 26);
+
+  const steps = d.steps || [];
+  const n     = Math.max(1, steps.length);
+  const stepW = CONTENT_W / n;
+  const r     = SLIDE_H * 0.04;
+  const cy    = BODY_Y + SLIDE_H * 0.147;
+
+  steps.forEach((step, i) => {
+    const cx = M_LEFT + i * stepW + stepW / 2 - r;
+
+    slide.addShape(pres.shapes.ELLIPSE, {
+      x: cx, y: cy, w: r * 2, h: r * 2,
+      fill: { color: YELLOW }, line: { color: YELLOW },
+    });
+    slide.addText(String(i + 1), {
+      x: cx, y: cy, w: r * 2, h: r * 2,
+      fontFace: FONT_H, fontSize: 16, bold: true,
+      color: DARK_GRAY, align: 'center', valign: 'middle',
+    });
+
+    // Connector to next step
+    if (i < steps.length - 1) {
+      slide.addShape(pres.shapes.RECTANGLE, {
+        x: cx + r * 2, y: cy + r - SLIDE_H * 0.003,
+        w: stepW - r * 2, h: SLIDE_H * 0.005,
+        fill: { color: GRAY_20 },
+      });
+    }
+
+    // Step title
+    slide.addText(String(step.title || '').toUpperCase(), {
+      x: M_LEFT + i * stepW, y: cy + r * 2 + SLIDE_H * 0.02,
+      w: stepW - SLIDE_W * 0.004, h: SLIDE_H * 0.08,
+      fontFace: FONT_H, fontSize: 12, bold: true,
+      color: t.titleClr, align: 'center',
+    });
+
+    // Step description
+    const descY = cy + r * 2 + SLIDE_H * 0.02 + SLIDE_H * 0.08 + SLIDE_H * 0.013;
+    const descH = SLIDE_H - descY - M_BOTTOM;
+    slide.addText(String(step.description || ''), {
+      x: M_LEFT + i * stepW, y: descY,
+      w: stepW - SLIDE_W * 0.004, h: descH,
+      fontFace: FONT_B, fontSize: 11, color: t.muted,
+      align: 'center', valign: 'top',
+    });
+  });
+
+  return slide;
+}
+
+// ── Quote Slide ───────────────────────────────────────────────────────────
+function buildQuoteSlide(d) {
+  const slide = pres.addSlide();
+  slide.background = { color: YELLOW_20 };
+
+  addLogo(slide, LOGO_X, LOGO_Y, LOGO_MAX_W, LOGO_MAX_H, 'full');
+
+  const qMarkW = CONTENT_W * 0.09;
+  const qMarkH = SLIDE_H * 0.187;
+  slide.addText('"', {
+    x: M_LEFT * 0.8, y: SLIDE_H * 0.147, w: qMarkW, h: qMarkH,
+    fontFace: FONT_H, fontSize: 96, bold: true,
+    color: YELLOW, align: 'center', valign: 'middle',
+  });
+
+  const quoteX = M_LEFT * 0.8 + qMarkW;
+  const quoteW = SLIDE_W - quoteX - M_RIGHT * 0.8;
+  slide.addText(String(d.quote || ''), {
+    x: quoteX, y: SLIDE_H * 0.24, w: quoteW, h: SLIDE_H * 0.4,
+    fontFace: FONT_B, fontSize: 22, italic: true,
+    color: DARK_GRAY, align: 'center', valign: 'middle',
+  });
+
+  if (d.attribution) {
+    slide.addText('— ' + String(d.attribution), {
+      x: quoteX, y: SLIDE_H * 0.667, w: quoteW, h: SLIDE_H * 0.093,
+      fontFace: FONT_H, fontSize: 16, bold: true,
+      color: GRAY_60, align: 'center',
+    });
+  }
+
+  if (d.context) {
+    slide.addText(String(d.context), {
+      x: quoteX, y: SLIDE_H * 0.773, w: quoteW, h: SLIDE_H * 0.067,
+      fontFace: FONT_B, fontSize: 12, italic: true,
+      color: GRAY_60, align: 'center',
+    });
+  }
+
+  return slide;
+}
+
+// ── Section Divider Slide ─────────────────────────────────────────────────
+function buildSectionDividerSlide(d) {
+  const slide = pres.addSlide();
+  const t     = getTheme(d);
+  slide.background = { color: t.bg };
+
+  addLogo(slide, LOGO_X, LOGO_Y, LOGO_MAX_W, LOGO_MAX_H, t.logo);
+
+  const barW = SLIDE_W * 0.034;
+  slide.addShape(pres.shapes.RECTANGLE, {
+    x: 0, y: 0, w: barW, h: SLIDE_H, fill: { color: YELLOW },
+  });
+
+  const textX = barW + SLIDE_W * 0.034;
+  const textW = SLIDE_W - textX - M_RIGHT;
+
+  slide.addText((d.title || '').toUpperCase(), {
+    x: textX, y: SLIDE_H * 0.32, w: textW, h: SLIDE_H * 0.213,
+    fontFace: FONT_H, fontSize: 42, bold: true,
+    color: t.titleClr, valign: 'middle',
+  });
+
+  if (d.description) {
+    slide.addText(String(d.description), {
+      x: textX, y: SLIDE_H * 0.56, w: textW, h: SLIDE_H * 0.2,
+      fontFace: FONT_B, fontSize: 18, color: t.muted, valign: 'middle',
+    });
+  }
+
+  return slide;
+}
+
+// ── CTA / Call-to-Action Slide ────────────────────────────────────────────
+function buildCtaSlide(d) {
+  const slide = pres.addSlide();
+  const t     = getTheme(d);
+  slide.background = { color: t.bg };
+
+  const lgW = CONTENT_W * 0.135;
+  const lgH = SLIDE_H * 0.133;
+  const lgX = (SLIDE_W - lgW) / 2;
+  addLogo(slide, lgX, SLIDE_H * 0.053, lgW, lgH, 'full');
+
+  slide.addText((d.title || '').toUpperCase(), {
+    x: M_LEFT, y: SLIDE_H * 0.24, w: CONTENT_W, h: SLIDE_H * 0.133,
+    fontFace: FONT_H, fontSize: 34, bold: true,
+    color: t.titleClr, align: 'center', valign: 'middle',
+  });
+
+  if (d.action_text) {
+    slide.addText(String(d.action_text), {
+      x: M_LEFT, y: SLIDE_H * 0.4, w: CONTENT_W, h: SLIDE_H * 0.2,
+      fontFace: FONT_B, fontSize: 18,
+      color: t.bodyClr, align: 'center', valign: 'middle',
+    });
+  }
+
+  // Button
+  const btnW = CONTENT_W * 0.225;
+  const btnH = SLIDE_H * 0.093;
+  const btnX = M_LEFT + (CONTENT_W - btnW) / 2;
+  const btnY = SLIDE_H * 0.64;
+  slide.addShape(pres.shapes.RECTANGLE, {
+    x: btnX, y: btnY, w: btnW, h: btnH,
+    fill: { color: YELLOW }, line: { color: YELLOW },
+  });
+  slide.addText((d.button_text || 'GET STARTED').toUpperCase(), {
+    x: btnX, y: btnY, w: btnW, h: btnH,
+    fontFace: FONT_H, fontSize: 15, bold: true,
+    color: DARK_GRAY, align: 'center', valign: 'middle',
+  });
+
+  slide.addText('Built to Conquer Risk', {
+    x: M_LEFT, y: SLIDE_H * 0.76, w: CONTENT_W, h: SLIDE_H * 0.067,
+    fontFace: FONT_B, fontSize: 14, italic: true,
+    color: YELLOW, align: 'center',
+  });
+
+  if (d.contact_info) {
+    slide.addText(String(d.contact_info), {
+      x: M_LEFT, y: SLIDE_H * 0.84, w: CONTENT_W, h: SLIDE_H * 0.107,
+      fontFace: FONT_B, fontSize: 12, color: t.muted, align: 'center',
+    });
+  }
+
+  return slide;
+}
+
+// ── Image Slide ───────────────────────────────────────────────────────────
+function buildImageSlide(d) {
+  const slide = pres.addSlide();
+  const t     = getTheme(d);
+  slide.background = { color: t.bg };
+
+  addLogo(slide, LOGO_X, LOGO_Y, LOGO_MAX_W, LOGO_MAX_H, t.logo);
+
+  const hasTitle = !!d.title;
+  if (hasTitle) {
+    slide.addText(d.title.toUpperCase(), {
+      x: M_LEFT, y: TITLE_Y, w: CONTENT_W, h: TITLE_H,
+      fontFace: FONT_H, fontSize: 26, bold: true,
+      color: t.titleClr, valign: 'middle',
+    });
+  }
+
+  if (!d.data) return slide;
+
+  try {
+    const imgData = 'data:image/' + (d.format || 'png') + ';base64,' + d.data;
+    const yOff    = hasTitle ? BODY_Y : SLIDE_H * 0.2;
+    const maxH    = SLIDE_H - yOff - M_BOTTOM;
+    const maxW    = CONTENT_W;
+
+    let w = d.width  || CONTENT_W * 0.45;
+    let h = d.height || w * 0.667;
+    if (h > maxH) { const sc = maxH / h; h = maxH; w = w * sc; }
+    if (w > maxW) { const sc = maxW / w; w = maxW; h = h * sc; }
+
+    const xOff = d.align === 'center' ? (SLIDE_W - w) / 2
+               : d.align === 'right'  ? SLIDE_W - w - M_RIGHT
+               : M_LEFT;
+
+    slide.addImage({ data: imgData, x: xOff, y: yOff, w, h });
+
+    if (d.caption) {
+      slide.addText(String(d.caption), {
+        x: M_LEFT, y: yOff + h + SLIDE_H * 0.02, w: CONTENT_W, h: SLIDE_H * 0.06,
+        fontFace: FONT_B, fontSize: 12, italic: true, color: t.muted,
+        align: d.align === 'center' ? 'center' : 'left',
+      });
+    }
+  } catch (e) {
+    process.stderr.write('WARN: image slide error: ' + e.message + '\n');
+  }
+
+  return slide;
+}
+
+// ── Table Slide ───────────────────────────────────────────────────────────
+function buildTableSlide(d) {
+  const slide = pres.addSlide();
+  const t     = getTheme(d);
+  slide.background = { color: t.bg };
+  addStandardChrome(slide, d, t, 26);
+
+  const headers   = d.headers || [];
+  const rows      = d.rows    || [];
+  const tableRows = [];
+
+  if (headers.length > 0) {
+    tableRows.push(headers.map(h => ({
+      text: String(h).toUpperCase(),
+      options: {
+        bold: true, color: DARK_GRAY, fill: { color: YELLOW },
+        align: 'center', valign: 'middle', fontSize: 11, fontFace: FONT_H,
+        border: { type: 'solid', color: DARK_GRAY, pt: 0.5 },
+      },
+    })));
+  }
+
+  rows.forEach((row, ri) => {
+    const bg = ri % 2 === 1 ? 'F5F5F5' : WHITE;
+    tableRows.push((Array.isArray(row) ? row : [row]).map((cell, ci) => {
+      const isNum = d.number_cols && d.number_cols.includes(ci + 1);
+      return {
+        text: String(cell === null || cell === undefined ? '' : cell),
+        options: {
+          color: t.bodyClr, fill: { color: bg },
+          align: isNum ? 'center' : 'left', fontSize: 11, fontFace: FONT_B,
+          border: { type: 'solid', color: GRAY_20, pt: 0.5 },
+        },
+      };
+    }));
+  });
+
+  if (d.totals_row) {
+    const tRow  = d.totals_row;
+    const cells = tRow.values ? [tRow.label, ...tRow.values] : [tRow.label || 'TOTAL'];
+    tableRows.push(cells.map(c => ({
+      text: String(c || ''),
+      options: {
+        bold: true, color: t.titleClr, fill: { color: YELLOW_20 },
+        align: 'center', fontSize: 11, fontFace: FONT_H,
+        border: { type: 'solid', color: DARK_GRAY, pt: 0.5 },
+      },
+    })));
+  }
+
+  if (tableRows.length > 0) {
+    const numCols = Math.max(...tableRows.map(r => r.length));
+    const colW    = CONTENT_W / Math.max(numCols, 1);
+    const tableY  = BODY_Y;
+    const tableH  = SLIDE_H - tableY - M_BOTTOM * 1.5;
+
+    slide.addTable(tableRows, {
+      x: M_LEFT, y: tableY, w: CONTENT_W,
+      colW: Array(numCols).fill(colW),
+      rowH: Math.min(SLIDE_H * 0.056, tableH / tableRows.length),
+    });
+  }
+
+  if (d.caption) {
+    slide.addText(String(d.caption), {
+      x: M_LEFT, y: SLIDE_H - M_BOTTOM - SLIDE_H * 0.04, w: CONTENT_W, h: SLIDE_H * 0.04,
+      fontFace: FONT_B, fontSize: 10, italic: true, color: t.muted,
+    });
+  }
+
+  return slide;
+}
+
+// ── Chart Slide ───────────────────────────────────────────────────────────
+function buildChartSlide(d) {
+  const slide = pres.addSlide();
+  const t     = getTheme(d);
+  slide.background = { color: t.bg };
+  addStandardChrome(slide, d, t, 26);
+
+  const chartType  = (d.chart_type || 'bar').toLowerCase();
+  const categories = d.categories || d.labels || [];
+  const values     = d.values     || [];
+  const seriesData = d.series     || [];
+  const capH       = d.caption ? SLIDE_H * 0.053 : 0;
+  const chartH     = SLIDE_H - BODY_Y - M_BOTTOM - capH;
+
+  if (chartType === 'waterfall') {
+    const n       = categories.length;
+    const maxVal  = Math.max(...values.map(Math.abs)) * 1.3 || 100;
+    let running   = 0;
+    const baseY   = BODY_Y + chartH;
+    const barMaxH = chartH * 0.85;
+
+    slide.addShape(pres.shapes.RECTANGLE, {
+      x: M_LEFT, y: baseY, w: CONTENT_W, h: SLIDE_H * 0.003,
+      fill: { color: DARK_GRAY },
+    });
+
+    categories.forEach((cat, i) => {
+      const val     = values[i] || 0;
+      const colFrac = CONTENT_W / n;
+      const barW    = colFrac / 1.5;
+      const barH    = Math.abs(val) / maxVal * barMaxH;
+      const isStart = i === 0;
+      const isEnd   = i === n - 1;
+      const color   = isStart || isEnd ? YELLOW : (val >= 0 ? GREEN : RED);
+      const barX    = M_LEFT + i * colFrac + (colFrac - barW) / 2;
+      const barY    = val >= 0
+        ? baseY - ((running + val) / maxVal) * barMaxH
+        : baseY - (running / maxVal) * barMaxH;
+
+      slide.addShape(pres.shapes.RECTANGLE, {
+        x: barX, y: barY, w: barW, h: barH,
+        fill: { color }, line: { color: WHITE, pt: 1 },
+      });
+
+      const valStr = (val >= 0 && !isStart ? '+' : '') + val;
+      slide.addText(String(valStr), {
+        x: barX, y: barY - SLIDE_H * 0.043, w: barW, h: SLIDE_H * 0.04,
+        fontFace: FONT_B, fontSize: 10, bold: true,
+        color: t.titleClr, align: 'center',
+      });
+      slide.addText(String(cat), {
+        x: barX - colFrac * 0.07, y: baseY + SLIDE_H * 0.007, w: barW + colFrac * 0.14, h: SLIDE_H * 0.053,
+        fontFace: FONT_B, fontSize: 9, color: t.titleClr, align: 'center',
+      });
+
+      if (i > 0 && i < n - 1) running += val;
+    });
+  } else {
+    let pptxChartType;
+    const chartOpts = {
+      x: M_LEFT, y: BODY_Y, w: CONTENT_W, h: chartH,
+      chartColors: [YELLOW, DARK_GRAY, GRAY_60, RED, GREEN],
+      showLegend: seriesData.length > 1, legendPos: 'b', legendFontSize: 10,
+      dataLabelFontSize: 10, dataLabelColor: t.titleClr,
+    };
+
+    switch (chartType) {
+      case 'line':          pptxChartType = pres.charts.LINE;     break;
+      case 'pie':           pptxChartType = pres.charts.PIE;      chartOpts.showLegend = true; break;
+      case 'donut':         pptxChartType = pres.charts.DOUGHNUT; chartOpts.showLegend = true; break;
+      case 'scatter':       pptxChartType = pres.charts.SCATTER;  break;
+      case 'area':          pptxChartType = pres.charts.AREA;     break;
+      case 'stacked_bar':   pptxChartType = pres.charts.BAR;      chartOpts.barGrouping = 'stacked';   break;
+      case 'clustered_bar': pptxChartType = pres.charts.BAR;      chartOpts.barGrouping = 'clustered'; break;
+      default:              pptxChartType = pres.charts.BAR;      break;
+    }
+
+    const chartData = seriesData.length > 0
+      ? seriesData.map(s => ({ name: s.name || '', labels: categories, values: s.values || [] }))
+      : [{ name: d.y_axis_label || 'Value', labels: categories, values }];
+
+    slide.addChart(pptxChartType, chartData, chartOpts);
+  }
+
+  if (d.caption) {
+    slide.addText(String(d.caption), {
+      x: M_LEFT, y: SLIDE_H - M_BOTTOM - capH, w: CONTENT_W, h: capH,
+      fontFace: FONT_B, fontSize: 10, italic: true, color: t.muted, align: 'center',
+    });
+  }
+
+  return slide;
+}
+
+// ── Timeline Slide ────────────────────────────────────────────────────────
+function buildTimelineSlide(d) {
+  const slide = pres.addSlide();
+  const t     = getTheme(d);
+  slide.background = { color: t.bg };
+  addStandardChrome(slide, d, t, 26);
+
+  const milestones = d.milestones || [];
+  const n          = Math.max(1, milestones.length);
+  const lineX      = M_LEFT * 1.6;
+  const lineW      = SLIDE_W - lineX - M_RIGHT * 1.6;
+  const r          = SLIDE_H * 0.024;
+  const timelineY  = SLIDE_H * 0.507;
+  const stepW      = n > 1 ? lineW / (n - 1) : lineW;
+
+  slide.addShape(pres.shapes.RECTANGLE, {
+    x: lineX, y: timelineY - SLIDE_H * 0.003,
+    w: lineW, h: SLIDE_H * 0.005,
+    fill: { color: YELLOW },
+  });
+
+  milestones.forEach((m, i) => {
+    const xC        = n === 1 ? lineX + lineW / 2 : lineX + i * stepW;
+    const isDone    = (m.status || '').toLowerCase() === 'complete';
+    const isCurrent = (m.status || '').toLowerCase() === 'in_progress';
+    const dotFill   = isDone ? YELLOW : (isCurrent ? 'FEE896' : WHITE);
+    const dotLine   = isDone ? YELLOW : DARK_GRAY;
+    const textColor = isDone || isCurrent ? t.titleClr : t.muted;
+    const isAbove   = i % 2 === 0;
+
+    const labelH    = SLIDE_H * 0.067;
+    const dateH     = SLIDE_H * 0.047;
+    const connMin   = SLIDE_H * 0.02;
+    const labelY    = isAbove ? timelineY - r - connMin - labelH - dateH
+                              : timelineY + r + connMin + dateH;
+    const dateY     = isAbove ? timelineY - r - connMin - dateH
+                              : timelineY + r + connMin;
+    const labelW    = Math.min(stepW * 0.9, SLIDE_W * 0.15);
+
+    slide.addShape(pres.shapes.ELLIPSE, {
+      x: xC - r, y: timelineY - r, w: r * 2, h: r * 2,
+      fill: { color: dotFill }, line: { color: dotLine, pt: 1.5 },
+    });
+    slide.addText(String(m.label || '').toUpperCase(), {
+      x: xC - labelW / 2, y: labelY, w: labelW, h: labelH,
+      fontFace: FONT_H, fontSize: 11, bold: true,
+      color: textColor, align: 'center',
+    });
+    slide.addText(String(m.date || ''), {
+      x: xC - labelW / 2, y: dateY, w: labelW, h: dateH,
+      fontFace: FONT_B, fontSize: 10, color: t.muted, align: 'center',
+    });
+
+    // Connector line
+    const connY1 = isAbove ? labelY + labelH       : timelineY + r;
+    const connY2 = isAbove ? timelineY - r         : dateY;
+    slide.addShape(pres.shapes.RECTANGLE, {
+      x: xC - SLIDE_W * 0.0008, y: Math.min(connY1, connY2),
+      w: SLIDE_W * 0.0015, h: Math.abs(connY2 - connY1),
+      fill: { color: dotFill },
+    });
+  });
+
+  if (d.caption) {
+    slide.addText(String(d.caption), {
+      x: M_LEFT, y: SLIDE_H - M_BOTTOM - SLIDE_H * 0.053,
+      w: CONTENT_W, h: SLIDE_H * 0.053,
+      fontFace: FONT_B, fontSize: 10, italic: true, color: t.muted, align: 'center',
+    });
+  }
+
+  return slide;
+}
+
+// ── Matrix 2×2 Slide ──────────────────────────────────────────────────────
+function buildMatrix2x2Slide(d) {
+  const slide = pres.addSlide();
+  const t     = getTheme(d);
+  slide.background = { color: t.bg };
+  addStandardChrome(slide, d, t, 26);
+
+  const matrixX = M_LEFT * 2;
+  const matrixY = BODY_Y;
+  const matrixW = SLIDE_W - matrixX - M_RIGHT * 0.75;
+  const matrixH = SLIDE_H - matrixY - M_BOTTOM * 2;
+  const midX    = matrixX + matrixW / 2;
+  const midY    = matrixY + matrixH / 2;
+  const lineT   = SLIDE_H * 0.007;
+
+  // Quadrant fills
+  [
+    [matrixX,       matrixY,       matrixW / 2, matrixH / 2, 'F9F9F9'],
+    [midX,          matrixY,       matrixW / 2, matrixH / 2, YELLOW_20],
+    [matrixX,       midY,          matrixW / 2, matrixH / 2, YELLOW_20],
+    [midX,          midY,          matrixW / 2, matrixH / 2, 'F9F9F9'],
+  ].forEach(([x, y, w, h, bg]) => {
+    slide.addShape(pres.shapes.RECTANGLE, {
+      x, y, w, h, fill: { color: bg }, line: { color: t.border, pt: 1 },
+    });
+  });
+
+  // Cross lines
+  slide.addShape(pres.shapes.RECTANGLE, {
+    x: matrixX, y: midY - lineT / 2, w: matrixW, h: lineT,
+    fill: { color: YELLOW },
+  });
+  slide.addShape(pres.shapes.RECTANGLE, {
+    x: midX - lineT / 2, y: matrixY, w: lineT, h: matrixH,
+    fill: { color: YELLOW },
+  });
+
+  // Quadrant labels
+  const qLabels = d.quadrant_labels || ['', '', '', ''];
+  const qPad    = matrixW * 0.015;
+  const qH      = SLIDE_H * 0.073;
+  [
+    [matrixX + qPad, matrixY + qPad],
+    [midX    + qPad, matrixY + qPad],
+    [matrixX + qPad, midY    + qPad],
+    [midX    + qPad, midY    + qPad],
+  ].forEach(([qx, qy], qi) => {
+    if (qLabels[qi]) {
+      slide.addText(String(qLabels[qi]).toUpperCase(), {
+        x: qx, y: qy, w: matrixW / 2 - qPad * 2, h: qH,
+        fontFace: FONT_H, fontSize: 9, bold: true, color: t.muted, valign: 'top',
+      });
+    }
+  });
+
+  // Axis labels
+  if (d.x_label) {
+    slide.addText(String(d.x_label).toUpperCase(), {
+      x: matrixX, y: matrixY + matrixH + SLIDE_H * 0.013,
+      w: matrixW, h: SLIDE_H * 0.047,
+      fontFace: FONT_H, fontSize: 11, bold: true, color: t.titleClr, align: 'center',
+    });
+  }
+  if (d.y_label) {
+    slide.addText(String(d.y_label).toUpperCase(), {
+      x: M_LEFT * 0.2, y: matrixY, w: M_LEFT * 1.5, h: matrixH,
+      fontFace: FONT_H, fontSize: 11, bold: true, color: t.titleClr,
+      align: 'center', valign: 'middle', rotate: 270,
+    });
+  }
+
+  // Scatter items
+  (d.items || []).forEach(item => {
+    const px  = matrixX + (item.x || 0.5) * matrixW - SLIDE_W * 0.011;
+    const py  = matrixY + (1 - (item.y || 0.5)) * matrixH - SLIDE_H * 0.02;
+    const sz  = Math.max(SLIDE_W * 0.015, Math.min(SLIDE_W * 0.038, (item.size || 20) / 60 * SLIDE_W * 0.038));
+    slide.addShape(pres.shapes.ELLIPSE, {
+      x: px, y: py, w: sz, h: sz,
+      fill: { color: YELLOW }, line: { color: t.titleClr, pt: 1 },
+    });
+    slide.addText(String(item.label || ''), {
+      x: px + sz + SLIDE_W * 0.004, y: py, w: SLIDE_W * 0.113, h: sz,
+      fontFace: FONT_B, fontSize: 10, bold: true, color: t.titleClr, valign: 'middle',
+    });
+  });
+
+  return slide;
+}
+
+// ── Scorecard / RAG Table Slide ───────────────────────────────────────────
+function buildScorecardSlide(d) {
+  const slide = pres.addSlide();
+  const t     = getTheme(d);
+  slide.background = { color: t.bg };
+  addStandardChrome(slide, d, t, 26);
+
+  const items     = d.items || [];
+  const tableRows = [[
+    { text: 'METRIC',  options: { bold: true, color: DARK_GRAY, fill: { color: YELLOW }, fontSize: 11, fontFace: FONT_H, border: { type: 'solid', color: DARK_GRAY, pt: 0.5 } } },
+    { text: 'STATUS',  options: { bold: true, color: DARK_GRAY, fill: { color: YELLOW }, fontSize: 11, fontFace: FONT_H, align: 'center', border: { type: 'solid', color: DARK_GRAY, pt: 0.5 } } },
+    { text: 'VALUE',   options: { bold: true, color: DARK_GRAY, fill: { color: YELLOW }, fontSize: 11, fontFace: FONT_H, align: 'center', border: { type: 'solid', color: DARK_GRAY, pt: 0.5 } } },
+    { text: 'COMMENT', options: { bold: true, color: DARK_GRAY, fill: { color: YELLOW }, fontSize: 11, fontFace: FONT_H, border: { type: 'solid', color: DARK_GRAY, pt: 0.5 } } },
+  ]];
+
+  items.forEach((item, ri) => {
+    const bg       = ri % 2 === 1 ? 'F5F5F5' : WHITE;
+    const status   = (item.status || 'green').toLowerCase();
+    const ragColor = status === 'green' ? GREEN : status === 'red' ? RED : YELLOW;
+    const ragLabel = status === 'green' ? '● ON TRACK' : status === 'red' ? '● BREACH' : '● AT RISK';
+    tableRows.push([
+      { text: String(item.metric  || '').toUpperCase(), options: { bold: true, color: t.titleClr, fill: { color: bg }, fontSize: 11, fontFace: FONT_H, border: { type: 'solid', color: GRAY_20, pt: 0.5 } } },
+      { text: ragLabel,                                 options: { color: ragColor, fill: { color: bg }, fontSize: 11, fontFace: FONT_H, bold: true, align: 'center', border: { type: 'solid', color: GRAY_20, pt: 0.5 } } },
+      { text: String(item.value   || ''),               options: { color: t.bodyClr, fill: { color: bg }, fontSize: 11, fontFace: FONT_B, align: 'center', border: { type: 'solid', color: GRAY_20, pt: 0.5 } } },
+      { text: String(item.comment || ''),               options: { color: t.muted,   fill: { color: bg }, fontSize: 11, fontFace: FONT_B, border: { type: 'solid', color: GRAY_20, pt: 0.5 } } },
+    ]);
+  });
+
+  const tableH = SLIDE_H - BODY_Y - M_BOTTOM * 1.5;
+  slide.addTable(tableRows, {
+    x: M_LEFT, y: BODY_Y, w: CONTENT_W,
+    colW: [CONTENT_W * 0.28, CONTENT_W * 0.20, CONTENT_W * 0.24, CONTENT_W * 0.28],
+    rowH: Math.min(SLIDE_H * 0.096, tableH / (items.length + 1)),
+  });
+
+  return slide;
+}
+
+// ── Comparison Slide (A vs B) ─────────────────────────────────────────────
+function buildComparisonSlide(d) {
+  const slide = pres.addSlide();
+  const t     = getTheme(d);
+  slide.background = { color: t.bg };
+  addStandardChrome(slide, d, t, 26);
+
+  const rows   = d.rows        || [];
+  const winner = d.winner      || 'right';
+  const lLabel = d.left_label  || 'OPTION A';
+  const rLabel = d.right_label || 'OPTION B';
+
+  const col1W = CONTENT_W * 0.2;
+  const colRem = CONTENT_W - col1W - CONTENT_W * 0.008;
+  const col2W  = colRem / 2;
+  const col3W  = colRem / 2;
+  const hdrH   = SLIDE_H * 0.069;
+  const rowH   = SLIDE_H * 0.083;
+  const colGap = CONTENT_W * 0.004;
+  const hdrY   = BODY_Y;
+
+  // Header cells
+  const col2X = M_LEFT + col1W + colGap;
+  const col3X = col2X + col2W + colGap;
+
+  slide.addShape(pres.shapes.RECTANGLE, { x: M_LEFT, y: hdrY, w: col1W, h: hdrH, fill: { color: GRAY_20 } });
+  slide.addShape(pres.shapes.RECTANGLE, { x: col2X,  y: hdrY, w: col2W, h: hdrH, fill: { color: winner === 'left'  ? YELLOW : 'F5F5F5' } });
+  slide.addShape(pres.shapes.RECTANGLE, { x: col3X,  y: hdrY, w: col3W, h: hdrH, fill: { color: winner === 'right' ? YELLOW : 'F5F5F5' } });
+
+  // Winner accent stripe
+  const stripeW = CONTENT_W * 0.005;
+  if (winner === 'right') {
+    slide.addShape(pres.shapes.RECTANGLE, { x: col3X - stripeW / 2, y: hdrY, w: stripeW, h: hdrH, fill: { color: YELLOW } });
+  } else {
+    slide.addShape(pres.shapes.RECTANGLE, { x: col2X - stripeW / 2, y: hdrY, w: stripeW, h: hdrH, fill: { color: YELLOW } });
+  }
+
+  slide.addText('', { x: M_LEFT, y: hdrY, w: col1W, h: hdrH, fontFace: FONT_B, fontSize: 12, color: t.titleClr, valign: 'middle' });
+  slide.addText(String(lLabel).toUpperCase(), { x: col2X, y: hdrY, w: col2W, h: hdrH, fontFace: FONT_H, fontSize: 12, bold: true, color: t.titleClr, align: 'center', valign: 'middle' });
+  slide.addText(String(rLabel).toUpperCase(), { x: col3X, y: hdrY, w: col3W, h: hdrH, fontFace: FONT_H, fontSize: 12, bold: true, color: t.titleClr, align: 'center', valign: 'middle' });
+
+  const divH = SLIDE_H * 0.002;
+
+  rows.forEach((row, ri) => {
+    const rowY = hdrY + hdrH + SLIDE_H * 0.007 + ri * rowH;
+    const bg   = ri % 2 === 1 ? 'F5F5F5' : WHITE;
+    slide.addShape(pres.shapes.RECTANGLE, { x: M_LEFT, y: rowY, w: col1W, h: rowH, fill: { color: bg } });
+    slide.addShape(pres.shapes.RECTANGLE, { x: col2X,  y: rowY, w: col2W, h: rowH, fill: { color: winner === 'left'  ? YELLOW_20 : bg } });
+    slide.addShape(pres.shapes.RECTANGLE, { x: col3X,  y: rowY, w: col3W, h: rowH, fill: { color: winner === 'right' ? YELLOW_20 : bg } });
+
+    slide.addText(String(row.label || '').toUpperCase(), { x: M_LEFT, y: rowY, w: col1W, h: rowH, fontFace: FONT_H, fontSize: 11, bold: true, color: t.titleClr, valign: 'middle' });
+    slide.addText(String(row.left  || ''),               { x: col2X,  y: rowY, w: col2W, h: rowH, fontFace: FONT_B, fontSize: 11, color: t.bodyClr, align: 'center', valign: 'middle' });
+    slide.addText(String(row.right || ''),               { x: col3X,  y: rowY, w: col3W, h: rowH, fontFace: FONT_B, fontSize: 11, color: t.bodyClr, align: 'center', valign: 'middle' });
+    slide.addShape(pres.shapes.RECTANGLE, { x: M_LEFT, y: rowY + rowH - divH, w: CONTENT_W, h: divH, fill: { color: GRAY_20 } });
+  });
+
+  return slide;
+}
+
+// ── Icon Grid Slide ───────────────────────────────────────────────────────
+function buildIconGridSlide(d) {
+  const slide = pres.addSlide();
+  const t     = getTheme(d);
+  slide.background = { color: t.bg };
+  addStandardChrome(slide, d, t, 26);
+
+  const items   = d.items || [];
+  const cols    = d.columns || Math.min(4, Math.max(1, Math.ceil(Math.sqrt(items.length))));
+  const rows    = Math.ceil(items.length / cols);
+  const cellW   = CONTENT_W / cols;
+  const cellH   = (SLIDE_H - BODY_Y - M_BOTTOM) / rows;
+  const iconMap = {
+    shield: '🛡', chart: '📊', clock: '⏱', star: '★', check: '✓',
+    lock: '🔒', globe: '🌐', dollar: '$', people: '👥', trophy: '🏆',
+    lightning: '⚡', target: '🎯', default: '●',
+  };
+
+  items.forEach((item, idx) => {
+    const col    = idx % cols;
+    const row    = Math.floor(idx / cols);
+    const cx     = M_LEFT + col * cellW + cellW * 0.008;
+    const cy     = BODY_Y + row * cellH + cellH * 0.013;
+    const iconSz = Math.min(SLIDE_W * 0.053, cellW * 0.3, cellH * 0.3);
+    const iconX  = cx + (cellW - iconSz * 2 - cellW * 0.008) / 2;
+    const iconChar = iconMap[item.icon] || iconMap.default;
+
+    slide.addShape(pres.shapes.ROUNDED_RECTANGLE, {
+      x: iconX, y: cy + cellH * 0.013, w: iconSz, h: iconSz,
+      fill: { color: YELLOW }, line: { color: YELLOW }, rectRadius: 0.15,
+    });
+    slide.addText(iconChar, {
+      x: iconX, y: cy + cellH * 0.013, w: iconSz, h: iconSz,
+      fontFace: 'Arial', fontSize: Math.round(iconSz * 30),
+      color: DARK_GRAY, align: 'center', valign: 'middle',
+    });
+
+    const titleY = cy + iconSz + cellH * 0.04;
+    const titleH = cellH * 0.12;
+    slide.addText((item.title || '').toUpperCase(), {
+      x: cx, y: titleY, w: cellW * 0.984, h: titleH,
+      fontFace: FONT_H, fontSize: 12, bold: true,
+      color: t.titleClr, align: 'center',
+    });
+
+    if (item.body) {
+      slide.addText(String(item.body), {
+        x: cx, y: titleY + titleH, w: cellW * 0.984, h: cellH - iconSz - cellH * 0.04 - titleH - cellH * 0.013,
+        fontFace: FONT_B, fontSize: 11, color: t.muted,
+        align: 'center', valign: 'top',
+      });
+    }
+  });
+
+  return slide;
+}
+
+// ── Executive Summary Slide ───────────────────────────────────────────────
+function buildExecutiveSummarySlide(d) {
+  const slide = pres.addSlide();
+  const t     = getTheme(d);
+  slide.background = { color: t.bg };
+
+  addLogo(slide, LOGO_X, LOGO_Y, LOGO_MAX_W, LOGO_MAX_H, t.logo);
+
+  const barW    = SLIDE_W * 0.037;
+  slide.addShape(pres.shapes.RECTANGLE, {
+    x: 0, y: 0, w: barW, h: SLIDE_H, fill: { color: YELLOW },
+  });
+
+  const textX  = barW + SLIDE_W * 0.034;
+  const textW  = SLIDE_W - textX - M_RIGHT;
+  const headY  = SLIDE_H * 0.133;
+  const headH  = SLIDE_H * 0.333;
+  const divY   = headY + headH;
+
+  slide.addText((d.headline || d.title || '').toUpperCase(), {
+    x: textX, y: headY, w: textW, h: headH,
+    fontFace: FONT_H, fontSize: 28, bold: true,
+    color: t.titleClr, valign: 'middle',
+  });
+  slide.addShape(pres.shapes.RECTANGLE, {
+    x: textX, y: divY, w: textW, h: ULINE_H,
+    fill: { color: YELLOW },
+  });
+
+  const bulletY = divY + SLIDE_H * 0.027;
+  const ctaH    = d.call_to_action ? SLIDE_H * 0.083 : 0;
+  const bulletH = SLIDE_H - bulletY - M_BOTTOM - ctaH - SLIDE_H * 0.027;
+  const points  = d.supporting_points || d.bullets || [];
+
+  if (points.length > 0) {
+    slide.addText(points.map(p => ({
+      text: String(p),
+      options: { bullet: { type: 'bullet' }, paraSpaceBef: 8, paraSpaceAft: 8 },
+    })), {
+      x: textX, y: bulletY, w: textW, h: bulletH,
+      fontFace: FONT_B, fontSize: 16, color: t.bodyClr, valign: 'top',
+    });
+  }
+
+  if (d.call_to_action) {
+    const ctaY = SLIDE_H - M_BOTTOM - ctaH;
+    slide.addShape(pres.shapes.RECTANGLE, {
+      x: textX, y: ctaY, w: textW, h: ctaH,
+      fill: { color: YELLOW_20 },
+    });
+    slide.addText(String(d.call_to_action), {
+      x: textX + textW * 0.015, y: ctaY, w: textW * 0.97, h: ctaH,
+      fontFace: FONT_H, fontSize: 13, bold: true,
+      color: t.titleClr, valign: 'middle',
+    });
+  }
+
+  return slide;
+}
+
+// ── Image + Content Side-by-Side Slide ───────────────────────────────────
+function buildImageContentSlide(d) {
+  const slide = pres.addSlide();
+  const t     = getTheme(d);
+  slide.background = { color: t.bg };
+  addStandardChrome(slide, d, t, 26);
+
+  const imgSide = d.image_side === 'right' ? 'right' : 'left';
+  const colGap  = CONTENT_W * 0.023;
+  const colW    = (CONTENT_W - colGap) / 2;
+  const imgX    = imgSide === 'left'  ? M_LEFT             : M_LEFT + colW + colGap;
+  const textX   = imgSide === 'left'  ? M_LEFT + colW + colGap : M_LEFT;
+
+  if (d.data) {
+    try {
+      slide.addImage({
+        data: 'data:image/' + (d.format || 'png') + ';base64,' + d.data,
+        x: imgX, y: BODY_Y, w: colW, h: BODY_H,
+      });
+    } catch (e) {
+      slide.addShape(pres.shapes.RECTANGLE, {
+        x: imgX, y: BODY_Y, w: colW, h: BODY_H,
+        fill: { color: YELLOW_20 }, line: { color: t.border },
+      });
+    }
+  } else {
+    slide.addShape(pres.shapes.RECTANGLE, {
+      x: imgX, y: BODY_Y, w: colW, h: BODY_H,
+      fill: { color: YELLOW_20 }, line: { color: YELLOW },
+    });
+    slide.addText(String(d.image_placeholder || 'IMAGE'), {
+      x: imgX, y: BODY_Y, w: colW, h: BODY_H,
+      fontFace: FONT_B, fontSize: 12, italic: true, color: t.muted,
+      align: 'center', valign: 'middle',
+    });
+  }
+
+  const bullets = d.bullets || [];
+  if (bullets.length > 0) {
+    slide.addText(bullets.map(b => ({
+      text: String(b),
+      options: { bullet: { type: 'bullet' }, paraSpaceBef: 8, paraSpaceAft: 8 },
+    })), {
+      x: textX, y: BODY_Y, w: colW, h: BODY_H,
+      fontFace: FONT_B, fontSize: 15, color: t.bodyClr, valign: 'top',
+    });
+  } else if (d.text) {
+    slide.addText(String(d.text), {
+      x: textX, y: BODY_Y, w: colW, h: BODY_H,
+      fontFace: FONT_B, fontSize: 15, color: t.bodyClr, valign: 'top',
+    });
+  }
+
+  return slide;
+}
+
+// ── Card Grid Slide ───────────────────────────────────────────────────────
+function buildCardGridSlide(d) {
+  const slide = pres.addSlide();
+  const t     = getTheme(d);
+  slide.background = { color: t.bg };
+
+  addLogo(slide, LOGO_X, LOGO_Y, LOGO_MAX_W, LOGO_MAX_H, t.logo);
+
+  if (d.section_label) {
+    slide.addText(String(d.section_label).toUpperCase(), {
+      x: M_LEFT * 0.7, y: SLIDE_H * 0.027, w: CONTENT_W * 0.34, h: SLIDE_H * 0.047,
+      fontFace: FONT_H, fontSize: 11, bold: true, color: t.muted,
+    });
+  }
+
+  const headY = d.section_label ? SLIDE_H * 0.087 : SLIDE_H * 0.107;
+  if (d.title) {
+    slide.addText(d.title.toUpperCase(), {
+      x: M_LEFT, y: headY, w: CONTENT_W, h: SLIDE_H * 0.2,
+      fontFace: FONT_H, fontSize: 32, bold: true,
+      color: t.titleClr, align: 'center', valign: 'middle',
+    });
+  }
+
+  const subY = headY + SLIDE_H * 0.213;
+  if (d.subtitle) {
+    slide.addText(d.subtitle, {
+      x: M_LEFT, y: subY, w: CONTENT_W, h: SLIDE_H * 0.073,
+      fontFace: FONT_B, fontSize: 15, italic: true,
+      color: YELLOW, align: 'center', valign: 'middle',
+    });
+  }
+
+  const cards = d.cards || [];
+  if (!cards.length) return slide;
+
+  const cols  = Math.min(6, d.columns || Math.min(4, cards.length));
+  const gap   = CONTENT_W * 0.013;
+  const cardY = d.subtitle ? subY + SLIDE_H * 0.107 : subY + SLIDE_H * 0.027;
+  const cardH = d.card_height || Math.max(SLIDE_H * 0.24, SLIDE_H - cardY - M_BOTTOM);
+  const cardW = (CONTENT_W - gap * (cols + 1)) / cols;
+
+  cards.forEach((card, idx) => {
+    const col      = idx % cols;
+    const row      = Math.floor(idx / cols);
+    const cx       = M_LEFT + gap + col * (cardW + gap);
+    const cy       = cardY + row * (cardH + SLIDE_H * 0.02);
+    const raw      = (card.color || 'yellow').replace('#', '');
+    const cardFill = raw === 'yellow' ? YELLOW
+                   : raw === 'dark'   ? DARK_GRAY
+                   : raw === 'white'  ? WHITE
+                   : raw === 'gray'   ? t.cardBg : raw;
+    const onYellow = cardFill === YELLOW;
+    const onDark   = cardFill === DARK_GRAY;
+    const cardTxt  = onYellow ? DARK_GRAY : onDark ? WHITE : t.bodyClr;
+    const px       = cardW * 0.046;
+    const textH    = cardH - cardH * 0.16;
+
+    slide.addShape(pres.shapes.RECTANGLE, {
+      x: cx, y: cy, w: cardW, h: cardH,
+      fill: { color: cardFill }, line: { color: cardFill },
+    });
+    slide.addText(card.title || card.text || '', {
+      x: cx + px, y: cy + cardH * 0.08, w: cardW - px * 2, h: textH,
+      fontFace: FONT_B, fontSize: card.font_size || 14, bold: !!card.bold,
+      color: cardTxt, align: 'center', valign: 'middle',
+    });
+
+    if (card.subtitle) {
+      slide.addText(card.subtitle, {
+        x: cx + px, y: cy + cardH - cardH * 0.13, w: cardW - px * 2, h: cardH * 0.1,
+        fontFace: FONT_B, fontSize: 10,
+        color: onYellow ? '555555' : YELLOW, align: 'center',
+      });
+    }
+  });
+
+  return slide;
+}
+
+// ── Hub-Spoke Slide ───────────────────────────────────────────────────────
+function buildHubSpokeSlide(d) {
+  const slide = pres.addSlide();
+  const t     = getTheme(d);
+  slide.background = { color: t.bg };
+
+  addLogo(slide, LOGO_X, LOGO_Y, LOGO_MAX_W, LOGO_MAX_H, t.logo);
+
+  if (d.section_label) {
+    slide.addText(String(d.section_label).toUpperCase(), {
+      x: M_LEFT * 0.7, y: SLIDE_H * 0.027, w: CONTENT_W * 0.34, h: SLIDE_H * 0.047,
+      fontFace: FONT_H, fontSize: 11, bold: true, color: t.muted,
+    });
+  }
+
+  slide.addText((d.title || '').toUpperCase(), {
+    x: M_LEFT, y: SLIDE_H * 0.087, w: CONTENT_W, h: SLIDE_H * 0.12,
+    fontFace: FONT_H, fontSize: 24, bold: true,
+    color: t.titleClr, align: 'center', valign: 'middle',
+  });
+
+  // Hub rectangle: occupies middle-right third of slide
+  const hubX = SLIDE_W * 0.323;
+  const hubY = SLIDE_H * 0.227;
+  const hubW = SLIDE_W * 0.36;
+  const hubH = SLIDE_H - hubY - M_BOTTOM * 2;
+  const hub  = d.hub || {};
+  const rawHubClr = (hub.color || 'yellow').replace('#', '');
+  const hubFill   = rawHubClr === 'yellow' ? YELLOW : rawHubClr;
+  const hubTxt    = hubFill === YELLOW ? DARK_GRAY : WHITE;
+
+  slide.addShape(pres.shapes.RECTANGLE, {
+    x: hubX, y: hubY, w: hubW, h: hubH,
+    fill: { color: hubFill }, line: { color: hubFill },
+  });
+
+  const hubLabel = hub.label || hub.title || '';
+  const hubLblH  = SLIDE_H * 0.067;
+  const hubLblPad = hubW * 0.031;
+  if (hubLabel) {
+    slide.addText(hubLabel.toUpperCase(), {
+      x: hubX + hubLblPad, y: hubY + hubLblPad, w: hubW - hubLblPad * 2, h: hubLblH,
+      fontFace: FONT_H, fontSize: 13, bold: true,
+      color: hubTxt, align: 'center',
+    });
+  }
+
+  const hubItems = hub.items || [];
+  if (hubItems.length > 0) {
+    const hubBodyY = hubY + (hubLabel ? hubLblH + hubLblPad : hubLblPad);
+    const hubBodyH = hubH - (hubLabel ? hubLblH + hubLblPad * 2 : hubLblPad * 2);
+    slide.addText(hubItems.map(it => ({ text: String(it), options: { paraSpaceBef: 4, paraSpaceAft: 4 } })), {
+      x: hubX + hubLblPad, y: hubBodyY, w: hubW - hubLblPad * 2, h: hubBodyH,
+      fontFace: FONT_B, fontSize: 12.5,
+      color: hubTxt, align: 'center', valign: 'middle',
+    });
+  }
+
+  // Spokes — left and right boxes
+  const spokes = d.spokes || [];
+  const spokeBoxW  = hubX - M_LEFT - SLIDE_W * 0.015;
+  const leftX      = M_LEFT;
+  const rightX     = hubX + hubW + SLIDE_W * 0.015;
+  const rightBoxW  = SLIDE_W - rightX - M_RIGHT;
+  const slots      = { left: [], right: [] };
+
+  spokes.forEach(s => {
+    const side = (s.side || 'left').toLowerCase();
+    slots[side] = slots[side] || [];
+    slots[side].push(s);
+  });
+
+  ['left', 'right'].forEach(side => {
+    const list = slots[side] || [];
+    if (!list.length) return;
+    const bxW   = side === 'left' ? spokeBoxW : rightBoxW;
+    const bxX   = side === 'left' ? leftX : rightX;
+    const gapFrac = SLIDE_H * 0.024;
+    const bH    = (hubH - gapFrac * (list.length - 1)) / list.length;
+    const lblH  = SLIDE_H * 0.056;
+    const lblPad = bxW * 0.04;
+
+    list.forEach((spoke, ri) => {
+      const by    = hubY + ri * (bH + gapFrac);
+      const label = spoke.label || spoke.title || '';
+      const items = spoke.items || [];
+
+      slide.addShape(pres.shapes.RECTANGLE, {
+        x: bxX, y: by, w: bxW, h: bH,
+        fill: { color: t.cardBg }, line: { color: t.border },
+      });
+
+      if (label) {
+        slide.addText(label.toUpperCase(), {
+          x: bxX + lblPad, y: by + lblPad * 0.5, w: bxW - lblPad * 2, h: lblH,
+          fontFace: FONT_H, fontSize: 12, bold: true,
+          color: t.dark ? YELLOW : t.titleClr, align: 'center',
+        });
+      }
+
+      if (items.length > 0) {
+        const itemsY = by + (label ? lblH + lblPad : lblPad * 0.5);
+        const itemsH = bH - (label ? lblH + lblPad * 1.5 : lblPad);
+        slide.addText(items.join('\n'), {
+          x: bxX + lblPad, y: itemsY, w: bxW - lblPad * 2, h: itemsH,
+          fontFace: FONT_B, fontSize: 12, color: t.muted,
+          align: 'center', valign: 'middle',
+        });
+      }
+
+      // Connector arrow line
+      const arY    = by + bH / 2 - SLIDE_H * 0.003;
+      const connX  = side === 'left' ? bxX + bxW  : hubX;
+      const connW  = side === 'left' ? hubX - bxX - bxW - SLIDE_W * 0.015
+                                     : bxX - hubX - hubW - SLIDE_W * 0.015;
+      slide.addShape(pres.shapes.RECTANGLE, {
+        x: connX, y: arY, w: Math.abs(connW), h: SLIDE_H * 0.005,
+        fill: { color: t.border },
+      });
+      slide.addText(side === 'left' ? '▶' : '◀', {
+        x: side === 'left' ? hubX - SLIDE_W * 0.021 : bxX - SLIDE_W * 0.004,
+        y: arY - SLIDE_H * 0.019, w: SLIDE_W * 0.021, h: SLIDE_H * 0.037,
+        fontFace: FONT_B, fontSize: 11, color: t.border, align: 'center',
+      });
+    });
+  });
+
+  return slide;
+}
+
+// ── Agenda Slide ──────────────────────────────────────────────────────────
+// (Renders a numbered card grid: one card per agenda item.)
+function buildAgendaSlide(d) {
+  const slide = pres.addSlide();
+  slide.background = { color: DARK_GRAY };
+
+  // Header banner
+  const bannerH = SLIDE_H * 0.2;
+  slide.addShape(pres.shapes.RECTANGLE, {
+    x: 0, y: 0, w: SLIDE_W * 0.553, h: bannerH,
+    fill: { color: DARK_GRAY },
+  });
+  slide.addText((d.title || 'AGENDA').toUpperCase(), {
+    x: M_LEFT, y: 0, w: CONTENT_W * 0.553, h: bannerH * 0.67,
+    fontFace: FONT_H, fontSize: 36, bold: true,
+    color: YELLOW, valign: 'bottom',
+  });
+  if (d.subtitle) {
+    slide.addText(d.subtitle, {
+      x: M_LEFT, y: bannerH * 0.67, w: CONTENT_W * 0.553, h: bannerH * 0.33,
+      fontFace: FONT_B, fontSize: 13, color: GRAY_60, valign: 'top',
+    });
+  }
+
+  addLogo(slide, LOGO_X, LOGO_Y, LOGO_MAX_W, LOGO_MAX_H, 'yellow');
+
+  const items = d.items || [];
+  const cols  = d.columns || Math.min(3, Math.max(1, Math.ceil(items.length / 2)));
+  const rows  = Math.ceil(items.length / cols);
+  const gap   = CONTENT_W * 0.015;
+  const cardW = (CONTENT_W - gap * (cols - 1)) / cols;
+  const cardY = bannerH + SLIDE_H * 0.027;
+  const cardH = (SLIDE_H - cardY - M_BOTTOM - gap * (rows - 1)) / rows;
+  const numH  = cardH * 0.28;
+  const bodyH = cardH - numH - cardH * 0.067;
+
+  items.forEach((item, idx) => {
+    const col = idx % cols;
+    const row = Math.floor(idx / cols);
+    const cx  = M_LEFT + col * (cardW + gap);
+    const cy  = cardY + row * (cardH + gap);
+    const num = String(idx + 1).padStart(2, '0');
+
+    // Number badge
+    slide.addShape(pres.shapes.RECTANGLE, {
+      x: cx, y: cy, w: cardW, h: numH,
+      fill: { color: YELLOW },
+    });
+    slide.addText(num, {
+      x: cx, y: cy, w: cardW, h: numH,
+      fontFace: FONT_H, fontSize: 18, bold: true,
+      color: DARK_GRAY, align: 'center', valign: 'middle',
+    });
+
+    // Body card
+    slide.addShape(pres.shapes.RECTANGLE, {
+      x: cx, y: cy + numH, w: cardW, h: cardH - numH,
+      fill: { color: '2A2A2A' }, line: { color: '2A2A2A' },
+    });
+
+    const titleItem = item.title || item.label || String(item);
+    slide.addText(titleItem, {
+      x: cx + cardW * 0.05, y: cy + numH + cardH * 0.04,
+      w: cardW * 0.9, h: bodyH * 0.45,
+      fontFace: FONT_H, fontSize: 13, bold: true,
+      color: WHITE, align: 'center', valign: 'middle',
+    });
+
+    if (item.description) {
+      slide.addText(String(item.description), {
+        x: cx + cardW * 0.05, y: cy + numH + cardH * 0.04 + bodyH * 0.45,
+        w: cardW * 0.9, h: bodyH * 0.55,
+        fontFace: FONT_B, fontSize: 11, color: GRAY_60,
+        align: 'center', valign: 'top',
+      });
+    }
+  });
+
+  return slide;
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// ROUTER — dispatch each slide spec to its builder
+// ═══════════════════════════════════════════════════════════════════════════
+for (const s of (spec.slides || [])) {
+  try {
+    switch (s.type) {
+      case 'title':             buildTitleSlide(s);            break;
+      case 'content':           buildContentSlide(s);          break;
+      case 'two_column':        buildTwoColumnSlide(s);        break;
+      case 'three_column':      buildThreeColumnSlide(s);      break;
+      case 'metrics':           buildMetricsSlide(s);          break;
+      case 'process':           buildProcessSlide(s);          break;
+      case 'quote':             buildQuoteSlide(s);            break;
+      case 'section_divider':   buildSectionDividerSlide(s);   break;
+      case 'cta':               buildCtaSlide(s);              break;
+      case 'image':             buildImageSlide(s);            break;
+      case 'table':             buildTableSlide(s);            break;
+      case 'chart':             buildChartSlide(s);            break;
+      case 'timeline':          buildTimelineSlide(s);         break;
+      case 'matrix_2x2':        buildMatrix2x2Slide(s);        break;
+      case 'scorecard':         buildScorecardSlide(s);        break;
+      case 'comparison':        buildComparisonSlide(s);       break;
+      case 'icon_grid':         buildIconGridSlide(s);         break;
+      case 'executive_summary': buildExecutiveSummarySlide(s); break;
+      case 'image_content':     buildImageContentSlide(s);     break;
+      case 'card_grid':         buildCardGridSlide(s);         break;
+      case 'hub_spoke':         buildHubSpokeSlide(s);         break;
+      case 'agenda':            buildAgendaSlide(s);           break;
+      default:                  buildContentSlide(s);          break;
+    }
+  } catch (err) {
+    process.stderr.write('WARN: slide[' + s.type + '] error: ' + err.message + '\n');
+  }
+}
+
+// ── Write output ──────────────────────────────────────────────────────────
+const outName = spec.filename || 'output.pptx';
+pres.writeFile({ fileName: outName })
+  .then(() => {
+    process.stdout.write('SUCCESS:' + outName + '\n');
+  })
+  .catch(err => {
+    process.stderr.write('ERROR:' + err.message + '\n');
+    process.exit(1);
+  });
+""".strip()
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Embedded Node.js freestyle wrapper
+# ─────────────────────────────────────────────────────────────────────────────
+_FREESTYLE_WRAPPER = r"""
+'use strict';
+const fs      = require('fs');
+const path    = require('path');
+const pptxgen = require('pptxgenjs');
+
+// ═══════════════════════════════════════════════════════════════════════════
+// SLIDE CANVAS  —  LAYOUT_WIDE  (PptxGenJS built-in, 13.333" × 7.5")
+// https://gitbrent.github.io/PptxGenJS/docs/usage-pres-options/
+// ═══════════════════════════════════════════════════════════════════════════
+const SLIDE_W = 13.333;
+const SLIDE_H = 7.5;
+
+// Derived layout helpers (all math relative to SLIDE_W / SLIDE_H)
+const M_LEFT    = SLIDE_W * 0.0375;
+const M_RIGHT   = SLIDE_W * 0.0375;
+const M_TOP     = SLIDE_H * 0.04;
+const M_BOTTOM  = SLIDE_H * 0.04;
+const CONTENT_W = SLIDE_W - M_LEFT - M_RIGHT;
+const CONTENT_H = SLIDE_H - M_TOP  - M_BOTTOM;
+
+// ── Brand palette ──────────────────────────────────────────────────────────
+const YELLOW    = 'FEC00F';
+const DARK_GRAY = '212121';
+const WHITE     = 'FFFFFF';
+const GRAY_60   = '999999';
+const GRAY_20   = 'DDDDDD';
+const YELLOW_20 = 'FEF7D8';
+const GREEN     = '22C55E';
+const RED       = 'EB2F5C';
+
+// ── Brand fonts ────────────────────────────────────────────────────────────
+const FONT_H = 'Rajdhani';
+const FONT_B = 'Quicksand';
+
+// ── Logos ──────────────────────────────────────────────────────────────────
+const assetsDir = path.join(__dirname, 'assets');
+function loadLogoData(name) {
+  const p = path.join(assetsDir, name);
+  if (fs.existsSync(p)) return 'data:image/png;base64,' + fs.readFileSync(p).toString('base64');
+  return null;
+}
+const LOGOS = {
+  full:   loadLogoData('potomac-full-logo.png'),
+  black:  loadLogoData('potomac-icon-black.png'),
+  yellow: loadLogoData('potomac-icon-yellow.png'),
+};
+
+// Logo aspect-ratio constants
 const LOGO_DIMS = {
   full:   { aspect: 3.6 },
   black:  { aspect: 1.0 },
   yellow: { aspect: 1.0 },
 };
 
-function getLogoDisplayDims(variant, maxW, maxH) {
-  const dims = LOGO_DIMS[variant] || LOGO_DIMS.full;
-  const aspect = dims.aspect;
-  let w, h;
-  if (maxW / maxH > aspect) {
-    h = maxH;
-    w = h * aspect;
-  } else {
-    w = maxW;
-    h = w / aspect;
-  }
-  return { w, h };
+function fitDims(aspect, maxW, maxH) {
+  if (maxW / maxH > aspect) { const h = maxH; return { w: h * aspect, h }; }
+  const w = maxW; return { w, h: w / aspect };
 }
 
-// ── Logo helper - preserves aspect ratio, never stretches ─────────────────
-function addLogo(slide, x, y, maxW, maxH, variant) {
-  const data = variant === 'black'  ? LOGOS.black  :
-               variant === 'yellow' ? LOGOS.yellow :
-               LOGOS.full;
+// Place a logo centered inside a bounding box, preserving aspect ratio.
+function addLogo(slide, bx, by, bw, bh, variant) {
+  const data = variant === 'black'  ? LOGOS.black
+             : variant === 'yellow' ? LOGOS.yellow
+             :                        LOGOS.full;
+  const asp  = (LOGO_DIMS[variant] || LOGO_DIMS.full).aspect;
   if (data) {
-    const { w, h } = getLogoDisplayDims(variant, maxW, maxH);
-    const xOff = x + (maxW - w) / 2;
-    const yOff = y + (maxH - h) / 2;
-    slide.addImage({ data, x: xOff, y: yOff, w, h });
+    const { w, h } = fitDims(asp, bw, bh);
+    slide.addImage({ data, x: bx + (bw - w) / 2, y: by + (bh - h) / 2, w, h });
   } else {
-    slide.addText('POTOMAC', {
-      x, y, maxW, maxH, fontFace: FONT_H, fontSize: 14, bold: true,
-      color: DARK_GRAY, align: 'center', valign: 'middle'
-    });
+    slide.addText('POTOMAC', { x: bx, y: by, w: bw, h: bh, fontFace: FONT_H, fontSize: 14, bold: true, color: DARK_GRAY, align: 'center', valign: 'middle' });
   }
 }
 
-// ── Presentation ──────────────────────────────────────────────────────────
+// ── Presentation ───────────────────────────────────────────────────────────
 const pres = new pptxgen();
 pres.author  = 'Potomac';
 pres.company = 'Potomac';
 pres.title   = __PRES_TITLE__;
-pres.defineLayout({ name: 'WIDE', width: 13.333, height: 7.5 });
-pres.layout  = 'WIDE';
+
+// LAYOUT_WIDE is a PptxGenJS built-in preset — no defineLayout() needed.
+// https://gitbrent.github.io/PptxGenJS/docs/usage-pres-options/
+pres.layout = 'LAYOUT_WIDE';
 
 // ═══════════════════════════════════════════════════════════════════════════
 // LLM FREESTYLE CODE
-// Available: pres, YELLOW, DARK_GRAY, WHITE, GRAY_60, GRAY_20, YELLOW_20,
-//            FONT_H, FONT_B, LOGOS, addLogo(), SLIDE_W, SLIDE_H, CONTENT_W
-// Canvas: 13.333" wide × 7.5" tall (LAYOUT_WIDE = standard PowerPoint 16:9).
+// Available: pres, SLIDE_W, SLIDE_H, M_LEFT, M_RIGHT, M_TOP, M_BOTTOM,
+//            CONTENT_W, CONTENT_H, YELLOW, DARK_GRAY, WHITE, GRAY_60,
+//            GRAY_20, YELLOW_20, GREEN, RED, FONT_H, FONT_B, LOGOS, addLogo()
+// Canvas: 13.333" wide × 7.5" tall  (LAYOUT_WIDE, standard 16:9 widescreen)
 // ═══════════════════════════════════════════════════════════════════════════
 
 __LLM_CODE__
@@ -1645,7 +1737,7 @@ __LLM_CODE__
 // END OF LLM CODE
 // ═══════════════════════════════════════════════════════════════════════════
 
-// ── Write output ──────────────────────────────────────────────────────────
+// ── Write output ───────────────────────────────────────────────────────────
 const __outFile__ = __OUTPUT_FILENAME__;
 pres.writeFile({ fileName: __outFile__ })
   .then(() => { process.stdout.write('SUCCESS:' + __outFile__ + '\n'); })
@@ -1677,6 +1769,7 @@ class PptxResult:
 def _ensure_pptx_modules() -> Optional[Path]:
     """
     Ensure the ``pptxgenjs`` npm package is installed in the persistent cache dir.
+    Returns the path to node_modules on success, or None on failure.
     """
     modules  = _PPTX_CACHE_DIR / "node_modules"
     pptx_pkg = modules / "pptxgenjs"
@@ -1719,7 +1812,7 @@ def _resolve_image_slides(spec: Dict[str, Any]) -> Dict[str, Any]:
     import base64
     import copy
 
-    spec = copy.deepcopy(spec)
+    spec   = copy.deepcopy(spec)
     slides = spec.get("slides", [])
     if not slides:
         return spec
@@ -1770,6 +1863,9 @@ def _resolve_image_slides(spec: Dict[str, Any]) -> Dict[str, Any]:
 class PptxSandbox:
     """
     Generates Potomac-branded .pptx files from a structured spec dict.
+
+    All slides are rendered using LAYOUT_WIDE (13.333" × 7.5", standard 16:9).
+    See: https://gitbrent.github.io/PptxGenJS/docs/usage-pres-options/
 
     The spec describes all slides; no code generation by the LLM is required.
     """
@@ -1822,7 +1918,6 @@ class PptxSandbox:
             (temp_dir / "spec.json").write_text(
                 json.dumps(spec, ensure_ascii=False, indent=2), encoding="utf-8"
             )
-
             (temp_dir / "presentation_builder.js").write_text(
                 _BUILDER_SCRIPT, encoding="utf-8"
             )
@@ -1913,7 +2008,9 @@ class PptxSandbox:
         """
         Generate a .pptx from raw pptxgenjs JavaScript code.
 
-        The caller supplies the slide-building logic.
+        The caller supplies the slide-building logic.  All brand constants,
+        layout helpers, logo loader, and the ``addLogo()`` function are pre-injected
+        so freestyle code can reference them directly.
         """
         import json as _json
 
@@ -1937,12 +2034,12 @@ class PptxSandbox:
                 if src.exists():
                     shutil.copy2(src, assets_temp / logo_file)
 
-            # ── 4. Build script ───────────────────────────────────────
+            # ── 4. Build script ─────────────────────────────────────────
             safe_fn = filename if filename.lower().endswith(".pptx") else filename + ".pptx"
             script  = _FREESTYLE_WRAPPER
-            script  = script.replace("__PRES_TITLE__",     _json.dumps(title))
+            script  = script.replace("__PRES_TITLE__",      _json.dumps(title))
             script  = script.replace("__OUTPUT_FILENAME__", _json.dumps(safe_fn))
-            script  = script.replace("__LLM_CODE__",       code)
+            script  = script.replace("__LLM_CODE__",        code)
 
             (temp_dir / "freestyle_builder.js").write_text(script, encoding="utf-8")
             (temp_dir / "package.json").write_text(
@@ -1985,7 +2082,7 @@ class PptxSandbox:
                 else:
                     return PptxResult(
                         False,
-                        error=f"Output .pptx not found",
+                        error="Output .pptx not found",
                         exec_time_ms=round((time.time() - start) * 1000, 2),
                     )
 
