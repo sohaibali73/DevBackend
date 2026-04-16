@@ -77,10 +77,10 @@ def get_model_config(model: str) -> Dict:
     base_model = model.rsplit("-", 1)[0] if model.count("-") > 3 else model
 
     return MODEL_CAPABILITIES.get(base_model, {
-        "max_output_tokens": 16384,  # Safe default
-        "context_window": 200000,
-        "supports_adaptive_thinking": False,
-        "supports_prompt_caching": False,
+        "max_output_tokens": 100000,  # Safe default
+        "context_window": 1000000,
+        "supports_adaptive_thinking": True,
+        "supports_prompt_caching": True,
         "default_top_p": 0.99,
     })
 
@@ -794,10 +794,10 @@ async def chat_agent(
             client = anthropic.AsyncAnthropic(
                 api_key=api_keys["claude"],
                 timeout=httpx.Timeout(
-                    timeout=900.0,   # 15 min — covers Opus + extended thinking
-                    connect=30.0,
-                    read=900.0,
-                    write=60.0,
+                    timeout=9000.0,   # 15 min — covers Opus + extended thinking
+                    connect=300.0,
+                    read=9000.0,
+                    write=6000.0,
                 ),
             )
 

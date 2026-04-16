@@ -2354,7 +2354,7 @@ def generate_afl_code(description: str, strategy_type: str = "standalone", api_k
         # ── Round 1: Generate ─────────────────────────────────────────────────
         response = client.messages.create(
             model="claude-opus-4-6",
-            max_tokens=15000,
+            max_tokens=150000,
             system=system,
             messages=[{"role": "user", "content": f"Generate {strategy_type} AFL code for: {description}"}],
         )
