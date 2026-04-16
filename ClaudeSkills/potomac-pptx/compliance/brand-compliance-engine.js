@@ -270,8 +270,8 @@ class PotomacBrandComplianceEngine {
           const elementRight = element.x + element.width;
           const elementBottom = element.y + element.height;
           
-          // Check against slide boundaries (assuming 10" x 7.5" slide)
-          if (elementRight > 10 - MIN_MARGIN || elementBottom > 7.5 - MIN_MARGIN) {
+          // Check against slide boundaries (assuming 13.333" x 7.5" widescreen slide)
+          if (elementRight > 13.333 - MIN_MARGIN || elementBottom > 7.5 - MIN_MARGIN) {
             this.addViolation('LAYOUT_VIOLATION', 
               `Element ${elementIndex + 1} extends beyond safe margins`, 
               `Slide ${slideNumber}`);

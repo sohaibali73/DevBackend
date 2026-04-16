@@ -38,7 +38,7 @@ class PotomacPresentationGenerator {
     this.pres.subject = this.options.title;
     this.pres.title = this.options.title;
     
-    // Standard 10"×7.5" — element coordinates assume 10" width
+    // Widescreen 13.333"×7.5" (16:9) format
     this.pres.layout = 'LAYOUT_WIDE';
   }
 
