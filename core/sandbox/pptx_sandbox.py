@@ -162,7 +162,8 @@ const pres = new pptxgen();
 pres.author  = 'Potomac';
 pres.company = 'Potomac';
 pres.title   = spec.title || 'POTOMAC PRESENTATION';
-pres.layout  = 'LAYOUT_WIDE';
+pres.defineLayout({ name: 'WIDE', width: 13.333, height: 7.5 });
+pres.layout  = 'WIDE';
 
 // ── Theme helper ──────────────────────────────────────────────────────────────
 function getTheme(d) {
@@ -182,7 +183,8 @@ function getTheme(d) {
 // ── Layout constants (flexible grid system) ──────────────────────────────────
 const MARGIN = { left: 0.5, right: 0.5, top: 0.3, bottom: 0.3 };
 const LOGO_AREA = { x: 11.5, y: 0.15, w: 1.5, h: 0.6 };
-const CONTENT_W = SLIDE_W - MARGIN.left - MARGIN.right;
+const CONTENT_W = SLIDE_W - MARGIN.left - MARGIN.right;  // 12.333"
+const TITLE_W   = LOGO_AREA.x - MARGIN.left - 0.2;      // 10.8" — title row stays clear of top-right logo
 const TITLE_AREA_H = 0.9;
 const TITLE_UNDERLINE_H = 0.06;
 
@@ -408,11 +410,12 @@ function buildMetricsSlide(d) {
     x: MARGIN.left, y: titleY + TITLE_AREA_H, w: 2.5, h: TITLE_UNDERLINE_H, fill: { color: YELLOW }
   });
 
-  const metrics = d.metrics || [];
-  const perRow  = Math.min(3, Math.max(1, metrics.length));
-  const mW      = CONTENT_W / perRow;
-  const startY  = titleY + TITLE_AREA_H + TITLE_UNDERLINE_H + 0.7;
-  const mH      = SLIDE_H - startY - MARGIN.bottom;
+  const metrics  = d.metrics || [];
+  const perRow   = Math.min(3, Math.max(1, metrics.length));
+  const mW       = CONTENT_W / perRow;
+  const startY   = titleY + TITLE_AREA_H + TITLE_UNDERLINE_H + 0.7;
+  const bottomR  = (d.context ? 0.8 : 0) + MARGIN.bottom;
+  const mH       = SLIDE_H - startY - bottomR;
 
   metrics.forEach((m, i) => {
     const row  = Math.floor(i / perRow);
@@ -622,11 +625,15 @@ function buildImageSlide(d) {
 
   try {
     const imgData = 'data:image/' + (d.format || 'png') + ';base64,' + d.data;
-    const w    = d.width  || 6;
-    const h    = d.height || w * 0.667;
+    let   w    = d.width  || 6;
+    let   h    = d.height || w * 0.667;
+    const yOff = d.title ? 1.8 : 1.5;
+    const maxH = SLIDE_H - yOff - MARGIN.bottom;
+    const maxW = CONTENT_W;
+    if (h > maxH) { const sc = maxH / h; h = maxH; w = w * sc; }
+    if (w > maxW) { const sc = maxW / w; w = maxW; h = h * sc; }
     const xOff = d.align === 'center' ? (SLIDE_W - w) / 2 :
                  d.align === 'right'  ? SLIDE_W - w - 0.5 : MARGIN.left;
-    const yOff = d.title ? 1.8 : 1.5;
     slide.addImage({ data: imgData, x: xOff, y: yOff, w, h });
     if (d.caption) {
       slide.addText(String(d.caption), {
@@ -1622,7 +1629,8 @@ const pres = new pptxgen();
 pres.author  = 'Potomac';
 pres.company = 'Potomac';
 pres.title   = __PRES_TITLE__;
-pres.layout  = 'LAYOUT_WIDE';
+pres.defineLayout({ name: 'WIDE', width: 13.333, height: 7.5 });
+pres.layout  = 'WIDE';
 
 // ═══════════════════════════════════════════════════════════════════════════
 // LLM FREESTYLE CODE
