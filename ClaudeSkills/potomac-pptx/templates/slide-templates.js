@@ -4,7 +4,8 @@
  * FIXES applied vs original:
  *  - All this.pptx.shapes.* → this.pptx.ShapeType.*  (v3 API)
  *  - All fontWeight:'700'/'600' → bold:true            (correct pptxgenjs option)
- *  - Layout width corrected to 10" × 7.5"
+ *  - Layout set to LAYOUT_WIDE (13.333" × 7.5") via pptx.layout assignment
+ *  - All element coordinates reworked for 13.333" canvas width
  *  - ARROW_RIGHT → ShapeType.rightArrow
  *  - Vertical process layout now implemented
  *  - Metric slide overflow protection added
@@ -15,6 +16,11 @@
  * NEW slide types added to match DeckPlanner VALID_SLIDE_TYPES vocabulary:
  *  card_grid, icon_grid, hub_spoke, timeline, matrix_2x2, scorecard,
  *  comparison, table, chart, executive_summary, image_content, image
+ *
+ * CANVAS SPEC: 13.333" × 7.5"  (pptxgenjs LAYOUT_WIDE)
+ *   Left/right content margin: 0.5"
+ *   Standard content width:    12.333"  (x=0.5 → x+w=12.833)
+ *   Logo watermark (top-right): x=12.08, y=0.12, w=0.95, h=0.95
  */
 
 'use strict';
@@ -40,6 +46,9 @@ class PotomacSlideTemplates {
     this.palette = SLIDE_PALETTES[options.palette || 'STANDARD'];
     // Store directory so we can pick the right variant per slide theme
     this.logoDir = path.join(__dirname, '../brand-assets/logos/');
+
+    // ── Apply true widescreen layout to the pptxgenjs instance ───────────────
+    this.pptx.layout = 'LAYOUT_WIDE';   // 13.333" × 7.5"
 
     this.config = {
       slideWidth:  13.333,
@@ -117,28 +126,23 @@ class PotomacSlideTemplates {
   /**
    * Standard small top-right watermark — uses the ICON logo (square mark).
    *
-   * Based on actual Potomac slide specs:
-   *   Original icon size: 4.04" × 4.01"  (nearly square)
-   *   Displayed at 32% → ~1.29" × 1.28"
-   *   Positioned at top-right corner of each slide.
-   *
-   * In pptxgenjs 10"×7.5" coordinates:
-   *   x: 8.72"  (leaves ~0.28" right margin)
-   *   y: 0.12"  (tight to top)
-   *   w: 0.95"  h: 0.95"  (square — matches real ~1:1 aspect ratio)
+   * In pptxgenjs 13.333"×7.5" (LAYOUT_WIDE) coordinates:
+   *   x: 12.08"  (leaves ~0.283" right margin)
+   *   y:  0.12"  (tight to top)
+   *   w:  0.95"  h: 0.95"  (square — matches real ~1:1 aspect ratio)
    */
   addStandardLogo(slide, theme = 'light') {
     const logoPath = this.getIconLogoPath(theme);
     if (logoPath) {
       slide.addImage({
         path: logoPath,
-        x: 8.72, y: 0.12, w: 0.95, h: 0.95,
+        x: 12.08, y: 0.12, w: 0.95, h: 0.95,
         sizing: { type: 'contain', w: 0.95, h: 0.95 },
       });
     } else {
       // Text fallback — show just the wordmark abbreviated
       slide.addText('POTOMAC', {
-        x: 8.2, y: 0.12, w: 1.5, h: 0.5,
+        x: 11.583, y: 0.12, w: 1.5, h: 0.5,
         fontFace: F.HEADERS.family, fontSize: 12, bold: true,
         color: theme === 'dark' ? _c(C.PRIMARY.WHITE) : _c(C.PRIMARY.DARK_GRAY),
         align: 'right', valign: 'middle',
@@ -158,7 +162,7 @@ class PotomacSlideTemplates {
   /** Slide number indicator (bottom-right). */
   addSlideNumber(slide, current, total) {
     slide.addText(`${current} / ${total}`, {
-      x: 9.1, y: 7.1, w: 0.7, h: 0.28,
+      x: 12.433, y: 7.1, w: 0.7, h: 0.28,
       fontFace: F.BODY.family, fontSize: 9,
       color: _c(C.TONES.GRAY_40), align: 'right',
     });
@@ -167,7 +171,7 @@ class PotomacSlideTemplates {
   /** Regulatory / performance disclaimer footer. */
   addDisclaimer(slide, text = 'Past performance does not guarantee future results. For financial professional use only.') {
     slide.addText(text, {
-      x: 0.5, y: 7.1, w: 8.5, h: 0.28,
+      x: 0.5, y: 7.1, w: 11.833, h: 0.28,
       fontFace: F.BODY.family, fontSize: 8,
       color: _c(C.TONES.GRAY_40), align: 'left', italic: true,
     });
@@ -184,11 +188,11 @@ class PotomacSlideTemplates {
   createStandardTitleSlide(title, subtitle = null, options = {}) {
     const slide = this.pptx.addSlide();
     slide.background = { color: _c(this.palette.background) };
-    // Full wordmark top-left: width ≈ 4.7" × height ≈ 0.97" (scaled from 6.28" × 1.29" on 13.33" slide)
+    // Full wordmark top-left: width ≈ 4.7" × height ≈ 0.97"
     this.addLogo(slide, { x: 0.5, y: 0.25, w: 4.7, h: 0.97 }, 'light');
 
     slide.addText(title.toUpperCase(), {
-      x: 0.5, y: 2.5, w: 9, h: 1.5,
+      x: 0.5, y: 2.5, w: 12.333, h: 1.5,
       fontFace: F.HEADERS.family, fontSize: 44,
       bold: true, color: _c(C.PRIMARY.DARK_GRAY),
       align: 'center', valign: 'middle',
@@ -196,7 +200,7 @@ class PotomacSlideTemplates {
 
     if (subtitle) {
       slide.addText(subtitle, {
-        x: 0.5, y: 4.2, w: 9, h: 0.8,
+        x: 0.5, y: 4.2, w: 12.333, h: 0.8,
         fontFace: F.BODY.family, fontSize: 20,
         color: _c(C.TONES.GRAY_60), align: 'center', valign: 'middle',
       });
@@ -204,7 +208,7 @@ class PotomacSlideTemplates {
 
     // Bottom accent bar
     slide.addShape(this.pptx.ShapeType.rect, {
-      x: 0.5, y: 5.5, w: 9, h: 0.1,
+      x: 0.5, y: 5.5, w: 12.333, h: 0.1,
       fill: { color: _c(this.palette.accent) },
       line: { color: _c(this.palette.accent), width: 0 },
     });
@@ -222,7 +226,7 @@ class PotomacSlideTemplates {
     this.addLogo(slide, { x: 0.5, y: 0.25, w: 4.7, h: 0.97 }, 'dark');
 
     slide.addText(title.toUpperCase(), {
-      x: 0.5, y: 2.2, w: 9, h: 1.8,
+      x: 0.5, y: 2.2, w: 12.333, h: 1.8,
       fontFace: F.HEADERS.family, fontSize: 48,
       bold: true, color: _c(C.PRIMARY.WHITE),
       align: 'center', valign: 'middle',
@@ -230,7 +234,7 @@ class PotomacSlideTemplates {
 
     if (subtitle) {
       slide.addText(subtitle, {
-        x: 0.5, y: 4.2, w: 9, h: 0.7,
+        x: 0.5, y: 4.2, w: 12.333, h: 0.7,
         fontFace: F.BODY.family, fontSize: 22,
         color: _c(C.TONES.YELLOW_80), align: 'center', valign: 'middle',
       });
@@ -238,13 +242,13 @@ class PotomacSlideTemplates {
 
     // Yellow accent bar
     slide.addShape(this.pptx.ShapeType.rect, {
-      x: 0.5, y: 5.45, w: 9, h: 0.08,
+      x: 0.5, y: 5.45, w: 12.333, h: 0.08,
       fill: { color: _c(C.PRIMARY.YELLOW) },
       line: { color: _c(C.PRIMARY.YELLOW), width: 0 },
     });
 
     slide.addText(tagline, {
-      x: 0.5, y: 5.65, w: 9, h: 0.6,
+      x: 0.5, y: 5.65, w: 12.333, h: 0.6,
       fontFace: F.BODY.family, fontSize: 18,
       color: _c(C.PRIMARY.YELLOW), align: 'center', valign: 'middle', italic: true,
     });
@@ -268,7 +272,7 @@ class PotomacSlideTemplates {
     });
 
     slide.addText(sectionTitle.toUpperCase(), {
-      x: 0.8, y: 2.5, w: 7.5, h: 1.5,
+      x: 0.8, y: 2.5, w: 12.0, h: 1.5,
       fontFace: F.HEADERS.family, fontSize: 42,
       bold: true, color: _c(C.PRIMARY.DARK_GRAY),
       align: 'left', valign: 'middle',
@@ -276,7 +280,7 @@ class PotomacSlideTemplates {
 
     if (description) {
       slide.addText(description, {
-        x: 0.8, y: 4.2, w: 7.5, h: 1.2,
+        x: 0.8, y: 4.2, w: 12.0, h: 1.2,
         fontFace: F.BODY.family, fontSize: 18,
         color: _c(C.TONES.GRAY_60), align: 'left', valign: 'middle',
       });
@@ -300,7 +304,7 @@ class PotomacSlideTemplates {
     this.addStandardLogo(slide);
 
     slide.addText(title.toUpperCase(), {
-      x: 0.5, y: 0.5, w: 8, h: 1,
+      x: 0.5, y: 0.5, w: 11.333, h: 1,
       fontFace: F.HEADERS.family, fontSize: 32,
       bold: true, color: _c(C.PRIMARY.DARK_GRAY),
     });
@@ -316,13 +320,13 @@ class PotomacSlideTemplates {
         },
       }));
       slide.addText(bulletItems, {
-        x: 0.5, y: 1.7, w: 9, h: 5.3,
+        x: 0.5, y: 1.7, w: 12.333, h: 5.3,
         fontFace: F.BODY.family, fontSize: 17,
         color: _c(C.PRIMARY.DARK_GRAY), valign: 'top',
       });
     } else {
       slide.addText(Array.isArray(content) ? content.join('\n') : String(content || ''), {
-        x: 0.5, y: 1.7, w: 9, h: 5.3,
+        x: 0.5, y: 1.7, w: 12.333, h: 5.3,
         fontFace: F.BODY.family, fontSize: 16,
         color: _c(C.PRIMARY.DARK_GRAY), valign: 'top',
       });
@@ -334,16 +338,19 @@ class PotomacSlideTemplates {
   /**
    * Two-Column Layout — optional per-column headers.
    * options: { leftHeader, rightHeader }
+   *
+   * Canvas: 13.333"  margins: 0.5" each side  available: 12.333"
+   * COL_W = (12.333 - GAP) / 2 = (12.333 - 0.4) / 2 ≈ 5.967"
    */
   createTwoColumnSlide(title, leftContent, rightContent, options = {}) {
     const slide = this.pptx.addSlide();
-    const COL_W = 4.3;
+    const COL_W = 5.967;
     const GAP   = 0.4;
     slide.background = { color: _c(this.palette.background) };
     this.addStandardLogo(slide);
 
     slide.addText(title.toUpperCase(), {
-      x: 0.5, y: 0.5, w: 8, h: 1,
+      x: 0.5, y: 0.5, w: 11.333, h: 1,
       fontFace: F.HEADERS.family, fontSize: 28,
       bold: true, color: _c(C.PRIMARY.DARK_GRAY),
     });
@@ -403,16 +410,19 @@ class PotomacSlideTemplates {
   /**
    * Three-Column Layout — optional per-column headers array.
    * options: { headers: ['Col A', 'Col B', 'Col C'] }
+   *
+   * Canvas: 13.333"  available: 12.333"
+   * COL_W = (12.333 - 2*GAP) / 3 = (12.333 - 0.6) / 3 ≈ 3.911"
    */
   createThreeColumnSlide(title, leftContent, centerContent, rightContent, options = {}) {
     const slide = this.pptx.addSlide();
-    const COL_W = 2.8;
+    const COL_W = 3.911;
     const GAP   = 0.3;
     slide.background = { color: _c(this.palette.background) };
     this.addStandardLogo(slide);
 
     slide.addText(title.toUpperCase(), {
-      x: 0.5, y: 0.5, w: 8, h: 1,
+      x: 0.5, y: 0.5, w: 11.333, h: 1,
       fontFace: F.HEADERS.family, fontSize: 26,
       bold: true, color: _c(C.PRIMARY.DARK_GRAY),
     });
@@ -481,7 +491,7 @@ class PotomacSlideTemplates {
     });
 
     slide.addText(quote, {
-      x: 1.5, y: 2.0, w: 7, h: 2.8,
+      x: 1.5, y: 2.0, w: 10.333, h: 2.8,
       fontFace: F.BODY.family, fontSize: 22,
       color: _c(C.PRIMARY.DARK_GRAY),
       align: 'center', valign: 'middle', italic: true,
@@ -489,7 +499,7 @@ class PotomacSlideTemplates {
 
     if (attribution) {
       slide.addText(`\u2014 ${attribution}`, {
-        x: 1.5, y: 5.0, w: 7, h: 0.8,
+        x: 1.5, y: 5.0, w: 10.333, h: 0.8,
         fontFace: F.BODY.family, fontSize: 16,
         bold: true, color: _c(C.TONES.GRAY_60), align: 'center',
       });
@@ -497,7 +507,7 @@ class PotomacSlideTemplates {
 
     if (context) {
       slide.addText(context, {
-        x: 1.5, y: 5.9, w: 7, h: 0.6,
+        x: 1.5, y: 5.9, w: 10.333, h: 0.6,
         fontFace: F.BODY.family, fontSize: 12,
         color: _c(C.TONES.GRAY_60), align: 'center',
       });
@@ -509,6 +519,9 @@ class PotomacSlideTemplates {
   /**
    * Metrics / KPI Slide — up to 6 large numbers in a responsive grid.
    * metrics = [{value, label, sublabel?}, ...]
+   *
+   * Available content width from x=0.75 → 12.583" = 11.833"
+   * colW = 11.833 / cols
    */
   createMetricSlide(title, metrics, context = null) {
     const slide = this.pptx.addSlide();
@@ -516,7 +529,7 @@ class PotomacSlideTemplates {
     this.addStandardLogo(slide);
 
     slide.addText(title.toUpperCase(), {
-      x: 0.5, y: 0.5, w: 8, h: 1,
+      x: 0.5, y: 0.5, w: 11.333, h: 1,
       fontFace: F.HEADERS.family, fontSize: 30,
       bold: true, color: _c(C.PRIMARY.DARK_GRAY),
     });
@@ -525,7 +538,7 @@ class PotomacSlideTemplates {
     const safeMetrics = (Array.isArray(metrics) ? metrics : []).slice(0, 6);
     const cols     = Math.min(3, safeMetrics.length) || 1;
     const rows     = Math.ceil(safeMetrics.length / cols);
-    const colW     = 8.5 / cols;
+    const colW     = 11.833 / cols;
     const rowH     = rows > 1 ? 2.1 : 2.8;
     const startY   = 1.9;
 
@@ -570,7 +583,7 @@ class PotomacSlideTemplates {
 
     if (context) {
       slide.addText(String(context), {
-        x: 0.5, y: 6.8, w: 9, h: 0.5,
+        x: 0.5, y: 6.8, w: 12.333, h: 0.5,
         fontFace: F.BODY.family, fontSize: 10,
         color: _c(C.TONES.GRAY_60), align: 'center', italic: true,
       });
@@ -583,6 +596,9 @@ class PotomacSlideTemplates {
    * Process / Timeline Slide.
    * options.layout = 'horizontal' (default) | 'vertical'
    * steps = [{title, description}, ...]
+   *
+   * Horizontal: stepW = 11.833 / steps.length  (from x=0.75)
+   * Vertical:   full content width used for title/description text
    */
   createProcessSlide(title, steps, options = {}) {
     const slide    = this.pptx.addSlide();
@@ -591,7 +607,7 @@ class PotomacSlideTemplates {
     this.addStandardLogo(slide);
 
     slide.addText(title.toUpperCase(), {
-      x: 0.5, y: 0.5, w: 8, h: 1,
+      x: 0.5, y: 0.5, w: 11.333, h: 1,
       fontFace: F.HEADERS.family, fontSize: 28,
       bold: true, color: _c(C.PRIMARY.DARK_GRAY),
     });
@@ -601,7 +617,7 @@ class PotomacSlideTemplates {
 
     if (!vertical) {
       // ── HORIZONTAL flow ──────────────────────────────────────────────────
-      const stepW = 8.5 / safeSteps.length;
+      const stepW = 11.833 / safeSteps.length;
 
       safeSteps.forEach((step, idx) => {
         const cx    = 0.75 + idx * stepW + stepW / 2;
@@ -676,14 +692,14 @@ class PotomacSlideTemplates {
         });
 
         slide.addText((step.title || `Step ${idx + 1}`).toUpperCase(), {
-          x: 1.4, y: y + 0.02, w: 8, h: R * 0.9,
+          x: 1.4, y: y + 0.02, w: 11.433, h: R * 0.9,
           fontFace: F.HEADERS.family, fontSize: 13,
           bold: true, color: _c(C.PRIMARY.DARK_GRAY),
         });
 
         if (step.description) {
           slide.addText(String(step.description), {
-            x: 1.4, y: y + R * 0.9, w: 8, h: stepH - R * 0.9 - 0.1,
+            x: 1.4, y: y + R * 0.9, w: 11.433, h: stepH - R * 0.9 - 0.1,
             fontFace: F.BODY.family, fontSize: 11,
             color: _c(C.TONES.GRAY_60), valign: 'top',
           });
@@ -710,23 +726,23 @@ class PotomacSlideTemplates {
   createClosingSlide(title = 'THANK YOU', contactInfo = null) {
     const slide = this.pptx.addSlide();
     slide.background = { color: _c(this.palette.background) };
-    // Full wordmark centred: (10 - 4.7) / 2 = 2.65" from left
-    this.addLogo(slide, { x: 2.65, y: 1.5, w: 4.7, h: 0.97 }, 'light');
+    // Full wordmark centred: (13.333 - 4.7) / 2 ≈ 4.317" from left
+    this.addLogo(slide, { x: 4.317, y: 1.5, w: 4.7, h: 0.97 }, 'light');
 
     slide.addText(title.toUpperCase(), {
-      x: 0.5, y: 2.8, w: 9, h: 1,
+      x: 0.5, y: 2.8, w: 12.333, h: 1,
       fontFace: F.HEADERS.family, fontSize: 40,
       bold: true, color: _c(C.PRIMARY.DARK_GRAY), align: 'center',
     });
 
     slide.addText('Built to Conquer Risk\u00AE', {
-      x: 0.5, y: 4, w: 9, h: 0.6,
+      x: 0.5, y: 4, w: 12.333, h: 0.6,
       fontFace: F.BODY.family, fontSize: 18,
       color: _c(this.palette.accent), align: 'center', italic: true,
     });
 
     slide.addText(contactInfo || 'potomac.com\n(305) 824-2702\ninfo@potomac.com', {
-      x: 0.5, y: 5.5, w: 9, h: 1.5,
+      x: 0.5, y: 5.5, w: 12.333, h: 1.5,
       fontFace: F.BODY.family, fontSize: 14,
       color: _c(C.TONES.GRAY_60), align: 'center',
     });
@@ -740,32 +756,32 @@ class PotomacSlideTemplates {
     this.addStandardLogo(slide);
 
     slide.addText(title.toUpperCase(), {
-      x: 0.5, y: 1.5, w: 9, h: 1.2,
+      x: 0.5, y: 1.5, w: 12.333, h: 1.2,
       fontFace: F.HEADERS.family, fontSize: 34,
       bold: true, color: _c(C.PRIMARY.DARK_GRAY), align: 'center',
     });
 
     slide.addText(String(actionText || ''), {
-      x: 0.5, y: 3, w: 9, h: 1.5,
+      x: 0.5, y: 3, w: 12.333, h: 1.5,
       fontFace: F.BODY.family, fontSize: 18,
       color: _c(C.PRIMARY.DARK_GRAY), align: 'center',
     });
 
-    // CTA button
+    // CTA button — centred on 13.333" canvas: (13.333 - 3) / 2 ≈ 5.167"
     slide.addShape(this.pptx.ShapeType.rect, {
-      x: 3.5, y: 4.8, w: 3, h: 0.8,
+      x: 5.167, y: 4.8, w: 3, h: 0.8,
       fill: { color: _c(this.palette.accent) },
       line: { color: _c(this.palette.accent), width: 0 },
     });
     slide.addText(buttonText.toUpperCase(), {
-      x: 3.5, y: 4.8, w: 3, h: 0.8,
+      x: 5.167, y: 4.8, w: 3, h: 0.8,
       fontFace: F.HEADERS.family, fontSize: 16,
       bold: true, color: _c(C.PRIMARY.WHITE),
       align: 'center', valign: 'middle',
     });
 
     slide.addText(String(contactInfo || 'potomac.com | (305) 824-2702 | info@potomac.com'), {
-      x: 0.5, y: 6.0, w: 9, h: 1,
+      x: 0.5, y: 6.0, w: 12.333, h: 1,
       fontFace: F.BODY.family, fontSize: 14,
       color: _c(C.TONES.GRAY_60), align: 'center',
     });
@@ -788,7 +804,7 @@ class PotomacSlideTemplates {
     this.addStandardLogo(slide, 'dark');
 
     slide.addText((headline || 'EXECUTIVE SUMMARY').toUpperCase(), {
-      x: 0.5, y: 0.4, w: 8, h: 1.1,
+      x: 0.5, y: 0.4, w: 11.333, h: 1.1,
       fontFace: F.HEADERS.family, fontSize: 34,
       bold: true, color: _c(C.PRIMARY.WHITE),
     });
@@ -810,14 +826,14 @@ class PotomacSlideTemplates {
     }));
 
     slide.addText(bulletItems.length ? bulletItems : [{ text: '', options: {} }], {
-      x: 0.5, y: 1.7, w: 8.8, h: 5.2,
+      x: 0.5, y: 1.7, w: 12.333, h: 5.2,
       fontFace: F.BODY.family, fontSize: 18,
       color: _c(C.PRIMARY.WHITE), valign: 'top',
     });
 
     if (context) {
       slide.addText(String(context), {
-        x: 0.5, y: 6.9, w: 9, h: 0.4,
+        x: 0.5, y: 6.9, w: 12.333, h: 0.4,
         fontFace: F.BODY.family, fontSize: 9,
         color: _c(C.TONES.GRAY_60), align: 'center', italic: true,
       });
@@ -830,6 +846,9 @@ class PotomacSlideTemplates {
    * Card Grid — 2×2 or 1×4 coloured content cards.
    * Matches DeckPlanner type 'card_grid'.
    * cards = [{title, text, color: 'yellow'|'dark'|'white'|'turquoise'}, ...]
+   *
+   * 1-col: cardW = 12.333" (from startX 0.75, right edge 12.583 ≈ 12.583)
+   * 2-col: 2*cardW + gapX = 12.333  →  cardW = (12.333 - 0.5) / 2 ≈ 5.917"
    */
   createCardGridSlide(title, cards = [], options = {}) {
     const slide = this.pptx.addSlide();
@@ -837,7 +856,7 @@ class PotomacSlideTemplates {
     this.addStandardLogo(slide);
 
     slide.addText(title.toUpperCase(), {
-      x: 0.5, y: 0.3, w: 8, h: 0.75,
+      x: 0.5, y: 0.3, w: 11.333, h: 0.75,
       fontFace: F.HEADERS.family, fontSize: 28,
       bold: true, color: _c(C.PRIMARY.DARK_GRAY),
     });
@@ -848,7 +867,7 @@ class PotomacSlideTemplates {
     const cols  = count <= 2 ? count : 2;
     const rows  = Math.ceil(count / cols);
 
-    const cardW  = cols === 1 ? 8.5 : 4.0;
+    const cardW  = cols === 1 ? 12.083 : 5.917;
     const cardH  = rows === 1 ? 4.8 : 2.25;
     const startX = cols === 1 ? 0.75 : 0.5;
     const startY = 1.35;
@@ -900,6 +919,8 @@ class PotomacSlideTemplates {
    * Icon Grid — circular icon badges in a responsive grid.
    * Matches DeckPlanner type 'icon_grid'.
    * items = [{icon, title, description}, ...]
+   *
+   * itemW = 11.833 / cols  (from startX 0.75)
    */
   createIconGridSlide(title, items = [], options = {}) {
     const slide = this.pptx.addSlide();
@@ -907,7 +928,7 @@ class PotomacSlideTemplates {
     this.addStandardLogo(slide);
 
     slide.addText(title.toUpperCase(), {
-      x: 0.5, y: 0.3, w: 8, h: 0.75,
+      x: 0.5, y: 0.3, w: 11.333, h: 0.75,
       fontFace: F.HEADERS.family, fontSize: 28,
       bold: true, color: _c(C.PRIMARY.DARK_GRAY),
     });
@@ -916,7 +937,7 @@ class PotomacSlideTemplates {
     const safe = (items || []).slice(0, 6);
     const cols = Math.min(3, safe.length) || 1;
     const rows = Math.ceil(safe.length / cols);
-    const itemW = 8.5 / cols;
+    const itemW = 11.833 / cols;
     const itemH = rows > 1 ? 2.6 : 4.8;
 
     safe.forEach((item, idx) => {
@@ -964,6 +985,8 @@ class PotomacSlideTemplates {
    * Hub & Spoke — central Potomac hub with peripheral service nodes.
    * Matches DeckPlanner type 'hub_spoke'.
    * center = {title, subtitle}; nodes = [{label, description?}, ...]
+   *
+   * Hub centred at x=6.667 (13.333/2), y=4.1
    */
   createHubSpokeSlide(title, center = {}, nodes = []) {
     const slide = this.pptx.addSlide();
@@ -971,12 +994,12 @@ class PotomacSlideTemplates {
     this.addStandardLogo(slide);
 
     slide.addText(title.toUpperCase(), {
-      x: 0.5, y: 0.3, w: 8, h: 0.7,
+      x: 0.5, y: 0.3, w: 11.333, h: 0.7,
       fontFace: F.HEADERS.family, fontSize: 24,
       bold: true, color: _c(C.PRIMARY.DARK_GRAY),
     });
 
-    const HUB_CX = 5.0;
+    const HUB_CX = 6.667;   // true centre of 13.333" slide
     const HUB_CY = 4.1;
     const HUB_R  = 0.9;
 
@@ -1043,6 +1066,8 @@ class PotomacSlideTemplates {
    * Timeline Slide — horizontal milestone track.
    * Matches DeckPlanner type 'timeline'.
    * milestones = [{label, date, status:'complete'|'in_progress'|'pending'}, ...]
+   *
+   * TL_XMIN=0.8, TL_XMAX=12.5  →  TL_W=11.7"
    */
   createTimelineSlide(title, milestones = []) {
     const slide = this.pptx.addSlide();
@@ -1050,7 +1075,7 @@ class PotomacSlideTemplates {
     this.addStandardLogo(slide);
 
     slide.addText(title.toUpperCase(), {
-      x: 0.5, y: 0.3, w: 8, h: 0.75,
+      x: 0.5, y: 0.3, w: 11.333, h: 0.75,
       fontFace: F.HEADERS.family, fontSize: 28,
       bold: true, color: _c(C.PRIMARY.DARK_GRAY),
     });
@@ -1059,7 +1084,7 @@ class PotomacSlideTemplates {
     const safe    = (milestones || []).slice(0, 8);
     const TL_Y    = 3.8;
     const TL_XMIN = 0.8;
-    const TL_XMAX = 9.2;
+    const TL_XMAX = 12.5;
     const TL_W    = TL_XMAX - TL_XMIN;
 
     // Baseline
@@ -1120,6 +1145,9 @@ class PotomacSlideTemplates {
    * 2×2 Matrix Slide — quadrant analysis.
    * Matches DeckPlanner type 'matrix_2x2'.
    * quadrants = [{title, text, color?}, ...] top-left, top-right, bottom-left, bottom-right
+   *
+   * QW=5.0, GAP=0.1 → total matrix width=10.1"
+   * GX = (13.333 - 10.1) / 2 ≈ 1.617"  (centred on slide)
    */
   createMatrix2x2Slide(title, xAxisLabel = '', yAxisLabel = '', quadrants = []) {
     const slide = this.pptx.addSlide();
@@ -1127,13 +1155,13 @@ class PotomacSlideTemplates {
     this.addStandardLogo(slide);
 
     slide.addText(title.toUpperCase(), {
-      x: 0.5, y: 0.3, w: 8, h: 0.7,
+      x: 0.5, y: 0.3, w: 11.333, h: 0.7,
       fontFace: F.HEADERS.family, fontSize: 26,
       bold: true, color: _c(C.PRIMARY.DARK_GRAY),
     });
 
-    const GX = 1.2, GY = 1.3;
-    const QW = 3.8, QH = 2.7, GAP = 0.1;
+    const GX = 1.617, GY = 1.3;
+    const QW = 5.0,   QH = 2.7, GAP = 0.1;
 
     const DEFAULT_Q = [
       { title: 'HIGH VALUE\nLOW RISK',   color: C.PRIMARY.YELLOW },
@@ -1202,6 +1230,10 @@ class PotomacSlideTemplates {
    * Scorecard / KPI Dashboard.
    * Matches DeckPlanner type 'scorecard'.
    * metrics = [{label, value, target?, change?, status:'green'|'yellow'|'red'}, ...]
+   *
+   * Columns scaled to 13.333" canvas (total span 0.6 → 12.65"):
+   *   S_COLS   = [0.6,  5.4,  7.5,  9.3, 11.25]
+   *   S_WIDTHS = [4.7,  2.0,  1.7,  1.85, 1.4 ]
    */
   createScorecardSlide(title, metrics = [], subtitle = null) {
     const slide = this.pptx.addSlide();
@@ -1209,7 +1241,7 @@ class PotomacSlideTemplates {
     this.addStandardLogo(slide);
 
     slide.addText(title.toUpperCase(), {
-      x: 0.5, y: 0.3, w: 8, h: 0.75,
+      x: 0.5, y: 0.3, w: 11.333, h: 0.75,
       fontFace: F.HEADERS.family, fontSize: 28,
       bold: true, color: _c(C.PRIMARY.DARK_GRAY),
     });
@@ -1219,22 +1251,22 @@ class PotomacSlideTemplates {
 
     if (subtitle) {
       slide.addText(subtitle, {
-        x: 0.5, y: 1.08, w: 8.5, h: 0.38,
+        x: 0.5, y: 1.08, w: 11.833, h: 0.38,
         fontFace: F.BODY.family, fontSize: 13,
         color: _c(C.TONES.GRAY_60),
       });
     }
 
-    const safe   = (metrics || []).slice(0, 8);
-    const rowH   = Math.min(0.72, (7.5 - headerY - 0.45 - 0.4) / Math.max(safe.length, 1));
-    const S_COLS = [0.6, 4.0, 5.5, 6.8, 8.2];
-    const S_WIDTHS = [3.3, 1.4, 1.2, 1.3, 1.0];
-    const HDRS   = ['KPI / METRIC', 'CURRENT', 'TARGET', 'CHANGE', 'STATUS'];
+    const safe    = (metrics || []).slice(0, 8);
+    const rowH    = Math.min(0.72, (7.5 - headerY - 0.45 - 0.4) / Math.max(safe.length, 1));
+    const S_COLS   = [0.6, 5.4, 7.5, 9.3, 11.25];
+    const S_WIDTHS = [4.7, 2.0, 1.7, 1.85, 1.4];
+    const HDRS    = ['KPI / METRIC', 'CURRENT', 'TARGET', 'CHANGE', 'STATUS'];
     const STATUS_C = { green: _c(C.SECONDARY.TURQUOISE), yellow: _c(C.PRIMARY.YELLOW), red: _c(C.SECONDARY.PINK) };
 
     // Header row
     slide.addShape(this.pptx.ShapeType.rect, {
-      x: 0.5, y: headerY, w: 9.0, h: 0.45,
+      x: 0.5, y: headerY, w: 12.333, h: 0.45,
       fill: { color: _c(C.PRIMARY.DARK_GRAY) },
       line: { color: _c(C.PRIMARY.DARK_GRAY), width: 0 },
     });
@@ -1253,7 +1285,7 @@ class PotomacSlideTemplates {
 
       if (alt) {
         slide.addShape(this.pptx.ShapeType.rect, {
-          x: 0.5, y, w: 9.0, h: rowH,
+          x: 0.5, y, w: 12.333, h: rowH,
           fill: { color: _c(C.TONES.GRAY_20) },
           line: { color: _c(C.TONES.GRAY_20), width: 0 },
         });
@@ -1262,10 +1294,10 @@ class PotomacSlideTemplates {
       const fs = Math.min(12, rowH * 14);
 
       [
-        { v: m.label || '',   x: 0.6, w: 3.3, align: 'left',   bold: true,  color: _c(C.PRIMARY.DARK_GRAY) },
-        { v: m.value || '—',  x: 4.0, w: 1.4, align: 'center', bold: true,  color: _c(this.palette.accent) },
-        { v: m.target || '—', x: 5.5, w: 1.2, align: 'center', bold: false, color: _c(C.PRIMARY.DARK_GRAY) },
-        { v: m.change || '—', x: 6.8, w: 1.3, align: 'center', bold: false, color: _c(C.PRIMARY.DARK_GRAY) },
+        { v: m.label || '',   x: S_COLS[0], w: S_WIDTHS[0], align: 'left',   bold: true,  color: _c(C.PRIMARY.DARK_GRAY) },
+        { v: m.value || '—',  x: S_COLS[1], w: S_WIDTHS[1], align: 'center', bold: true,  color: _c(this.palette.accent) },
+        { v: m.target || '—', x: S_COLS[2], w: S_WIDTHS[2], align: 'center', bold: false, color: _c(C.PRIMARY.DARK_GRAY) },
+        { v: m.change || '—', x: S_COLS[3], w: S_WIDTHS[3], align: 'center', bold: false, color: _c(C.PRIMARY.DARK_GRAY) },
       ].forEach(col => {
         slide.addText(String(col.v), {
           x: col.x, y: y + 0.04, w: col.w, h: rowH - 0.08,
@@ -1275,10 +1307,10 @@ class PotomacSlideTemplates {
         });
       });
 
-      // Status indicator circle
+      // Status indicator circle — centred in the STATUS column (x=11.25, w=1.4)
       const sc = STATUS_C[m.status] || STATUS_C.yellow;
       slide.addShape(this.pptx.ShapeType.ellipse, {
-        x: 8.3 + (1.0 - rowH * 0.6) / 2, y: y + rowH * 0.2,
+        x: 11.35 + (1.4 - rowH * 0.6) / 2, y: y + rowH * 0.2,
         w: rowH * 0.6, h: rowH * 0.6,
         fill: { color: sc }, line: { color: sc, width: 0 },
       });
@@ -1292,6 +1324,10 @@ class PotomacSlideTemplates {
    * Matches DeckPlanner type 'comparison'.
    * rows = [{label, left, right}, ...]
    * winner = 'left' | 'right' | null
+   *
+   * Canvas 13.333":  COL_W=5.5  CENTER_X=6.667
+   *   Left  col: x=0.5,              w=5.5  → right edge 6.0
+   *   Right col: x=CENTER_X+0.2=6.867, w=5.5 → right edge 12.367
    */
   createComparisonSlide(title, leftLabel = 'OPTION A', rightLabel = 'OPTION B', rows = [], winner = null) {
     const slide = this.pptx.addSlide();
@@ -1299,18 +1335,18 @@ class PotomacSlideTemplates {
     this.addStandardLogo(slide);
 
     slide.addText(title.toUpperCase(), {
-      x: 0.5, y: 0.3, w: 8, h: 0.7,
+      x: 0.5, y: 0.3, w: 11.333, h: 0.7,
       fontFace: F.HEADERS.family, fontSize: 26,
       bold: true, color: _c(C.PRIMARY.DARK_GRAY),
     });
 
-    const COL_W   = 3.8;
-    const CENTER_X = 5.0;
+    const COL_W    = 5.5;
+    const CENTER_X = 6.667;
     const HDR_Y    = 1.15;
     const safeRows = (rows || []).slice(0, 8);
     const rowH     = Math.min(0.72, (7.5 - HDR_Y - 0.6 - 0.4) / Math.max(safeRows.length, 1));
 
-    // Left header
+    // Header colours
     const lWin = winner === 'left';
     const rWin = winner === 'right';
     const leftHdrColor  = lWin ? _c(C.PRIMARY.YELLOW) : _c(C.PRIMARY.DARK_GRAY);
@@ -1351,7 +1387,7 @@ class PotomacSlideTemplates {
 
       if (alt) {
         slide.addShape(this.pptx.ShapeType.rect, {
-          x: 0.5, y, w: 9.0, h: rowH,
+          x: 0.5, y, w: 12.333, h: rowH,
           fill: { color: _c(C.TONES.GRAY_20) },
           line: { color: _c(C.TONES.GRAY_20), width: 0 },
         });
@@ -1390,7 +1426,7 @@ class PotomacSlideTemplates {
     this.addStandardLogo(slide);
 
     slide.addText(title.toUpperCase(), {
-      x: 0.5, y: 0.3, w: 8, h: 0.75,
+      x: 0.5, y: 0.3, w: 11.333, h: 0.75,
       fontFace: F.HEADERS.family, fontSize: 28,
       bold: true, color: _c(C.PRIMARY.DARK_GRAY),
     });
@@ -1398,7 +1434,7 @@ class PotomacSlideTemplates {
 
     if (!headers.length || !rows.length) {
       slide.addText('No data provided', {
-        x: 0.5, y: 2, w: 9, h: 1,
+        x: 0.5, y: 2, w: 12.333, h: 1,
         fontFace: F.BODY.family, fontSize: 16,
         color: _c(C.TONES.GRAY_60), align: 'center',
       });
@@ -1434,7 +1470,7 @@ class PotomacSlideTemplates {
 
     const tblH = Math.min(5.5, (rows.length + 1) * 0.5);
     slide.addTable(tableRows, {
-      x: 0.5, y: 1.35, w: 9.0, h: tblH,
+      x: 0.5, y: 1.35, w: 12.333, h: tblH,
       border: { pt: 0.5, color: _c(C.TONES.GRAY_40) },
       margin: 0.05,
     });
@@ -1458,7 +1494,7 @@ class PotomacSlideTemplates {
     this.addStandardLogo(slide);
 
     slide.addText(title.toUpperCase(), {
-      x: 0.5, y: 0.3, w: 8, h: 0.72,
+      x: 0.5, y: 0.3, w: 11.333, h: 0.72,
       fontFace: F.HEADERS.family, fontSize: 26,
       bold: true, color: _c(C.PRIMARY.DARK_GRAY),
     });
@@ -1481,7 +1517,7 @@ class PotomacSlideTemplates {
     ];
 
     slide.addChart(pptxType, safeData, {
-      x: 0.5, y: 1.1, w: 9, h: 5.5,
+      x: 0.5, y: 1.1, w: 12.333, h: 5.5,
       showLegend: options.showLegend !== false,
       legendPos:  options.legendPos || 'b',
       showValue:  options.showValue || false,
@@ -1494,7 +1530,7 @@ class PotomacSlideTemplates {
 
     if (options.source) {
       slide.addText(`Source: ${options.source}`, {
-        x: 0.5, y: 6.9, w: 6, h: 0.35,
+        x: 0.5, y: 6.9, w: 9, h: 0.35,
         fontFace: F.BODY.family, fontSize: 9,
         color: _c(C.TONES.GRAY_60), italic: true,
       });
@@ -1506,6 +1542,10 @@ class PotomacSlideTemplates {
   /**
    * Image + Content — image left/right with text on the other side.
    * Matches DeckPlanner type 'image_content'.
+   *
+   * Canvas 13.333":  each pane w=6.0", gap≈0.333"
+   *   Left pane:  x=0.5  (image or text)
+   *   Right pane: x=6.833 (text or image)
    */
   createImageContentSlide(title, imagePath, content, imagePosition = 'left') {
     const slide = this.pptx.addSlide();
@@ -1513,26 +1553,27 @@ class PotomacSlideTemplates {
     this.addStandardLogo(slide);
 
     slide.addText(title.toUpperCase(), {
-      x: 0.5, y: 0.3, w: 8, h: 0.72,
+      x: 0.5, y: 0.3, w: 11.333, h: 0.72,
       fontFace: F.HEADERS.family, fontSize: 26,
       bold: true, color: _c(C.PRIMARY.DARK_GRAY),
     });
     this.addTitleUnderline(slide, 0.5, 1.0);
 
-    const imgX  = imagePosition === 'left' ? 0.5 : 5.2;
-    const txtX  = imagePosition === 'left' ? 5.2 : 0.5;
-    const fs    = require('fs');
+    const PANE_W = 6.0;
+    const imgX   = imagePosition === 'left' ? 0.5   : 6.833;
+    const txtX   = imagePosition === 'left' ? 6.833 : 0.5;
+    const fs     = require('fs');
 
     if (imagePath && fs.existsSync(imagePath)) {
-      slide.addImage({ path: imagePath, x: imgX, y: 1.3, w: 4.3, h: 5.8 });
+      slide.addImage({ path: imagePath, x: imgX, y: 1.3, w: PANE_W, h: 5.8 });
     } else {
       slide.addShape(this.pptx.ShapeType.rect, {
-        x: imgX, y: 1.3, w: 4.3, h: 5.8,
+        x: imgX, y: 1.3, w: PANE_W, h: 5.8,
         fill: { color: _c(C.TONES.GRAY_20) },
         line: { color: _c(C.TONES.GRAY_40), width: 1 },
       });
       slide.addText('IMAGE', {
-        x: imgX, y: 1.3, w: 4.3, h: 5.8,
+        x: imgX, y: 1.3, w: PANE_W, h: 5.8,
         fontFace: F.HEADERS.family, fontSize: 24,
         color: _c(C.TONES.GRAY_40), align: 'center', valign: 'middle',
       });
@@ -1543,7 +1584,7 @@ class PotomacSlideTemplates {
       : String(content || '');
 
     slide.addText(txtContent, {
-      x: txtX, y: 1.3, w: 4.3, h: 5.8,
+      x: txtX, y: 1.3, w: PANE_W, h: 5.8,
       fontFace: F.BODY.family, fontSize: 15,
       color: _c(C.PRIMARY.DARK_GRAY), valign: 'top',
     });
@@ -1554,6 +1595,8 @@ class PotomacSlideTemplates {
   /**
    * Full-bleed Image Slide.
    * Matches DeckPlanner type 'image'.
+   *
+   * Image fills the full 13.333"×7.5" canvas.
    */
   createImageSlide(imagePath, title = null, overlay = true) {
     const slide = this.pptx.addSlide();
@@ -1561,25 +1604,26 @@ class PotomacSlideTemplates {
 
     const fs = require('fs');
     if (imagePath && fs.existsSync(imagePath)) {
-      slide.addImage({ path: imagePath, x: 0, y: 0, w: 10, h: 7.5 });
+      // Full-bleed: width=13.333", height=7.5"
+      slide.addImage({ path: imagePath, x: 0, y: 0, w: 13.333, h: 7.5 });
     }
 
     if (overlay && title) {
       slide.addShape(this.pptx.ShapeType.rect, {
-        x: 0, y: 5.5, w: 10, h: 2,
+        x: 0, y: 5.5, w: 13.333, h: 2,
         fill: { color: _c(C.PRIMARY.DARK_GRAY), transparency: 35 },
         line: { color: _c(C.PRIMARY.DARK_GRAY), width: 0 },
       });
       slide.addText(title.toUpperCase(), {
-        x: 0.5, y: 5.7, w: 9, h: 1.2,
+        x: 0.5, y: 5.7, w: 12.333, h: 1.2,
         fontFace: F.HEADERS.family, fontSize: 36,
         bold: true, color: _c(C.PRIMARY.WHITE),
         align: 'center', valign: 'middle',
       });
     }
 
-    // Dark slide — use white logo variant
-    this.addLogo(slide, { x: 8.2, y: 0.22, w: 1.6, h: 0.55 }, 'dark');
+    // Dark slide — use white logo variant; x=11.5 keeps it clear of the right edge
+    this.addLogo(slide, { x: 11.5, y: 0.22, w: 1.6, h: 0.55 }, 'dark');
     return slide;
   }
 
@@ -1592,6 +1636,8 @@ class PotomacSlideTemplates {
    * Define the three Potomac slide masters on the presentation instance.
    * Call ONCE before creating any slides:
    *   PotomacSlideTemplates.defineAllMasters(pptxInstance)
+   *
+   * Logo watermark placed at x=12.08 to match addStandardLogo() on 13.333" canvas.
    */
   static defineAllMasters(pptxInstance, palette = 'STANDARD') {
     const pal     = SLIDE_PALETTES[palette] || SLIDE_PALETTES.STANDARD;
@@ -1611,14 +1657,14 @@ class PotomacSlideTemplates {
       return null;
     };
 
-    // Square bounding box (0.95"×0.95") — matches real icon dimensions at 32% scale
+    // Square bounding box (0.95"×0.95") at x=12.08 — matches 13.333" canvas watermark
     const makeLogo = (theme, fallbackColor) => {
       const logoPath = getIconPath(theme);
       return logoPath
-        ? { image: { path: logoPath, x: 8.72, y: 0.12, w: 0.95, h: 0.95,
+        ? { image: { path: logoPath, x: 12.08, y: 0.12, w: 0.95, h: 0.95,
                      sizing: { type: 'contain', w: 0.95, h: 0.95 } } }
         : { text: { text: 'POTOMAC', options: {
-              x: 8.2, y: 0.12, w: 1.5, h: 0.5,
+              x: 11.583, y: 0.12, w: 1.5, h: 0.5,
               fontSize: 12, bold: true, color: fallbackColor,
               fontFace: F.HEADERS.family, align: 'right',
             } } };
