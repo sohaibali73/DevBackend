@@ -2055,7 +2055,11 @@ def execute_react(code: str, description: str = "") -> Dict[str, Any]:
         }
 
 
-def execute_python(code: str, description: str = "") -> Dict[str, Any]:
+def execute_python(
+    code: str,
+    description: str = "",
+    sandbox_files: Optional[Dict[str, bytes]] = None,
+) -> Dict[str, Any]:
     """
     Execute Python code in the unified PythonSandbox.
 
@@ -2065,14 +2069,24 @@ def execute_python(code: str, description: str = "") -> Dict[str, Any]:
       - matplotlib figure capture → base64 PNG artifacts
       - display() / HTML() / SVG() Jupyter-like helpers
       - Shared _SANDBOX_GLOBALS (package installs are immediately visible)
+
+    When ``sandbox_files`` is provided, each (filename → bytes) entry is written
+    into the sandbox working dir and exposed to the code as:
+        _files["report.pdf"]   → absolute path  (use with open(), PyPDF, pandas…)
+        _images["chart.png"]   → base64 string  (images only)
     """
     try:
         from core.sandbox.python_sandbox import PythonSandbox
 
+        ctx: Optional[Dict[str, Any]] = None
+        if sandbox_files:
+            ctx = {"_sandbox_files": sandbox_files}
+
         # Use __new__ to skip __init__ (which schedules an async task).
         # _execute_sync is fully synchronous and safe to call directly.
         sandbox = object.__new__(PythonSandbox)
-        result, _namespace = sandbox._execute_sync(code, context=None, persisted_namespace={})
+        result, _namespace = sandbox._execute_sync(code, context=ctx, persisted_namespace={})
+
 
         out: Dict[str, Any] = {
             "success": result.success,
@@ -4865,6 +4879,7 @@ def handle_tool_call(
     tool_input:      Dict[str, Any],
     supabase_client=None,
     api_key:         str = None,
+    conversation_file_ids: Optional[List[str]] = None,
 ) -> str:
     """
     Dispatch a tool call and return a JSON string.
@@ -4878,15 +4893,39 @@ def handle_tool_call(
     Robustness (BUG FIX 1):
       _tool_time_ms is injected only when the handler returned a dict.  Non-dict
       results (string, None, list) are wrapped so JSON serialisation never fails.
+
+    File injection (FIX for doc-interpreter / uploaded file reading):
+      When ``conversation_file_ids`` is provided and the tool is ``execute_python``,
+      the attached files are materialized into the sandbox working dir and exposed
+      as ``_files["name.ext"]`` / ``_images["name.png"]`` so Claude never has to
+      guess a path like ``/uploads/<uuid>`` (which doesn't exist on disk).
     """
     start_time = time.time()
     try:
         logger.debug("Handling tool call: %s", tool_name)
 
+        # ── Special handling for execute_python with attached files ────────────
+        if tool_name == "execute_python" and conversation_file_ids:
+            try:
+                from core.sandbox.file_injector import resolve_sandbox_files
+                sandbox_files = resolve_sandbox_files(list(conversation_file_ids))
+            except Exception as _fe:
+                logger.warning("Could not resolve conversation file_ids for sandbox: %s", _fe)
+                sandbox_files = {}
+            result = execute_python(
+                code=tool_input.get("code", ""),
+                description=tool_input.get("description", ""),
+                sandbox_files=sandbox_files or None,
+            )
+            elapsed_ms = round((time.time() - start_time) * 1000, 2)
+            result["_tool_time_ms"] = elapsed_ms
+            return json.dumps(result, indent=2, default=str)
+
         # ── Fast path: static tools (no injected deps) — O(1), zero allocation ─
         handler = _STATIC_DISPATCH.get(tool_name)
         if handler is not None:
             result = handler(tool_input)
+
 
         # ── Dependency-injected tools — handled inline, no throwaway dict ──────
         elif tool_name == "search_knowledge_base":

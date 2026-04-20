@@ -1,0 +1,25 @@
+The developers of Guardrails have automated a way to generate fact sheets They are using the data from Guardrails and they are doing their own calculation in the code basically to calculate the rolling correlation in beta of the funds against the benchmark using month end data rather than daily data  We need to create a way to validate these numbers using a different source to ensure that the developers calculations are correct essentially  We need  To calculate these numbers from inception until the report date . In the attached fact sheets these numbers are being calculated from inception until March 31st 2026 .
+
+The mutual fund tickers are 
+CRDBX - BENCHMARK: S&P500 TOTAL RETURN INDEX - fast track ticker: SP-DA 
+CRMVX - BENCHMARK: BLOOMBERG BARCLAY AGG BOND TOTAL RETURN INDEX - FastTrack Ticker: BBG-R
+CRTOX - BENCHMARK: S&P500 TOTAL RETURN INDEX  - fast track ticker: SP-DA 
+CRTBX - BENCHMARK: S&P500 TOTAL RETURN INDEX - fast track ticker: SP-DA 
+
+I NEED THE ROLLING CORRELATION AND BETA OF THE FUNDS CALCULATED BASED ON MONTH END DATA, FROM THE SPECIFIED TIME FRAMES AND THE PROCESS NEEDS TO BE REPEATABLE EVERY QUARTER OR EVERY TIME A FACT SHEET IS GENERATED TO VALIDATE THE CALCULATIONS USED BY THE INTERNAL TOOL
+
+THE DATA NEEDS TO BE PULLED FROM A RELIABLE SOURCE
+
+for all 
+
+Start Date: 07/01/2020 
+end date: 03/31/2026
+Correlation Basis: Monthly
+Rolling Correlation (number of montyhs used for rolling correlation calcuatuions) : 12 months
+
+must be on the close of the last day of every month
+
+
+API KEY
+
+7fd0a353-347a-4d42-ac9b-fd598656c0e7

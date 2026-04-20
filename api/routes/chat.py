@@ -424,10 +424,17 @@ async def _fetch_file_context(db, conversation_id: str) -> str:
             content_type = fu.get("content_type", "")
             size_kb      = round((fu.get("file_size") or 0) / 1024, 1)
             snippet      = (fu.get("extracted_text") or "")[:200]
-            line = f'📎 UPLOADED: "{fname}" | file_id: {fid} | type: {content_type} | size: {size_kb} KB'
+            line = (
+                f'📎 UPLOADED: "{fname}" | file_id: {fid} | type: {content_type} | size: {size_kb} KB\n'
+                f'   → In execute_python, open with: _files["{fname}"]  (absolute path).  '
+                f'Images are also available as base64 via _images["{fname}"]. '
+                f'NEVER fabricate a path like /uploads/{fid} — it does not exist. '
+                f'Use the provided _files dict.'
+            )
             if snippet:
                 line += f'\n   Preview: {snippet}...'
             snippets.append(line)
+
     except Exception:
         pass
 
@@ -676,6 +683,22 @@ async def get_conversation_messages(
         .execute()
     )
 
+    # Fetch files linked to this conversation so we can re-attach them to the
+    # user message they were uploaded with. Without this, file-upload cards
+    # vanish on page reload and the download dialog shows "No file URL or ID".
+    try:
+        cf_result = (
+            db.table("conversation_files")
+            .select("file_id, created_at, file_uploads(id, original_filename, content_type, file_size)")
+            .eq("conversation_id", conversation_id)
+            .order("created_at")
+            .execute()
+        )
+        conversation_files_rows = cf_result.data or []
+    except Exception:
+        conversation_files_rows = []
+
+
     # Fetch all tool_results for this conversation from the dedicated table.
     # These contain the rich structured output needed to rehydrate Generative UI
     # cards (file download cards, stock charts, research panels, etc.)
@@ -697,6 +720,35 @@ async def get_conversation_messages(
         # tool_results table may not exist yet on older deployments — degrade gracefully
         tool_results_by_msg = {}
 
+    # Build ordered list of file-attachment parts keyed by upload time. We'll
+    # assign each file to the earliest user message created at or after the
+    # file's own created_at. This re-attaches uploaded-file download cards
+    # so they survive page reload (was showing "No file URL or ID provided").
+    file_attachments: list = []
+    for cf in conversation_files_rows:
+        fu = cf.get("file_uploads") or {}
+        fid = cf.get("file_id") or fu.get("id")
+        if not fid:
+            continue
+        fname = fu.get("original_filename") or f"file_{fid}"
+        ctype = fu.get("content_type") or ""
+        ext = fname.rsplit(".", 1)[-1].lower() if "." in fname else ""
+        size_kb = round((fu.get("file_size") or 0) / 1024, 1)
+        file_attachments.append({
+            "_created_at": cf.get("created_at") or "",
+            "_consumed": False,
+            "part": {
+                "type": "file-upload",
+                "file_id": fid,
+                "filename": fname,
+                "url": f"/upload/files/{fid}/download",
+                "download_url": f"/upload/files/{fid}/download",
+                "mime_type": ctype,
+                "file_type": ext,
+                "size_kb": size_kb,
+            },
+        })
+
     # Transform messages to match frontend Message type
     messages = []
     for m in (result.data or []):
@@ -708,11 +760,36 @@ async def get_conversation_messages(
             "created_at": m["created_at"],
         }
 
+        # ── Attach file-upload parts to the user message they were sent with ──
+        if m["role"] == "user":
+            msg_time = m.get("created_at") or ""
+            matched_files = []
+            for fa in file_attachments:
+                if fa["_consumed"]:
+                    continue
+                # Attach any file uploaded within 30s before or any time after
+                # this message but before the next user message. Simple heuristic:
+                # claim every unconsumed file whose created_at <= msg_time + small buffer.
+                if not fa["_created_at"] or fa["_created_at"] <= msg_time or msg_time == "":
+                    matched_files.append(fa["part"])
+                    fa["_consumed"] = True
+            if matched_files:
+                msg["attachments"] = matched_files
+
         # ── parts: use dedicated column first, fall back to metadata.parts ──
+        base_parts: list = []
         if m.get("parts"):
-            msg["parts"] = m["parts"]
+            base_parts = list(m["parts"])
         elif m.get("metadata") and m["metadata"].get("parts"):
-            msg["parts"] = m["metadata"]["parts"]
+            base_parts = list(m["metadata"]["parts"])
+
+        # Prepend any file-upload parts matched for this user message so
+        # AI-SDK UIs render the download card alongside the text.
+        if msg.get("attachments"):
+            msg["parts"] = list(msg["attachments"]) + base_parts
+        elif base_parts:
+            msg["parts"] = base_parts
+
 
         # ── legacy metadata fields ────────────────────────────────────────────
         if m.get("metadata"):
@@ -862,6 +939,19 @@ async def chat_agent(
     file_context = await _fetch_file_context(db, conversation_id)
     kb_context = await _fetch_kb_context(db, data.content)
     kb_doc_context = await _fetch_kb_doc_refs(db, data.content)
+
+    # Collect conversation file_ids so execute_python can inject them into
+    # the sandbox as `_files["name.ext"]` / `_images["name.png"]`. Prevents
+    # Claude from guessing paths like /uploads/<uuid> (which don't exist).
+    conversation_file_ids: list[str] = []
+    try:
+        _cf = db.table("conversation_files").select("file_id").eq(
+            "conversation_id", conversation_id
+        ).execute()
+        conversation_file_ids = [row["file_id"] for row in (_cf.data or []) if row.get("file_id")]
+    except Exception:
+        pass
+
 
     async def generate_stream():
         encoder = VercelAIStreamEncoder()
@@ -1075,8 +1165,10 @@ async def chat_agent(
                                             tool_input=tool_input,
                                             supabase_client=db,
                                             api_key=api_keys.get("claude"),
+                                            conversation_file_ids=conversation_file_ids,
                                         )
                                     )
+
                                     while True:
                                         _done, _ = await asyncio.wait(
                                             {_tool_task}, timeout=15.0

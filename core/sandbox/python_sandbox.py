@@ -995,8 +995,35 @@ class PythonSandbox(BaseSandbox):
             pass
 
         # ---- Execute ----
+        # IMPORTANT: Pass a SINGLE namespace as both globals and locals.
+        #
+        # If we pass two separate dicts, Python treats the top-level code like
+        # a class body: top-level assignments go into `locals`, but any `def`
+        # created at the top level has its __globals__ set to `exec_globals`.
+        # The nested function therefore cannot see variables assigned at the
+        # top level (they're in `locals`, not `globals`), and you get bugs like:
+        #     prices = yf.download(...)       # lives in locals
+        #     def calc(x):
+        #         return prices.loc[x, "CRMVX"]  # NameError: 'prices' is not defined
+        #
+        # Using one dict makes top-level execution behave like a module body,
+        # so closures over top-level variables work as users expect.
+        #
+        # We still seed it with exec_globals (math, np, pd, HTML, _files, etc.)
+        # and merge the persisted/context/injected locals on top.
+        run_ns: Dict[str, Any] = dict(exec_globals)
+        for _k, _v in local_vars.items():
+            run_ns[_k] = _v
         try:
-            exec(code, exec_globals, local_vars)  # noqa: S102
+            exec(code, run_ns)  # noqa: S102
+            # After execution, mirror any newly-created top-level names back
+            # into local_vars so downstream variable/artifact collection keeps
+            # working with its existing code path.
+            for _k, _v in run_ns.items():
+                if _k in exec_globals:
+                    continue
+                local_vars[_k] = _v
+
 
             # Capture any remaining matplotlib figures
             if plt_wrapper is not None and _plt_module is not None:

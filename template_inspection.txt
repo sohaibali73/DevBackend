@@ -1,0 +1,430 @@
+﻿Canvas: 21.986" ├ù 12.368"
+
+ΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉ ppt/slides/slide1.xml ΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉ
+[00] sp   prst=-               x= 0.000 y= 0.000 w=21.986 h=12.367  fill=#000000
+[01] sp   prst=-               x= 0.000 y= 0.000 w=21.986 h=12.367  fill=#000000
+[02] sp   prst=-               x= 8.340 y= 5.579 w= 0.000 h= 1.363  fill=#FFCA09
+[03] sp   prst=rect            x= 9.005 y= 4.953 w= 4.719 h= 2.060  fill=#FFCA09  74.0pt  'ME / SO / volestest / aborepudae / sum'
+[04] pic  prst=rect            x= 8.271 y= 6.878 w= 0.140 h= 0.140  img=../media/image1.png
+[05] pic  prst=rect            x= 8.224 y= 5.463 w= 0.233 h= 0.233  img=../media/image2.png
+
+ΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉ ppt/slides/slide2.xml ΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉ
+[00] sp   prst=-               x= 0.000 y= 0.000 w=21.986 h=12.367  fill=#000000
+[01] sp   prst=-               x= 0.869 y= 0.877 w=20.393 h=10.614  fill=#000000
+[02] sp   prst=-               x= 4.354 y= 6.174 w=13.435 h= 0.024  fill=#FFFFFF
+[03] sp   prst=rect            x= 7.345 y= 4.697 w= 7.452 h= 0.853  fill=#FFCA09  'WELCOME / MESSAGE'
+[04] sp   prst=rect            x= 7.547 y= 6.598 w= 7.049 h= 2.570  fill=#FFFFFF  16.5pt  'Solorepudae / doluptatas / et / latus, / est / quasi / intem / adevello / ressitatem / nullestorem / volo / magnis / aut'
+
+ΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉ ppt/slides/slide3.xml ΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉ
+[00] sp   prst=-               x= 0.000 y= 0.000 w=21.986 h=12.367  fill=#000000
+[01] sp   prst=-               x= 9.882 y= 0.000 w=12.105 h=12.367  fill=#000000
+[02] sp   prst=-               x= 0.000 y= 4.090 w= 9.885 h= 8.278  fill=#000000
+[03] sp   prst=-               x= 0.000 y= 0.000 w= 9.885 h= 4.090  fill=#000000
+[04] sp   prst=-               x= 1.023 y= 1.098 w=19.953 h=10.175  fill=#FFCA09
+[05] sp   prst=-               x= 9.882 y= 4.090 w= 4.763 h= 4.188  fill=#FFFFFF
+[06] sp   prst=rect            x= 1.880 y= 1.002 w= 5.733 h= 1.265  fill=#FFCA09  74.0pt  'WEL / COME'
+[07] sp   prst=rect            x= 1.880 y= 2.303 w= 4.719 h= 0.440  fill=#FFFFFF  24.5pt  'volestest / aborepudae / sum'
+[08] sp   prst=rect            x= 1.880 y= 7.914 w= 6.429 h= 2.570  fill=#FFFFFF  16.5pt  'Molorporae / num / rehene / mo / quiae / etur, / utasinc / temoditi / quam / es / nonsequid / que / pariame / ndipit / a'
+[09] sp   prst=rect            x=15.195 y= 4.057 w= 3.017 h= 2.006  fill=#FFFFFF  41.0pt  'Jane / Deo / Marketing / Manager'
+
+ΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉ ppt/slides/slide4.xml ΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉ
+[00] sp   prst=-               x= 0.000 y= 3.426 w=21.986 h= 4.992  fill=#FFFFFF
+[01] sp   prst=-               x= 1.151 y= 9.573 w= 1.921 h= 1.918  fill=#FFCA09
+[02] sp   prst=-               x= 1.615 y=10.124 w= 0.994 h= 0.817  fill=#FFFFFF
+[03] sp   prst=-               x= 7.877 y= 9.573 w= 1.921 h= 1.918  fill=#FFCA09
+[04] sp   prst=-               x= 8.346 y=10.042 w= 0.983 h= 0.979  fill=#FFFFFF
+[05] sp   prst=-               x=14.579 y= 9.573 w= 1.921 h= 1.918  fill=#FFCA09
+[06] sp   prst=-               x=15.056 y=10.050 w= 0.966 h= 0.963  fill=#FFFFFF
+[07] sp   prst=rect            x= 3.579 y= 9.624 w= 3.594 h= 1.776  fill=#FFFFFF  24.5pt  'Visual / Design / Molorporae num / rehenem / quiae / etur, / utasinc / temoditiqua / nonsequid / que / pariame'
+[08] sp   prst=rect            x=10.281 y= 9.661 w= 3.594 h= 1.776  fill=#FFFFFF  24.5pt  'Development / Molorporae num / rehenem / quiae / etur, / utasinc / temoditiqua / nonsequid / que / pariame'
+[09] sp   prst=rect            x=16.934 y= 9.661 w= 3.594 h= 1.776  fill=#FFFFFF  24.5pt  'SEO / & / SEM / Molorporae num / rehenem / quiae / etur, / utasinc / temoditiqua / nonsequid / que / pariame'
+[10] sp   prst=rect            x= 6.954 y= 0.632 w= 7.792 h= 2.093  fill=#FFCA09  'COMPANY / OVERVIEW / nihiliu / rnimmorit / nu / machuce'
+
+ΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉ ppt/slides/slide5.xml ΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉ
+[00] sp   prst=-               x=10.378 y= 7.637 w= 0.774 h= 0.958  fill=#FFCA09
+[01] sp   prst=-               x=15.825 y= 3.514 w= 0.960 h= 0.960  fill=#FFCA09
+[02] sp   prst=-               x=10.378 y= 3.514 w= 0.955 h= 0.958  fill=#FFCA09
+[03] sp   prst=-               x=15.825 y= 7.637 w= 0.963 h= 0.849  fill=#FFCA09
+[04] sp   prst=-               x=15.853 y= 9.369 w= 1.802 h= 0.174  fill=#000000
+[05] sp   prst=-               x=15.825 y= 9.505 w= 1.681 h= 0.047  fill=#FFCA09
+[06] sp   prst=-               x=15.853 y= 5.246 w= 1.802 h= 0.174  fill=#000000
+[07] sp   prst=-               x=15.825 y= 5.382 w= 1.681 h= 0.047  fill=#FFCA09
+[08] sp   prst=-               x=10.405 y= 9.369 w= 1.802 h= 0.174  fill=#000000
+[09] sp   prst=-               x=10.377 y= 9.505 w= 1.681 h= 0.047  fill=#FFCA09
+[10] sp   prst=-               x=10.405 y= 5.246 w= 1.802 h= 0.174  fill=#000000
+[11] sp   prst=-               x=10.377 y= 5.382 w= 1.681 h= 0.047  fill=#FFCA09
+[12] sp   prst=rect            x= 7.067 y= 0.632 w= 7.792 h= 2.093  fill=#FFCA09  'COMPANY / OVERVIEW / nihiliu / rnimmorit / nu / machuce'
+[13] sp   prst=rect            x=10.364 y= 4.701 w= 4.118 h= 0.440  fill=#FFFFFF  24.5pt  'Your / Content / Title / here'
+[14] sp   prst=rect            x=15.812 y= 4.701 w= 4.118 h= 0.440  fill=#FFFFFF  24.5pt  'Your / Content / Title / here'
+[15] sp   prst=rect            x=15.812 y= 8.838 w= 4.118 h= 0.440  fill=#FFFFFF  24.5pt  'Your / Content / Title / here'
+[16] sp   prst=rect            x=10.364 y= 8.838 w= 4.118 h= 0.440  fill=#FFFFFF  24.5pt  'Your / Content / Title / here'
+[17] sp   prst=rect            x=10.364 y= 5.569 w= 4.213 h= 1.127  fill=#FFFFFF  16.5pt  'Molorporae / num / rehenemquiae / etur / utasinc / temod / itiquan / onsequid / que / pariame'
+[18] sp   prst=rect            x=15.812 y= 5.569 w= 4.213 h= 1.127  fill=#FFFFFF  16.5pt  'Molorporae / num / rehenemquiae / etur / utasinc / temod / itiquan / onsequid / que / pariame'
+[19] sp   prst=rect            x=15.812 y= 9.707 w= 4.213 h= 1.127  fill=#FFFFFF  16.5pt  'Molorporae / num / rehenemquiae / etur / utasinc / temod / itiquan / onsequid / que / pariame'
+[20] sp   prst=rect            x=10.364 y= 9.707 w= 4.213 h= 1.127  fill=#FFFFFF  16.5pt  'Molorporae / num / rehenemquiae / etur / utasinc / temod / itiquan / onsequid / que / pariame'
+[21] sp   prst=rect            x= 2.931 y= 5.722 w= 1.209 h= 0.715  fill=#FFFFFF  41.0pt  '45%'
+[22] sp   prst=rect            x= 2.931 y= 8.361 w= 1.209 h= 0.715  fill=#FFFFFF  41.0pt  '45%'
+[23] sp   prst=rect            x= 7.075 y= 5.722 w= 0.828 h= 0.715  fill=#FFFFFF  41.0pt  '5%'
+[24] sp   prst=rect            x= 7.091 y= 8.362 w= 0.828 h= 0.715  fill=#FFFFFF  41.0pt  '5%'
+[25] pic  prst=rect            x= 0.806 y= 3.406 w= 8.095 h= 8.083  img=../media/image3.png
+
+ΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉ ppt/slides/slide6.xml ΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉ
+[00] sp   prst=rect            (no xfrm)                                 57.5pt  'ΓÇ£Anything / you / really / want, / you / can / attain, / if / you / really / go / after / it.ΓÇ¥'
+[01] sp   prst=rect            x= 9.861 y= 7.786 w= 2.193 h= 0.578  fill=#FFFFFF  33.0pt  'Jane / Deo'
+
+ΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉ ppt/slides/slide7.xml ΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉ
+[00] sp   prst=rect            x= 7.234 y= 0.901 w= 7.565 h= 0.853  fill=#FFCA09  'COMPANY / ABOUT / US'
+[01] sp   prst=rect            x= 9.499 y= 1.873 w= 3.035 h= 0.853  fill=#FFFFFF  24.5pt  'nihiliu / rnimmorit / nu / machuce'
+[02] sp   prst=rect            x= 3.204 y= 2.958 w=15.625 h= 1.917  fill=#FFFFFF  16.5pt  'Empernam / nonsero / videmolut / vendes / enda / nim / laudiatent / ullitio / resequi / volorrum / qui / con / porum / n'
+[03] sp   prst=rect            x= 5.012 y=10.933 w= 3.531 h= 0.440  fill=#FFFFFF  24.5pt  'Awesome / Title / here'
+[04] sp   prst=rect            x= 9.224 y=10.933 w= 3.531 h= 0.440  fill=#FFFFFF  24.5pt  'Awesome / Title / here'
+[05] sp   prst=rect            x=13.453 y=10.933 w= 3.531 h= 0.440  fill=#FFFFFF  24.5pt  'Awesome / Title / here'
+[06] pic  prst=rect            x= 4.410 y= 5.694 w=13.316 h= 4.802  img=../media/image4.png
+
+ΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉ ppt/slides/slide8.xml ΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉ
+[00] sp   prst=-               x= 0.000 y= 0.000 w=21.986 h=12.367  fill=#000000
+[01] sp   prst=-               x= 0.804 y= 0.876 w=14.569 h=10.615  fill=#FFFFFF
+[02] sp   prst=-               x=19.324 y= 5.980 w= 1.753 h= 1.753  fill=#FFCA09
+[03] sp   prst=-               x=19.696 y= 6.482 w= 1.008 h= 0.749  fill=#FFFFFF
+[04] sp   prst=-               x=13.448 y= 5.980 w= 1.753 h= 1.753  fill=#FFCA09
+[05] sp   prst=-               x=13.820 y= 6.365 w= 1.008 h= 0.983  fill=#FFFFFF
+[06] sp   prst=-               x=16.599 y= 5.980 w= 1.753 h= 1.753  fill=#FFCA09
+[07] sp   prst=-               x=17.042 y= 6.354 w= 0.866 h= 1.006  fill=#FFFFFF
+[08] sp   prst=rect            x=13.526 y= 0.890 w= 7.565 h= 0.853  fill=#FFCA09  'COMPANY / ABOUT / US'
+[09] sp   prst=rect            x=18.057 y= 1.777 w= 3.035 h= 0.853  fill=#FFFFFF  24.5pt  'nihiliu / rnimmorit / nu / machuce'
+[10] sp   prst=rect            x= 5.566 y= 2.963 w=15.526 h= 1.860  fill=#FFFFFF  16.5pt  'quid / quibus / voluptate / sam, / volorru / mquatibust, / sequos / exped / quis / alique / re / ne / plam, / alis / dol'
+[11] sp   prst=rect            x=13.381 y= 7.989 w= 1.887 h= 0.440  fill=#FFFFFF  24.5pt  'Subtitle / #1'
+[12] sp   prst=rect            x=16.497 y= 7.989 w= 1.956 h= 0.440  fill=#FFFFFF  24.5pt  'Subtitle / #2'
+[13] sp   prst=rect            x=19.537 y= 7.989 w= 1.327 h= 0.440  fill=#FFFFFF  24.5pt  'Title / #3'
+
+ΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉ ppt/slides/slide9.xml ΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉ
+[00] sp   prst=-               x= 0.000 y= 0.000 w=21.986 h=12.367  fill=#000000
+[01] sp   prst=-               x= 0.000 y= 0.000 w=21.986 h=12.367  fill=#000000
+[02] sp   prst=rect            (no xfrm)                                 fill=#FFCA09  'COMPANY / ABOUT / US / nihiliu / rnimmorit / nu / machuce'
+[03] sp   prst=rect            x= 5.167 y= 6.741 w= 1.887 h= 0.440  fill=#FFFFFF  24.5pt  'Subtitle / #1'
+[04] sp   prst=rect            x= 9.362 y= 6.747 w= 1.956 h= 0.440  fill=#FFFFFF  24.5pt  'Subtitle / #2'
+[05] sp   prst=rect            x=13.906 y= 6.739 w= 1.327 h= 0.440  fill=#FFFFFF  24.5pt  'Title / #3'
+[06] sp   prst=rect            x= 4.326 y= 9.195 w= 3.569 h= 2.147  fill=#FFFFFF  16.5pt  'Haribeata / nimusciumqu / num / eossite / cum / excestodici / sum / remquaes / eostiovolumnih / niam / eum / etur / re /'
+[07] sp   prst=rect            x= 8.555 y= 9.203 w= 3.569 h= 2.147  fill=#FFFFFF  16.5pt  'Haribeata / nimusciumqu / num / eossite / cum / excestodici / sum / remquaes / eostiovolumnih / niam / eum / etur / re /'
+[08] sp   prst=rect            x=12.785 y= 9.195 w= 3.569 h= 2.147  fill=#FFFFFF  16.5pt  'Haribeata / nimusciumqu / num / eossite / cum / excestodici / sum / remquaes / eostiovolumnih / niam / eum / etur / re /'
+[09] pic  prst=rect            x= 3.633 y= 3.446 w=13.414 h= 4.944  img=../media/image5.png
+
+ΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉ ppt/slides/slide10.xml ΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉ
+[00] sp   prst=-               x= 8.614 y= 4.687 w= 2.383 h= 5.755  fill=#FFFFFF
+[01] sp   prst=-               x= 6.232 y= 2.507 w= 2.038 h= 8.910  fill=#FFFFFF
+[02] sp   prst=-               x= 0.871 y= 1.845 w= 2.038 h= 8.910  fill=#FFFFFF
+[03] sp   prst=-               x= 3.253 y= 0.871 w= 2.634 h= 8.910  fill=#FFFFFF
+[04] sp   prst=-               x=12.348 y= 7.864 w= 1.753 h= 1.753  fill=#FFCA09
+[05] sp   prst=-               x=12.720 y= 8.249 w= 1.008 h= 0.983  fill=#FFFFFF
+[06] sp   prst=-               x=15.236 y= 7.864 w= 1.753 h= 1.753  fill=#FFCA09
+[07] sp   prst=-               x=15.680 y= 8.238 w= 0.866 h= 1.006  fill=#FFFFFF
+[08] sp   prst=-               x=18.124 y= 7.864 w= 1.753 h= 1.753  fill=#FFCA09
+[09] sp   prst=-               x=18.497 y= 8.367 w= 1.008 h= 0.749  fill=#FFFFFF
+[10] sp   prst=rect            x=12.334 y= 0.896 w= 7.565 h= 0.853  fill=#FFCA09  'COMPANY / ABOUT / US'
+[11] sp   prst=rect            x=12.334 y= 1.891 w= 2.318 h= 0.853  fill=#FFFFFF  24.5pt  'Bus / Gitateno / sentiatur'
+[12] sp   prst=rect            x=12.334 y= 2.997 w= 6.595 h= 4.059  fill=#FFFFFF  16.5pt  'Ibus / sitatis / exeri / cum / eum / ipsus / utem / quibus / exeres / iseo / sed / ulleseque / et / etum / il / minientu'
+[13] sp   prst=rect            x=12.624 y= 9.873 w= 1.201 h= 0.440  fill=#FFFFFF  24.5pt  'title / #1'
+[14] sp   prst=rect            x=15.134 y= 9.876 w= 1.956 h= 0.440  fill=#FFFFFF  24.5pt  'Subtitle / #2'
+[15] sp   prst=rect            x=18.337 y= 9.883 w= 1.327 h= 0.440  fill=#FFFFFF  24.5pt  'Title / #3'
+
+ΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉ ppt/slides/slide11.xml ΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉ
+[00] sp   prst=-               x= 0.000 y= 0.001 w=21.986 h=12.367  fill=#FFFFFF
+[01] sp   prst=-               x= 9.690 y= 0.001 w=12.297 h=12.367  fill=#000000
+[02] sp   prst=rect            x= 0.982 y= 0.892 w= 6.339 h= 0.853  fill=#FFCA09  'COMPANY / VISION'
+[03] sp   prst=rect            (no xfrm)                                 'Bus / Gitateno / sentiatur / Bernatis / acest / endit / veni / aut / laccum / que / ma / qui / quae / desto / volest, / '
+
+ΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉ ppt/slides/slide12.xml ΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉ
+[00] sp   prst=-               x=13.996 y= 3.695 w= 3.377 h= 3.915  fill=#7E7E7E
+[01] sp   prst=-               x=15.252 y= 5.220 w= 0.865 h= 0.865  fill=#FFFFFF
+[02] sp   prst=-               x= 9.278 y= 3.695 w= 3.377 h= 3.915  fill=#B0B4B7
+[03] sp   prst=-               x=10.448 y= 5.112 w= 1.038 h= 1.082  fill=#FFFFFF
+[04] sp   prst=-               x= 4.560 y= 3.695 w= 3.377 h= 3.915  fill=#FFCA09
+[05] sp   prst=-               x= 5.844 y= 5.248 w= 0.810 h= 0.810  fill=#FFFFFF
+[06] sp   prst=-               x= 5.735 y= 8.875 w= 1.111 h= 0.047  fill=#FFCA09
+[07] sp   prst=-               x=10.434 y= 8.875 w= 1.111 h= 0.047  fill=#FFCA09
+[08] sp   prst=-               x=15.134 y= 8.875 w= 1.111 h= 0.047  fill=#FFCA09
+[09] sp   prst=rect            x= 7.495 y= 0.608 w= 6.943 h= 2.118  fill=#FFCA09  'COMPANY / MISSION / nihiliu / rnimmorit / nu / machuce'
+[10] sp   prst=rect            x=14.504 y= 8.262 w= 2.360 h= 0.440  fill=#FFFFFF  24.5pt  'Your / Content'
+[11] sp   prst=rect            x=13.903 y= 9.122 w= 3.562 h= 1.162  fill=#FFFFFF  16.5pt  'Haribeata / nimusc / iumqun / m / eossite / cum / excesto / dicisum / remquaes / eostio'
+[12] sp   prst=rect            x= 9.787 y= 8.262 w= 2.360 h= 0.440  fill=#FFFFFF  24.5pt  'Your / Content'
+[13] sp   prst=rect            x= 9.185 y= 9.122 w= 3.562 h= 1.162  fill=#FFFFFF  16.5pt  'Haribeata / nimusc / iumqun / m / eossite / cum / excesto / dicisum / remquaes / eostio'
+[14] sp   prst=rect            x= 5.069 y= 8.262 w= 2.360 h= 0.440  fill=#FFFFFF  24.5pt  'Your / Content'
+[15] sp   prst=rect            x= 4.468 y= 9.122 w= 3.562 h= 1.162  fill=#FFFFFF  16.5pt  'Haribeata / nimusc / iumqun / m / eossite / cum / excesto / dicisum / remquaes / eostio'
+
+ΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉ ppt/slides/slide13.xml ΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉ
+[00] sp   prst=-               x= 5.987 y= 3.425 w= 4.838 h= 3.858  fill=#5E6164
+[01] sp   prst=-               x= 5.987 y= 7.632 w= 4.838 h= 3.858  fill=#5E6164
+[02] sp   prst=-               x=11.170 y= 3.425 w= 4.838 h= 3.858  fill=#5E6164
+[03] sp   prst=-               x=11.170 y= 7.632 w= 4.838 h= 3.858  fill=#5E6164
+[04] sp   prst=-               x= 1.575 y= 3.798 w= 0.955 h= 0.960  fill=#FFCA09
+[05] sp   prst=-               x= 1.603 y= 5.530 w= 1.802 h= 0.174  fill=#000000
+[06] sp   prst=-               x= 1.575 y= 5.666 w= 1.681 h= 0.047  fill=#FFCA09
+[07] sp   prst=-               x=11.904 y= 3.710 w= 0.776 h= 0.960  fill=#FFCA09
+[08] sp   prst=-               x=11.932 y= 5.530 w= 1.802 h= 0.174  fill=#000000
+[09] sp   prst=-               x=11.904 y= 5.666 w= 1.681 h= 0.047  fill=#FFCA09
+[10] sp   prst=-               x= 6.757 y= 3.798 w= 0.960 h= 0.960  fill=#FFCA09
+[11] sp   prst=-               x= 6.785 y= 5.530 w= 1.802 h= 0.174  fill=#000000
+[12] sp   prst=-               x= 6.757 y= 5.666 w= 1.681 h= 0.047  fill=#FFCA09
+[13] sp   prst=-               x= 1.603 y= 9.788 w= 1.802 h= 0.174  fill=#000000
+[14] sp   prst=-               x= 1.575 y= 9.923 w= 1.681 h= 0.047  fill=#FFCA09
+[15] sp   prst=-               x= 1.575 y= 8.112 w= 0.815 h= 0.815  fill=#FFCA09
+[16] sp   prst=-               x=11.904 y= 8.082 w= 0.874 h= 0.872  fill=#FFCA09
+[17] sp   prst=-               x=11.932 y= 9.788 w= 1.802 h= 0.174  fill=#000000
+[18] sp   prst=-               x=11.904 y= 9.923 w= 1.681 h= 0.047  fill=#FFCA09
+[19] sp   prst=-               x= 6.757 y= 7.955 w= 1.044 h= 1.089  fill=#FFCA09
+[20] sp   prst=-               x= 6.785 y= 9.788 w= 1.802 h= 0.174  fill=#000000
+[21] sp   prst=-               x= 6.757 y= 9.923 w= 1.681 h= 0.047  fill=#FFCA09
+[22] sp   prst=-               x=17.123 y= 3.854 w= 0.963 h= 0.849  fill=#FFCA09
+[23] sp   prst=-               x=17.151 y= 5.530 w= 1.802 h= 0.174  fill=#000000
+[24] sp   prst=-               x=17.123 y= 5.666 w= 1.681 h= 0.047  fill=#FFCA09
+[25] sp   prst=-               x=17.122 y= 8.072 w= 0.859 h= 0.854  fill=#FFCA09
+[26] sp   prst=-               x=17.151 y= 9.788 w= 1.802 h= 0.174  fill=#000000
+[27] sp   prst=-               x=17.123 y= 9.923 w= 1.681 h= 0.047  fill=#FFCA09
+[28] sp   prst=rect            x= 7.283 y= 0.901 w= 7.419 h= 0.853  fill=#FFCA09  'OUR / GREAT / SERVICE'
+[29] sp   prst=-               x= 9.377 y= 1.898 w= 3.230 h= 0.745  fill=#252525
+[30] sp   prst=rect            x= 9.475 y= 1.873 w= 3.035 h= 0.853  fill=#FFFFFF  24.5pt  'nihiliu / rnimmorit / nu / machuce'
+[31] sp   prst=rect            x= 0.806 y= 3.425 w= 4.835 h= 3.858  fill=#FFFFFF  24.5pt  'Title / here / Molorporae num / rehenem / uiae / eturutasinc / tem / itiquan / onsequidque / pariam'
+[32] sp   prst=rect            x=11.170 y= 3.425 w= 4.838 h= 3.858  fill=#FFFFFF  24.5pt  'Title / here / Molorporae num / rehenem / uiae / eturutasinc / tem / itiquan / onsequidque / pariam'
+[33] sp   prst=rect            x= 5.987 y= 3.425 w= 4.838 h= 3.858  fill=#FFFFFF  24.5pt  'Title / here / Molorporae num / rehenem / uiae / eturutasinc / tem / itiquan / onsequidque / pariam'
+[34] sp   prst=rect            x= 0.806 y= 7.632 w= 4.835 h= 3.858  fill=#FFFFFF  24.5pt  'Title / here / Molorporae num / rehenem / uiae / eturutasinc / tem / itiquan / onsequidque / pariam'
+[35] sp   prst=rect            x=11.170 y= 7.632 w= 4.838 h= 3.858  fill=#FFFFFF  24.5pt  'Title / here / Molorporae num / rehenem / uiae / eturutasinc / tem / itiquan / onsequidque / pariam'
+[36] sp   prst=rect            x= 5.987 y= 7.632 w= 4.838 h= 3.858  fill=#FFFFFF  24.5pt  'Title / here / Molorporae num / rehenem / uiae / eturutasinc / tem / itiquan / onsequidque / pariam'
+[37] sp   prst=rect            x=16.354 y= 3.425 w= 4.835 h= 3.858  fill=#FFFFFF  24.5pt  'Title / here / Molorporae num / rehenem / uiae / eturutasinc / tem / itiquan / onsequidque / pariam'
+[38] sp   prst=rect            x=16.354 y= 7.632 w= 4.835 h= 3.858  fill=#FFFFFF  24.5pt  'Title / here / Molorporae num / rehenem / uiae / eturutasinc / tem / itiquan / onsequidque / pariam'
+[39] pic  prst=rect            x= 0.806 y= 3.425 w= 4.835 h= 3.858  img=../media/image6.png
+[40] pic  prst=rect            x= 0.806 y= 7.632 w= 4.835 h= 3.858  img=../media/image6.png
+[41] pic  prst=rect            x=16.354 y= 3.425 w= 4.835 h= 3.858  img=../media/image7.png
+[42] pic  prst=rect            x=16.354 y= 7.632 w= 4.835 h= 3.858  img=../media/image8.png
+
+ΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉ ppt/slides/slide14.xml ΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉ
+[00] sp   prst=-               x=15.799 y= 4.883 w= 1.670 h= 0.047  fill=#000000
+[01] sp   prst=-               x=15.799 y= 9.078 w= 1.670 h= 0.047  fill=#000000
+[02] sp   prst=-               x= 4.520 y= 4.883 w= 1.670 h= 0.047  fill=#000000
+[03] sp   prst=-               x= 4.520 y= 9.078 w= 1.670 h= 0.047  fill=#000000
+[04] sp   prst=-               x=11.309 y= 7.657 w= 3.549 h= 3.542  fill=#B0B4B7
+[05] sp   prst=-               x=11.309 y= 3.315 w= 3.549 h= 3.542  fill=#7E7E7E
+[06] sp   prst=-               x= 7.106 y= 7.657 w= 3.549 h= 3.542  fill=#3D4144
+[07] sp   prst=-               x= 7.106 y= 3.315 w= 3.549 h= 3.542  fill=#5E6164
+[08] sp   prst=-               x= 8.498 y= 8.950 w= 0.768 h= 0.951  fill=#FFCA09
+[09] sp   prst=-               x= 8.406 y= 4.755 w= 0.949 h= 0.951  fill=#FFCA09
+[10] sp   prst=-               x=12.621 y= 4.755 w= 0.954 h= 0.954  fill=#FFCA09
+[11] sp   prst=-               x=12.621 y= 9.002 w= 0.957 h= 0.843  fill=#FFCA09
+[12] sp   prst=-               x=15.824 y= 8.942 w= 1.802 h= 0.174  fill=#000000
+[13] sp   prst=-               x=15.796 y= 9.078 w= 1.681 h= 0.047  fill=#FFCA09
+[14] sp   prst=-               x=15.824 y= 4.770 w= 1.802 h= 0.174  fill=#000000
+[15] sp   prst=-               x=15.796 y= 4.906 w= 1.681 h= 0.047  fill=#FFCA09
+[16] sp   prst=-               x= 4.537 y= 8.942 w= 1.802 h= 0.174  fill=#000000
+[17] sp   prst=-               x= 4.509 y= 9.078 w= 1.681 h= 0.047  fill=#FFCA09
+[18] sp   prst=-               x= 4.537 y= 4.770 w= 1.802 h= 0.174  fill=#000000
+[19] sp   prst=-               x= 4.509 y= 4.906 w= 1.681 h= 0.047  fill=#FFCA09
+[20] sp   prst=rect            (no xfrm)                                 fill=#FFCA09  'OUR / GREAT / SERVICE / nihiliu / rnimmorit / nu / machuce'
+[21] sp   prst=rect            x= 5.451 y= 4.247 w= 0.753 h= 0.440  fill=#FFFFFF  24.5pt  '45%'
+[22] sp   prst=rect            x=15.782 y= 4.247 w= 0.753 h= 0.440  fill=#FFFFFF  24.5pt  '45%'
+[23] sp   prst=rect            x= 5.451 y= 8.495 w= 0.753 h= 0.440  fill=#FFFFFF  24.5pt  '45%'
+[24] sp   prst=rect            x=15.782 y= 8.495 w= 0.753 h= 0.440  fill=#FFFFFF  24.5pt  '45%'
+[25] sp   prst=rect            x= 1.718 y= 5.124 w= 4.486 h= 1.127  fill=#FFFFFF  16.5pt  'Tet et / demporr / orepudit harum, / quibus / sum / nem / qui / torerit / aut / illor / sita / atiam / quam'
+[26] sp   prst=rect            x=15.782 y= 5.116 w= 4.486 h= 1.127  fill=#FFFFFF  16.5pt  'Tet et / demporr / orepudit harum, / quibus / sum / nem / qui / torerit / aut / illor / sita / atiam / quam'
+[27] sp   prst=rect            x= 1.718 y= 9.372 w= 4.486 h= 1.127  fill=#FFFFFF  16.5pt  'Tet et / demporr / orepudit harum, / quibus / sum / nem / qui / torerit / aut / illor / sita / atiam / quam'
+[28] sp   prst=rect            x=15.782 y= 9.364 w= 4.486 h= 1.127  fill=#FFFFFF  16.5pt  'Tet et / demporr / orepudit harum, / quibus / sum / nem / qui / torerit / aut / illor / sita / atiam / quam'
+[29] sp   prst=rect            x=11.407 y= 9.028 w= 0.461 h= 0.367  fill=#FFFFFF  26.0pt  'A'
+[30] sp   prst=rect            x=11.454 y= 8.680 w= 0.558 h= 0.367  fill=#FFFFFF  26.0pt  'W'
+[31] sp   prst=rect            x=11.684 y= 8.380 w= 0.434 h= 0.367  fill=#FFFFFF  26.0pt  'S'
+[32] sp   prst=rect            x=11.854 y= 8.163 w= 0.480 h= 0.367  fill=#FFFFFF  26.0pt  'O'
+[33] sp   prst=rect            x=12.129 y= 7.957 w= 0.512 h= 0.367  fill=#FFFFFF  26.0pt  'M'
+[34] sp   prst=rect            x=12.460 y= 7.834 w= 0.444 h= 0.367  fill=#FFFFFF  26.0pt  'E'
+[35] sp   prst=rect            x=12.823 y= 7.779 w= 0.430 h= 0.367  fill=#FFFFFF  26.0pt  'T'
+[36] sp   prst=rect            x=13.028 y= 7.785 w= 0.386 h= 0.366  fill=#FFFFFF  26.0pt  'I'
+[37] sp   prst=rect            x=13.186 y= 7.814 w= 0.431 h= 0.365  fill=#FFFFFF  26.0pt  'T'
+[38] sp   prst=rect            x=13.412 y= 7.883 w= 0.429 h= 0.365  fill=#FFFFFF  26.0pt  'L'
+[39] sp   prst=rect            x=13.630 y= 7.997 w= 0.444 h= 0.365  fill=#FFFFFF  26.0pt  'E'
+[40] sp   prst=rect            x=13.922 y= 8.254 w= 0.477 h= 0.363  fill=#FFFFFF  26.0pt  'H'
+[41] sp   prst=rect            x=14.116 y= 8.488 w= 0.443 h= 0.366  fill=#FFFFFF  26.0pt  'E'
+[42] sp   prst=rect            x=14.229 y= 8.738 w= 0.455 h= 0.366  fill=#FFFFFF  26.0pt  'R'
+[43] sp   prst=rect            x=14.306 y= 9.007 w= 0.443 h= 0.365  fill=#FFFFFF  26.0pt  'E'
+[44] sp   prst=rect            x=11.407 y= 4.686 w= 0.461 h= 0.367  fill=#FFFFFF  26.0pt  'A'
+[45] sp   prst=rect            x=11.454 y= 4.338 w= 0.558 h= 0.367  fill=#FFFFFF  26.0pt  'W'
+[46] sp   prst=rect            x=11.684 y= 4.038 w= 0.434 h= 0.367  fill=#FFFFFF  26.0pt  'S'
+[47] sp   prst=rect            x=11.854 y= 3.821 w= 0.480 h= 0.367  fill=#FFFFFF  26.0pt  'O'
+[48] sp   prst=rect            x=12.129 y= 3.615 w= 0.512 h= 0.367  fill=#FFFFFF  26.0pt  'M'
+[49] sp   prst=rect            x=12.460 y= 3.492 w= 0.444 h= 0.367  fill=#FFFFFF  26.0pt  'E'
+[50] sp   prst=rect            x=12.823 y= 3.437 w= 0.430 h= 0.367  fill=#FFFFFF  26.0pt  'T'
+[51] sp   prst=rect            x=13.028 y= 3.443 w= 0.386 h= 0.366  fill=#FFFFFF  26.0pt  'I'
+[52] sp   prst=rect            x=13.186 y= 3.473 w= 0.431 h= 0.365  fill=#FFFFFF  26.0pt  'T'
+[53] sp   prst=rect            x=13.412 y= 3.542 w= 0.429 h= 0.365  fill=#FFFFFF  26.0pt  'L'
+[54] sp   prst=rect            x=13.630 y= 3.655 w= 0.444 h= 0.365  fill=#FFFFFF  26.0pt  'E'
+[55] sp   prst=rect            x=13.922 y= 3.912 w= 0.477 h= 0.363  fill=#FFFFFF  26.0pt  'H'
+[56] sp   prst=rect            x=14.116 y= 4.146 w= 0.443 h= 0.366  fill=#FFFFFF  26.0pt  'E'
+[57] sp   prst=rect            x=14.229 y= 4.396 w= 0.455 h= 0.366  fill=#FFFFFF  26.0pt  'R'
+[58] sp   prst=rect            x=14.306 y= 4.665 w= 0.443 h= 0.365  fill=#FFFFFF  26.0pt  'E'
+[59] sp   prst=rect            x= 7.203 y= 9.028 w= 0.461 h= 0.367  fill=#FFFFFF  26.0pt  'A'
+[60] sp   prst=rect            x= 7.250 y= 8.680 w= 0.558 h= 0.367  fill=#FFFFFF  26.0pt  'W'
+[61] sp   prst=rect            x= 7.480 y= 8.380 w= 0.434 h= 0.367  fill=#FFFFFF  26.0pt  'S'
+[62] sp   prst=rect            x= 7.651 y= 8.163 w= 0.480 h= 0.367  fill=#FFFFFF  26.0pt  'O'
+[63] sp   prst=rect            x= 7.926 y= 7.957 w= 0.512 h= 0.367  fill=#FFFFFF  26.0pt  'M'
+[64] sp   prst=rect            x= 8.257 y= 7.834 w= 0.444 h= 0.367  fill=#FFFFFF  26.0pt  'E'
+[65] sp   prst=rect            x= 8.620 y= 7.779 w= 0.430 h= 0.367  fill=#FFFFFF  26.0pt  'T'
+[66] sp   prst=rect            x= 8.824 y= 7.785 w= 0.386 h= 0.366  fill=#FFFFFF  26.0pt  'I'
+[67] sp   prst=rect            x= 8.982 y= 7.814 w= 0.431 h= 0.365  fill=#FFFFFF  26.0pt  'T'
+[68] sp   prst=rect            x= 9.209 y= 7.883 w= 0.429 h= 0.365  fill=#FFFFFF  26.0pt  'L'
+[69] sp   prst=rect            x= 9.427 y= 7.997 w= 0.444 h= 0.365  fill=#FFFFFF  26.0pt  'E'
+[70] sp   prst=rect            x= 9.719 y= 8.254 w= 0.477 h= 0.363  fill=#FFFFFF  26.0pt  'H'
+[71] sp   prst=rect            x= 9.912 y= 8.488 w= 0.443 h= 0.366  fill=#FFFFFF  26.0pt  'E'
+[72] sp   prst=rect            x=10.026 y= 8.738 w= 0.455 h= 0.366  fill=#FFFFFF  26.0pt  'R'
+[73] sp   prst=rect            x=10.103 y= 9.007 w= 0.443 h= 0.365  fill=#FFFFFF  26.0pt  'E'
+[74] sp   prst=rect            x= 7.203 y= 4.686 w= 0.461 h= 0.367  fill=#FFFFFF  26.0pt  'A'
+[75] sp   prst=rect            x= 7.250 y= 4.338 w= 0.558 h= 0.367  fill=#FFFFFF  26.0pt  'W'
+[76] sp   prst=rect            x= 7.480 y= 4.038 w= 0.434 h= 0.367  fill=#FFFFFF  26.0pt  'S'
+[77] sp   prst=rect            x= 7.651 y= 3.821 w= 0.480 h= 0.367  fill=#FFFFFF  26.0pt  'O'
+[78] sp   prst=rect            x= 7.926 y= 3.615 w= 0.512 h= 0.367  fill=#FFFFFF  26.0pt  'M'
+[79] sp   prst=rect            x= 8.257 y= 3.492 w= 0.444 h= 0.367  fill=#FFFFFF  26.0pt  'E'
+[80] sp   prst=rect            x= 8.620 y= 3.437 w= 0.430 h= 0.367  fill=#FFFFFF  26.0pt  'T'
+[81] sp   prst=rect            x= 8.824 y= 3.443 w= 0.386 h= 0.366  fill=#FFFFFF  26.0pt  'I'
+[82] sp   prst=rect            x= 8.982 y= 3.473 w= 0.431 h= 0.365  fill=#FFFFFF  26.0pt  'T'
+[83] sp   prst=rect            x= 9.209 y= 3.542 w= 0.429 h= 0.365  fill=#FFFFFF  26.0pt  'L'
+[84] sp   prst=rect            x= 9.427 y= 3.655 w= 0.444 h= 0.365  fill=#FFFFFF  26.0pt  'E'
+[85] sp   prst=rect            x= 9.719 y= 3.912 w= 0.477 h= 0.363  fill=#FFFFFF  26.0pt  'H'
+[86] sp   prst=rect            x= 9.912 y= 4.146 w= 0.443 h= 0.366  fill=#FFFFFF  26.0pt  'E'
+[87] sp   prst=rect            x=10.026 y= 4.396 w= 0.455 h= 0.366  fill=#FFFFFF  26.0pt  'R'
+[88] sp   prst=rect            x=10.103 y= 4.665 w= 0.443 h= 0.365  fill=#FFFFFF  26.0pt  'E'
+
+ΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉ ppt/slides/slide15.xml ΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉ
+[00] sp   prst=-               x=16.665 y= 9.949 w= 1.237 h= 0.174  fill=#000000
+[01] sp   prst=-               x=16.623 y=10.064 w= 1.119 h= 0.047  fill=#FFCA09
+[02] sp   prst=-               x=14.557 y= 3.558 w= 5.251 h= 5.251  fill=#B0B4B7
+[03] sp   prst=-               x=16.752 y= 5.756 w= 0.859 h= 0.854  fill=#FFCA09
+[04] sp   prst=-               x=12.589 y= 9.949 w= 1.237 h= 0.174  fill=#000000
+[05] sp   prst=-               x=12.547 y=10.064 w= 1.119 h= 0.047  fill=#FFCA09
+[06] sp   prst=-               x=10.481 y= 3.558 w= 5.251 h= 5.251  fill=#7E7E7E
+[07] sp   prst=-               x=12.671 y= 5.748 w= 0.872 h= 0.872  fill=#FFCA09
+[08] sp   prst=-               x= 8.513 y= 9.949 w= 1.237 h= 0.174  fill=#000000
+[09] sp   prst=-               x= 8.471 y=10.064 w= 1.119 h= 0.047  fill=#FFCA09
+[10] sp   prst=-               x= 6.405 y= 3.558 w= 5.251 h= 5.251  fill=#5E6164
+[11] sp   prst=-               x= 8.508 y= 5.639 w= 1.044 h= 1.089  fill=#FFCA09
+[12] sp   prst=-               x= 4.437 y= 9.949 w= 1.237 h= 0.174  fill=#000000
+[13] sp   prst=-               x= 4.395 y=10.064 w= 1.119 h= 0.047  fill=#FFCA09
+[14] sp   prst=-               x= 2.329 y= 3.558 w= 5.251 h= 5.251  fill=#3D4144
+[15] sp   prst=-               x= 4.546 y= 5.776 w= 0.815 h= 0.815  fill=#FFCA09
+[16] sp   prst=rect            (no xfrm)                                 fill=#FFCA09  'OUR / GREAT / SERVICE / nihiliu / rnimmorit / nu / machuce'
+[17] sp   prst=rect            x=16.002 y= 9.396 w= 2.360 h= 0.440  fill=#FFFFFF  24.5pt  'Your / Content'
+[18] sp   prst=rect            x=15.401 y=10.249 w= 3.562 h= 1.162  fill=#FFFFFF  16.5pt  'Haribeata / nimusc / iumqun / m / eossite / cum / excesto / dicisum / remquaes / eostio'
+[19] sp   prst=rect            x=11.926 y= 9.396 w= 2.360 h= 0.440  fill=#FFFFFF  24.5pt  'Your / Content'
+[20] sp   prst=rect            x=11.325 y=10.249 w= 3.563 h= 1.162  fill=#FFFFFF  16.5pt  'Haribeata / nimusc / iumqun / m / eossite / cum / excesto / dicisum / remquaes / eostio'
+[21] sp   prst=rect            x= 7.850 y= 9.396 w= 2.360 h= 0.440  fill=#FFFFFF  24.5pt  'Your / Content'
+[22] sp   prst=rect            x= 7.249 y=10.249 w= 3.562 h= 1.162  fill=#FFFFFF  16.5pt  'Haribeata / nimusc / iumqun / m / eossite / cum / excesto / dicisum / remquaes / eostio'
+[23] sp   prst=rect            x= 3.774 y= 9.396 w= 2.360 h= 0.440  fill=#FFFFFF  24.5pt  'Your / Content'
+[24] sp   prst=rect            x= 3.173 y=10.249 w= 3.562 h= 1.162  fill=#FFFFFF  16.5pt  'Haribeata / nimusc / iumqun / m / eossite / cum / excesto / dicisum / remquaes / eostio'
+
+ΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉ ppt/slides/slide16.xml ΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉ
+[00] sp   prst=-               x= 0.877 y= 8.805 w=20.385 h= 3.562  fill=#FFFFFF
+[01] sp   prst=-               x= 7.408 y= 3.404 w= 1.967 h= 1.970  fill=#FFCA09
+[02] sp   prst=-               x= 2.223 y= 3.404 w= 1.970 h= 1.970  fill=#FFCA09
+[03] sp   prst=-               x=12.592 y= 3.404 w= 1.967 h= 1.970  fill=#FFCA09
+[04] sp   prst=-               x=17.775 y= 3.404 w= 1.970 h= 1.970  fill=#FFCA09
+[05] sp   prst=-               x= 0.877 y= 8.805 w=20.385 h= 3.562  fill=#000000
+[06] sp   prst=-               x=17.961 y= 6.489 w= 1.802 h= 0.174  fill=#000000
+[07] sp   prst=-               x=17.919 y= 6.604 w= 1.681 h= 0.047  fill=#FFCA09
+[08] sp   prst=-               x= 7.594 y= 6.481 w= 1.802 h= 0.174  fill=#000000
+[09] sp   prst=-               x= 7.551 y= 6.596 w= 1.681 h= 0.047  fill=#FFCA09
+[10] sp   prst=-               x=12.778 y= 6.485 w= 1.802 h= 0.174  fill=#000000
+[11] sp   prst=-               x=12.735 y= 6.600 w= 1.681 h= 0.047  fill=#FFCA09
+[12] sp   prst=-               x= 2.410 y= 6.481 w= 1.802 h= 0.174  fill=#000000
+[13] sp   prst=-               x= 2.368 y= 6.596 w= 1.681 h= 0.047  fill=#FFCA09
+[14] sp   prst=rect            (no xfrm)                                 fill=#FFCA09  'OUR / GREAT / SERVICE / nihiliu / rnimmorit / nu / machuce'
+[15] sp   prst=rect            x= 6.333 y= 5.949 w= 4.118 h= 0.440  fill=#FFFFFF  24.5pt  'Your / Content / Title / here'
+[16] sp   prst=rect            x= 6.242 y= 6.807 w= 4.300 h= 1.162  fill=#FFFFFF  16.5pt  'Apitat / ipicatur / aut / molume / cone / dolu / ta / spitem / facepelictem / que / natem / Itam que / veni'
+[17] sp   prst=rect            x= 1.149 y= 5.949 w= 4.118 h= 0.440  fill=#FFFFFF  24.5pt  'Your / Content / Title / here'
+[18] sp   prst=rect            x= 1.058 y= 6.807 w= 4.300 h= 1.162  fill=#FFFFFF  16.5pt  'Apitat / ipicatur / aut / molume / cone / dolu / ta / spitem / facepelictem / que / natem / Itam que / veni'
+[19] sp   prst=rect            x=11.517 y= 5.949 w= 4.118 h= 0.440  fill=#FFFFFF  24.5pt  'Your / Content / Title / here'
+[20] sp   prst=rect            x=11.426 y= 6.815 w= 4.300 h= 1.162  fill=#FFFFFF  16.5pt  'Apitat / ipicatur / aut / molume / cone / dolu / ta / spitem / facepelictem / que / natem / Itam que / veni'
+[21] sp   prst=rect            x=16.701 y= 5.949 w= 4.118 h= 0.440  fill=#FFFFFF  24.5pt  'Your / Content / Title / here'
+[22] sp   prst=rect            x=16.610 y= 6.823 w= 4.300 h= 1.162  fill=#FFFFFF  16.5pt  'Apitat / ipicatur / aut / molume / cone / dolu / ta / spitem / facepelictem / que / natem / Itam que / veni'
+
+ΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉ ppt/slides/slide17.xml ΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉ
+[00] sp   prst=-               x= 5.173 y= 7.408 w= 5.820 h= 4.004  fill=#FFFFFF
+[01] sp   prst=-               x=10.993 y= 3.402 w=10.123 h= 8.010  fill=#FFFFFF
+[02] sp   prst=-               x= 0.870 y= 3.402 w= 5.820 h= 4.007  fill=#FFFFFF
+[03] sp   prst=-               x= 5.173 y= 7.408 w= 5.820 h= 4.004  fill=#000000
+[04] sp   prst=-               x=10.993 y= 3.402 w=10.123 h= 8.010  fill=#000000
+[05] sp   prst=-               x= 0.870 y= 3.402 w= 5.820 h= 4.007  fill=#000000
+[06] sp   prst=-               x=16.422 y= 5.179 w= 0.391 h= 0.452  fill=#FFCA09
+[07] sp   prst=-               x=15.296 y= 9.182 w= 0.392 h= 0.452  fill=#FFCA09
+[08] sp   prst=-               x= 5.173 y= 9.182 w= 0.391 h= 0.452  fill=#FFCA09
+[09] sp   prst=-               x= 6.299 y= 5.179 w= 0.391 h= 0.452  fill=#FFCA09
+[10] sp   prst=-               x= 2.519 y= 8.325 w= 0.856 h= 0.858  fill=#FFCA09
+[11] sp   prst=-               x= 8.434 y= 3.800 w= 0.815 h= 0.815  fill=#FFCA09
+[12] sp   prst=-               x=12.703 y= 8.309 w= 0.872 h= 0.874  fill=#FFCA09
+[13] sp   prst=-               x=18.540 y= 3.530 w= 1.044 h= 1.086  fill=#FFCA09
+[14] sp   prst=-               x= 2.149 y= 9.915 w= 1.802 h= 0.174  fill=#000000
+[15] sp   prst=-               x= 2.107 y=10.029 w= 1.681 h= 0.047  fill=#FFCA09
+[16] sp   prst=-               x=12.340 y= 9.915 w= 1.802 h= 0.174  fill=#000000
+[17] sp   prst=-               x=12.298 y=10.029 w= 1.681 h= 0.047  fill=#FFCA09
+[18] sp   prst=-               x=18.263 y= 5.290 w= 1.802 h= 0.174  fill=#000000
+[19] sp   prst=-               x=18.221 y= 5.405 w= 1.681 h= 0.047  fill=#FFCA09
+[20] sp   prst=-               x= 8.043 y= 5.290 w= 1.802 h= 0.174  fill=#000000
+[21] sp   prst=-               x= 8.001 y= 5.405 w= 1.681 h= 0.047  fill=#FFCA09
+[22] sp   prst=rect            (no xfrm)                                 fill=#FFCA09  'OUR / GREAT / SERVICE / nihiliu / rnimmorit / nu / machuce'
+[23] sp   prst=rect            x= 7.626 y= 4.782 w= 2.432 h= 0.440  fill=#FFFFFF  24.5pt  'Heading / here'
+[24] sp   prst=rect            x=17.846 y= 4.782 w= 2.432 h= 0.440  fill=#FFFFFF  24.5pt  'Heading / here'
+[25] sp   prst=rect            x= 1.732 y= 9.397 w= 2.432 h= 0.440  fill=#FFFFFF  24.5pt  'Heading / here'
+[26] sp   prst=rect            x=11.923 y= 9.397 w= 2.432 h= 0.440  fill=#FFFFFF  24.5pt  'Heading / here'
+[27] sp   prst=rect            x= 7.562 y= 5.611 w= 2.559 h= 1.162  fill=#FFFFFF  16.5pt  'Haribeata / nimusc / ium / unm / eossi / tecu / excesto / dicisum / rem'
+[28] sp   prst=rect            x=17.782 y= 5.611 w= 2.559 h= 1.162  fill=#FFFFFF  16.5pt  'Haribeata / nimusc / ium / unm / eossi / tecu / excesto / dicisum / rem'
+[29] sp   prst=rect            x= 1.668 y=10.226 w= 2.559 h= 1.162  fill=#FFFFFF  16.5pt  'Haribeata / nimusc / ium / unm / eossi / tecu / excesto / dicisum / rem'
+[30] sp   prst=rect            x=11.859 y=10.226 w= 2.559 h= 1.162  fill=#FFFFFF  16.5pt  'Haribeata / nimusc / ium / unm / eossi / tecu / excesto / dicisum / rem'
+
+ΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉ ppt/slides/slide18.xml ΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉ
+[00] sp   prst=rect            (no xfrm)                                 fill=#FFCA09  'OUR / GREAT / SERVICE / nihiliu / rnimmorit / nu / machuce'
+[01] sp   prst=rect            x= 3.180 y= 3.635 w= 2.515 h= 1.173  fill=#FFFFFF  26.0pt  'Your / Content / Title / here'
+[02] sp   prst=rect            x=16.316 y= 3.627 w= 2.515 h= 1.173  fill=#FFFFFF  26.0pt  'Your / Content / Title / here'
+[03] sp   prst=rect            x=16.316 y= 7.835 w= 2.515 h= 1.173  fill=#FFFFFF  26.0pt  'Your / Content / Title / here'
+[04] sp   prst=rect            x= 3.180 y= 7.806 w= 2.515 h= 1.173  fill=#FFFFFF  26.0pt  'Your / Content / Title / here'
+[05] sp   prst=rect            x= 1.601 y= 5.499 w= 4.486 h= 1.127  fill=#FFFFFF  16.5pt  'Tet et / demporr / orepudit harum, / quibus / sum / nem / qui / torerit / aut / illor / sita / atiam / quam'
+[06] sp   prst=rect            x= 1.601 y= 9.702 w= 4.486 h= 1.127  fill=#FFFFFF  16.5pt  'Tet et / demporr / orepudit harum, / quibus / sum / nem / qui / torerit / aut / illor / sita / atiam / quam'
+[07] sp   prst=rect            x=15.970 y= 5.510 w= 4.385 h= 1.127  fill=#FFFFFF  16.5pt  'ptate / sam, / volorru / mquatibust, / sequos / que / re / ne / plam, / alis / dolo / et, / expla / venihitatio / cum'
+[08] sp   prst=rect            x=15.970 y= 9.702 w= 4.385 h= 1.127  fill=#FFFFFF  16.5pt  'ptate / sam, / volorru / mquatibust, / sequos / que / re / ne / plam, / alis / dolo / et, / expla / venihitatio / cum'
+[09] sp   prst=rect            x= 8.919 y= 4.861 w= 4.148 h= 1.228  fill=#FFFFFF  36.0pt  'SERVICE / CONTENT / HERE'
+[10] sp   prst=rect            x= 8.201 y= 6.569 w= 5.584 h= 3.417  fill=#FFFFFF  16.5pt  'Nosti, / nostra / pore / perit; / nonsua / vena, / ureisq / am / ia / mortemunum / nos / cerfirmil / habem / abus / veru'
+[11] pic  prst=rect            x= 0.870 y= 3.402 w=20.246 h= 8.010  img=../media/image9.png
+
+ΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉ ppt/slides/slide19.xml ΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉ
+[00] sp   prst=-               x= 0.000 y= 0.000 w=21.986 h=12.367  fill=#000000
+[01] sp   prst=-               x= 0.000 y= 0.000 w=21.986 h=12.367  fill=#000000
+[02] sp   prst=-               x= 1.106 y= 3.577 w= 3.501 h= 3.197  fill=#FFCA09
+[03] sp   prst=-               x= 1.129 y= 7.175 w= 3.455 h= 0.832  fill=#FFCA09
+[04] sp   prst=-               x= 9.265 y= 3.577 w= 3.501 h= 3.197  fill=#FFCA09
+[05] sp   prst=-               x= 9.286 y= 7.175 w= 3.458 h= 0.832  fill=#FFCA09
+[06] sp   prst=-               x= 5.184 y= 3.577 w= 3.504 h= 3.197  fill=#FFCA09
+[07] sp   prst=-               x= 5.207 y= 7.175 w= 3.458 h= 0.832  fill=#FFCA09
+[08] sp   prst=-               x=13.343 y= 3.577 w= 3.504 h= 3.197  fill=#FFCA09
+[09] sp   prst=-               x=13.367 y= 7.175 w= 3.455 h= 0.832  fill=#FFCA09
+[10] sp   prst=-               x=17.422 y= 3.577 w= 3.504 h= 3.197  fill=#FFCA09
+[11] sp   prst=-               x=17.445 y= 7.175 w= 3.458 h= 0.832  fill=#FFCA09
+[12] sp   prst=rect            (no xfrm)                                 fill=#FFCA09  'OUR / GREAT / SERVICE / nihiliu / rnimmorit / nu / machuce'
+[13] sp   prst=rect            x= 1.072 y= 8.498 w= 3.569 h= 2.147  fill=#FFFFFF  16.5pt  'Haribeata / nimusciumqu / num / eossite / cum / excestodici / sum / remquaes / eostiovolumnih / niam / eum / etur / re /'
+[14] sp   prst=rect            x= 1.641 y= 7.400 w= 2.432 h= 0.440  fill=#FFFFFF  24.5pt  'Heading / here'
+[15] sp   prst=rect            x= 9.231 y= 8.498 w= 3.569 h= 2.147  fill=#FFFFFF  16.5pt  'Haribeata / nimusciumqu / num / eossite / cum / excestodici / sum / remquaes / eostiovolumnih / niam / eum / etur / re /'
+[16] sp   prst=rect            x= 9.799 y= 7.400 w= 2.432 h= 0.440  fill=#FFFFFF  24.5pt  'Heading / here'
+[17] sp   prst=rect            x= 5.152 y= 8.498 w= 3.569 h= 2.147  fill=#FFFFFF  16.5pt  'Haribeata / nimusciumqu / num / eossite / cum / excestodici / sum / remquaes / eostiovolumnih / niam / eum / etur / re /'
+[18] sp   prst=rect            x= 5.720 y= 7.400 w= 2.432 h= 0.440  fill=#FFFFFF  24.5pt  'Heading / here'
+[19] sp   prst=rect            x=13.310 y= 8.498 w= 3.569 h= 2.147  fill=#FFFFFF  16.5pt  'Haribeata / nimusciumqu / num / eossite / cum / excestodici / sum / remquaes / eostiovolumnih / niam / eum / etur / re /'
+[20] sp   prst=rect            x=13.879 y= 7.400 w= 2.432 h= 0.440  fill=#FFFFFF  24.5pt  'Heading / here'
+[21] sp   prst=rect            x=17.389 y= 8.498 w= 3.569 h= 2.147  fill=#FFFFFF  16.5pt  'Haribeata / nimusciumqu / num / eossite / cum / excestodici / sum / remquaes / eostiovolumnih / niam / eum / etur / re /'
+[22] sp   prst=rect            x=17.958 y= 7.400 w= 2.432 h= 0.440  fill=#FFFFFF  24.5pt  'Heading / here'
+
+ΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉ ppt/slides/slide20.xml ΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉ
+[00] sp   prst=-               x= 0.000 y= 0.000 w=21.986 h=12.367  fill=#000000
+[01] sp   prst=-               x=15.004 y= 4.059 w= 2.915 h= 7.353  fill=#FFFFFF
+[02] sp   prst=-               x= 9.570 y= 4.059 w= 1.837 h= 7.353  fill=#FFFFFF
+[03] sp   prst=-               x= 4.130 y= 4.059 w= 2.915 h= 7.353  fill=#FFFFFF
+[04] sp   prst=-               x=18.267 y= 3.404 w= 2.850 h= 7.353  fill=#FFFFFF
+[05] sp   prst=-               x= 7.389 y= 3.404 w= 1.837 h= 7.353  fill=#FFFFFF
+[06] sp   prst=-               x=11.742 y= 3.404 w= 2.915 h= 8.008  fill=#FFFFFF
+[07] sp   prst=-               x= 0.870 y= 3.404 w= 2.915 h= 8.008  fill=#FFFFFF
+[08] sp   prst=-               x=15.004 y= 4.059 w= 2.915 h= 7.353  fill=#000000
+[09] sp   prst=-               x= 9.570 y= 4.059 w= 1.837 h= 7.353  fill=#000000
+[10] sp   prst=-               x= 4.130 y= 4.059 w= 2.915 h= 7.353  fill=#000000
+[11] sp   prst=-               x=18.267 y= 3.404 w= 2.850 h= 7.353  fill=#000000
+[12] sp   prst=-               x= 7.389 y= 3.404 w= 1.837 h= 7.353  fill=#000000
+[13] sp   prst=-               x=11.742 y= 3.404 w= 2.915 h= 8.008  fill=#000000
+[14] sp   prst=-               x= 0.870 y= 3.404 w= 2.915 h= 8.008  fill=#000000
+[15] sp   prst=rect            x= 7.809 y= 0.608 w= 6.413 h= 2.118  fill=#FFCA09  'OUR / GREAT / TEAM / nihiliu / rnimmorit / nu / machuce'

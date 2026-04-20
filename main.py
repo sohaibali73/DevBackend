@@ -432,6 +432,26 @@ except Exception as e:
     logger.error(f"✗ Failed to load pptx_intelligence router: {e}")
     logger.debug(traceback.format_exc())
 
+try:
+    from api.routes import pptx as pptx_programs_router
+    app.include_router(pptx_programs_router.router)
+    routers_loaded.append("pptx_programs")
+    logger.info("✓ Loaded pptx_programs router (program store + JSON-patch edit memory)")
+except Exception as e:
+    routers_failed.append(("pptx_programs", str(e)))
+    logger.error(f"✗ Failed to load pptx_programs router: {e}")
+    logger.debug(traceback.format_exc())
+
+try:
+    from api.routes import pptx_assets as pptx_assets_router
+    app.include_router(pptx_assets_router.router)
+    routers_loaded.append("pptx_assets")
+    logger.info("✓ Loaded pptx_assets router (user icon/graphic library)")
+except Exception as e:
+    routers_failed.append(("pptx_assets", str(e)))
+    logger.error(f"✗ Failed to load pptx_assets router: {e}")
+    logger.debug(traceback.format_exc())
+
 # Start background task cleanup loop on app startup
 @app.on_event("startup")
 async def startup_task_manager():
@@ -509,6 +529,21 @@ async def startup_copy_pptx_assets():
         logger.info("✓ Copied %d Potomac PPTX logo assets → %s", copied, dst)
     except Exception as e:
         logger.warning("startup_copy_pptx_assets: could not copy assets: %s", e)
+
+
+@app.on_event("startup")
+async def startup_seed_pptx_global_assets():
+    """
+    Seed the global pptx_assets table rows (service_role bypasses RLS).
+    Copies repo brand logos into /data/pptx_assets/global/ and registers
+    one DB row per key, so all users see the Potomac logos in their manifest.
+    """
+    try:
+        from core.sandbox import pptx_assets as _pa
+        _pa.ensure_global_seed()
+        logger.info("✓ Global pptx_assets seed ensured")
+    except Exception as e:
+        logger.warning("startup_seed_pptx_global_assets failed: %s", e)
 
 
 # Log summary
