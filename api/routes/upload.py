@@ -33,6 +33,9 @@ from core.document_parser import DocumentParser
 router = APIRouter(prefix="/upload", tags=["Upload"])
 logger = logging.getLogger(__name__)
 
+# Register AFL as a known MIME type so mimetypes.guess_type(".afl") works
+mimetypes.add_type("text/plain", ".afl")
+
 # ============================================================================
 # STORAGE CONFIG
 # ============================================================================
@@ -54,7 +57,14 @@ ALLOWED_MIME_TYPES = {
     "application/json", "application/xml", "text/xml",
     # Images
     "image/jpeg", "image/png", "image/gif", "image/webp",
+    # AFL (AmiBroker Formula Language) — treated as plain text
+    "text/x-afl", "application/afl",
 }
+
+# Extensions that must be treated as plain text regardless of what the browser
+# reports in Content-Type.  Browsers often send 'application/octet-stream' for
+# unknown extensions, which would otherwise trigger a 415 rejection.
+_FORCE_TEXT_EXTENSIONS = {".afl"}
 
 
 # ============================================================================
@@ -239,6 +249,14 @@ async def upload_file_direct(
         raise HTTPException(status_code=413, detail="File too large. Maximum size is 10 MB.")
 
     content_type = file.content_type or mimetypes.guess_type(file.filename or "")[0] or "application/octet-stream"
+
+    # Override content_type for extensions we know must be treated as plain text.
+    # Browsers routinely report 'application/octet-stream' for unknown extensions
+    # (e.g. .afl) which would otherwise hit the 415 guard below.
+    _ext = os.path.splitext(file.filename or "")[1].lower()
+    if _ext in _FORCE_TEXT_EXTENSIONS:
+        content_type = "text/plain"
+        logger.debug("AFL upload: overriding content_type to text/plain for %s", file.filename)
 
     if content_type not in ALLOWED_MIME_TYPES:
         logger.warning(f"Rejected file type: {content_type} ({file.filename})")
