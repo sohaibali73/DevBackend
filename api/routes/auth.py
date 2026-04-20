@@ -43,6 +43,7 @@ class Token(BaseModel):
     user_id: str
     email: str
     expires_in: int = 3600
+    refresh_token: Optional[str] = None
 
 
 class UserResponse(BaseModel):
@@ -66,6 +67,10 @@ class UserUpdate(BaseModel):
     nickname: Optional[str] = None
     claude_api_key: Optional[str] = None
     tavily_api_key: Optional[str] = None
+
+
+class RefreshTokenRequest(BaseModel):
+    refresh_token: str
 
 
 class PasswordResetRequest(BaseModel):
@@ -128,6 +133,7 @@ async def register(data: UserRegister):
 
         return Token(
             access_token=auth_response.session.access_token,
+            refresh_token=auth_response.session.refresh_token,
             token_type="bearer",
             user_id=auth_response.user.id,
             email=data.email,
@@ -172,6 +178,7 @@ async def login(data: UserLogin):
 
         return Token(
             access_token=auth_response.session.access_token,
+            refresh_token=auth_response.session.refresh_token,
             token_type="bearer",
             user_id=auth_response.user.id,
             email=data.email,
@@ -303,41 +310,37 @@ async def get_api_keys_status(user: dict = Depends(get_current_user)):
 # ============================================================================
 
 @router.post("/refresh-token", response_model=Token)
-async def refresh_token(
-    credentials: HTTPAuthorizationCredentials = Depends(security)
-):
-    """Refresh the access token."""
+async def refresh_token(data: RefreshTokenRequest):
+    """
+    Refresh the access token using a refresh token.
+
+    The client must send the refresh_token received at login.
+    Returns a fresh access_token and a rotated refresh_token.
+    """
     db = get_supabase()
-    token = credentials.credentials
 
     try:
-        user = db.auth.get_user(token)
-        if not user or not user.user:
-            raise HTTPException(status_code=401, detail="Invalid token")
+        # Use Supabase's refresh_session — this is the only correct way to get
+        # a new access token from a refresh token on a stateless backend client.
+        response = db.auth.refresh_session(data.refresh_token)
 
-        session = db.auth.get_session()
-        if session:
-            return Token(
-                access_token=session.access_token,
-                token_type="bearer",
-                user_id=user.user.id,
-                email=user.user.email or "",
-                expires_in=session.expires_in or 3600
-            )
-        else:
-            return Token(
-                access_token=token,
-                token_type="bearer",
-                user_id=user.user.id,
-                email=user.user.email or "",
-                expires_in=3600
-            )
+        if not response or not response.session or not response.user:
+            raise HTTPException(status_code=401, detail="Invalid or expired refresh token")
+
+        return Token(
+            access_token=response.session.access_token,
+            refresh_token=response.session.refresh_token,
+            token_type="bearer",
+            user_id=response.user.id,
+            email=response.user.email or "",
+            expires_in=response.session.expires_in or 3600
+        )
 
     except HTTPException:
         raise
     except Exception as e:
         logger.error(f"Token refresh failed: {e}")
-        raise HTTPException(status_code=401, detail="Invalid or expired token")
+        raise HTTPException(status_code=401, detail="Invalid or expired refresh token")
 
 
 @router.post("/forgot-password")

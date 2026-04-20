@@ -158,9 +158,12 @@ function normalizeSlideSpec(s) {
 // ── Slide router ─────────────────────────────────────────────────────────────
 for (const raw of (spec.slides || [])) {
   const n = normalizeSlideSpec(raw);
+  // Declare slide outside try so the catch block can render an error
+  // placeholder instead of leaving a blank slide in the presentation.
+  let slide = null;
   try {
     if (n.mode === 'freestyle') {
-      const slide = pres.addSlide();
+      slide = pres.addSlide();
       // Default background
       slide.background = { color: brand.PALETTE.WHITE };
       runFreestyle(slide, n.code || '', n.data);
@@ -170,7 +173,7 @@ for (const raw of (spec.slides || [])) {
     // template or hybrid
     const tmplName = n.template || (n.data && n.data.type) || 'content';
     const tmpl = templates.get(tmplName);
-    const slide = pres.addSlide();
+    slide = pres.addSlide();
     const mergedData = n.overrides ? { ...n.data, ...n.overrides } : n.data;
     tmpl(slide, mergedData || {});
 
@@ -178,7 +181,28 @@ for (const raw of (spec.slides || [])) {
       runFreestyle(slide, n.customize, mergedData);
     }
   } catch (err) {
-    process.stderr.write(`WARN:slide[${n.template || n.mode}] ${err.message}\n`);
+    const label = n.template || n.mode || 'unknown';
+    process.stderr.write(`WARN:slide[${label}] ${err.message}\n`);
+    // The slide was already added — render a visible error placeholder so the
+    // deck is never silently blank.  This makes the problem obvious to the user
+    // rather than producing a mystery empty slide.
+    if (slide) {
+      try {
+        slide.background = { color: brand.PALETTE.WHITE };
+        slide.addText(
+          `⚠ Slide rendering error [${label}]:\n${err.message}`,
+          {
+            x: 0.5, y: engine.H / 2 - 0.75,
+            w: engine.W - 1.0, h: 1.5,
+            fontSize: 14, bold: false,
+            color: brand.PALETTE.DARK_GRAY,
+            fontFace: brand.FONTS.BODY,
+            align: 'center', valign: 'middle',
+            wrap: true,
+          }
+        );
+      } catch (_) { /* best-effort */ }
+    }
   }
 }
 

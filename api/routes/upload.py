@@ -254,6 +254,31 @@ async def upload_file_direct(
 
     if existing.data:
         row = existing.data[0]
+        # Only reuse the existing record if the disk file is actually present.
+        # If the volume was wiped or remounted the path in the DB is stale — fall
+        # through and re-write the bytes so the download endpoint never gets a 404.
+        if os.path.exists(row["storage_path"]):
+            return FileInfo(
+                id=row["id"],
+                user_id=user_id,
+                storage_path=row["storage_path"],
+                original_filename=file.filename or "unknown",
+                content_type=content_type,
+                file_size=len(content),
+                status=row["status"],
+                content_hash=content_hash,
+                created_at=row.get("created_at", datetime.now(timezone.utc).isoformat()),
+            )
+        # Disk file is gone — reuse the same UUID/path and re-write the bytes.
+        logger.warning(
+            f"Dedup hit for file {row['id']} but disk file is missing "
+            f"({row['storage_path']}); re-writing bytes to disk."
+        )
+        _write_file(row["storage_path"], content)
+        db.table("file_uploads").update({
+            "status": "uploaded",
+            "file_size": len(content),
+        }).eq("id", row["id"]).execute()
         return FileInfo(
             id=row["id"],
             user_id=user_id,
@@ -261,7 +286,7 @@ async def upload_file_direct(
             original_filename=file.filename or "unknown",
             content_type=content_type,
             file_size=len(content),
-            status=row["status"],
+            status="uploaded",
             content_hash=content_hash,
             created_at=row.get("created_at", datetime.now(timezone.utc).isoformat()),
         )

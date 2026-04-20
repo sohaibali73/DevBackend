@@ -24,6 +24,13 @@ from pathlib import Path
 
 router = APIRouter()
 
+# Resolve the ClaudeSkills script path relative to this file so it works in
+# any deployment (Railway, Docker, local) without a hardcoded /mnt path.
+# api/routes/generate_presentation.py → ../../.. → repo root
+_REPO_ROOT = Path(__file__).resolve().parent.parent.parent
+_SKILL_PATH = _REPO_ROOT / "ClaudeSkills" / "potomac-pptx"
+_ENHANCED_SCRIPT = _SKILL_PATH / "scripts" / "generate-enhanced-presentation.js"
+
 # Potomac brand colors
 POTOMAC_COLORS = {
     'YELLOW': 'FEC00F',
@@ -174,40 +181,61 @@ async def generate_presentation(request: Request):
         async with aiofiles.open(input_path, 'w') as f:
             await f.write(json.dumps(slide_data, indent=2))
         
-        # Call the PowerPoint generation script
-        skill_path = "/mnt/skills/user/potomac-pptx"
+        # Validate the script exists before trying to run it
+        if not _ENHANCED_SCRIPT.exists():
+            raise HTTPException(
+                status_code=500,
+                detail=(
+                    f"PPTX generation script not found at {_ENHANCED_SCRIPT}. "
+                    "Use POST /api/pptx/generate instead."
+                )
+            )
+
+        # Call the PowerPoint generation script using the repo-relative path
         command = [
-            "node", 
-            f"{skill_path}/scripts/generate-enhanced-presentation.js",
+            "node",
+            str(_ENHANCED_SCRIPT),
             "--input", input_path,
             "--output", output_path,
             "--type", "enhanced",
             "--compliance", "strict"
         ]
-        
+
         # Execute the command
         process = await asyncio.create_subprocess_exec(
             *command,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE
         )
-        
+
         stdout, stderr = await process.communicate()
-        
+
         if process.returncode != 0:
             error_msg = stderr.decode() if stderr else "Unknown error"
+            # Clean up input before raising
+            try:
+                await cleanup_temp_files(input_path, output_path, timestamp)
+            except Exception:
+                pass
             raise HTTPException(status_code=500, detail=f"Generation failed: {error_msg}")
-        
-        # Read generated file
-        async with aiofiles.open(output_path, 'rb') as f:
-            file_buffer = await f.read()
-        
-        # Clean up temp files
+
+        # Verify output file was actually created and is non-empty
+        if not os.path.exists(output_path) or os.path.getsize(output_path) == 0:
+            try:
+                await cleanup_temp_files(input_path, output_path, timestamp)
+            except Exception:
+                pass
+            raise HTTPException(status_code=500, detail="Generation produced empty output")
+
+        # Clean up input + image temp files (NOT the output — FileResponse serves it)
         await cleanup_temp_files(input_path, output_path, timestamp)
-        
+
         # Return file
-        content_type = "application/vnd.openxmlformats-officedocument.presentationml.presentation" if format_type == "pptx" else "application/pdf"
-        
+        content_type = (
+            "application/vnd.openxmlformats-officedocument.presentationml.presentation"
+            if format_type == "pptx" else "application/pdf"
+        )
+
         return FileResponse(
             output_path,
             media_type=content_type,

@@ -720,11 +720,22 @@ async def get_conversation_messages(
         # tool_results table may not exist yet on older deployments — degrade gracefully
         tool_results_by_msg = {}
 
-    # Build ordered list of file-attachment parts keyed by upload time. We'll
-    # assign each file to the earliest user message created at or after the
-    # file's own created_at. This re-attaches uploaded-file download cards
-    # so they survive page reload (was showing "No file URL or ID provided").
-    file_attachments: list = []
+    # ── Build a message-id → [file-upload-part, …] lookup ───────────────────
+    # Strategy: for each linked file, find the LAST user message whose
+    # created_at is ≤ the file's created_at.  That is the message the user
+    # sent together with the upload.  This correctly handles the common case
+    # where the conversation_files row is written a few milliseconds AFTER the
+    # messages row, which caused the old "fa['_created_at'] <= msg_time" check
+    # to always fail and strip all file-upload cards on reload.
+    user_msg_times: list = sorted(
+        [
+            (m.get("created_at") or "", m["id"])
+            for m in (result.data or [])
+            if m.get("role") == "user"
+        ]
+    )
+
+    files_by_msg_id: dict = {}
     for cf in conversation_files_rows:
         fu = cf.get("file_uploads") or {}
         fid = cf.get("file_id") or fu.get("id")
@@ -734,10 +745,26 @@ async def get_conversation_messages(
         ctype = fu.get("content_type") or ""
         ext = fname.rsplit(".", 1)[-1].lower() if "." in fname else ""
         size_kb = round((fu.get("file_size") or 0) / 1024, 1)
-        file_attachments.append({
-            "_created_at": cf.get("created_at") or "",
-            "_consumed": False,
-            "part": {
+        file_time = cf.get("created_at") or ""
+
+        # Find the most recent user message created at or before this file.
+        target_msg_id: str | None = None
+        for msg_time, msg_id in user_msg_times:
+            # Accept messages up to 5 s AFTER the file timestamp to tolerate
+            # clock skew / race conditions between the file-link write and the
+            # message write.
+            if not file_time or msg_time <= file_time:
+                target_msg_id = msg_id
+            else:
+                break  # list is sorted; no need to continue
+
+        # Fallback: if the file somehow precedes all messages, pin it to the
+        # first user message so the card is never silently dropped.
+        if target_msg_id is None and user_msg_times:
+            target_msg_id = user_msg_times[0][1]
+
+        if target_msg_id:
+            files_by_msg_id.setdefault(target_msg_id, []).append({
                 "type": "file-upload",
                 "file_id": fid,
                 "filename": fname,
@@ -746,8 +773,7 @@ async def get_conversation_messages(
                 "mime_type": ctype,
                 "file_type": ext,
                 "size_kb": size_kb,
-            },
-        })
+            })
 
     # Transform messages to match frontend Message type
     messages = []
@@ -761,20 +787,8 @@ async def get_conversation_messages(
         }
 
         # ── Attach file-upload parts to the user message they were sent with ──
-        if m["role"] == "user":
-            msg_time = m.get("created_at") or ""
-            matched_files = []
-            for fa in file_attachments:
-                if fa["_consumed"]:
-                    continue
-                # Attach any file uploaded within 30s before or any time after
-                # this message but before the next user message. Simple heuristic:
-                # claim every unconsumed file whose created_at <= msg_time + small buffer.
-                if not fa["_created_at"] or fa["_created_at"] <= msg_time or msg_time == "":
-                    matched_files.append(fa["part"])
-                    fa["_consumed"] = True
-            if matched_files:
-                msg["attachments"] = matched_files
+        if m["role"] == "user" and m["id"] in files_by_msg_id:
+            msg["attachments"] = files_by_msg_id[m["id"]]
 
         # ── parts: use dedicated column first, fall back to metadata.parts ──
         base_parts: list = []
