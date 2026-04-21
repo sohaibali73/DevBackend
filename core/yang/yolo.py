@@ -74,7 +74,45 @@ def filter_tools_for_yolo(tools: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     return filtered
 
 
+def create_yolo_checkpoint(
+    db,
+    user_id: str,
+    conversation_id: str,
+) -> Optional[Dict[str, Any]]:
+    """
+    Create a safety checkpoint BEFORE entering Yolo Mode.
+
+    The chat route must call this prior to dispatching any Yolo-mode tools so
+    the user can restore if things go sideways. Failure is non-fatal — Yolo
+    still proceeds but without the safety net (and we log loudly).
+
+    Returns the created checkpoint row, or None if creation failed.
+    """
+    try:
+        from core.yang.checkpoints import create_checkpoint
+        ckpt = create_checkpoint(
+            db=db,
+            user_id=user_id,
+            conversation_id=conversation_id,
+            label="Auto — before Yolo Mode",
+            trigger="pre_yolo",
+        )
+        logger.info(
+            "yolo_mode: created pre-yolo checkpoint %s for conv %s",
+            (ckpt or {}).get("id"), conversation_id,
+        )
+        return ckpt
+    except Exception as e:
+        logger.error(
+            "yolo_mode: failed to create pre-yolo checkpoint for conv %s — "
+            "PROCEEDING WITHOUT SAFETY NET: %s",
+            conversation_id, e,
+        )
+        return None
+
+
 def apply_yolo_iteration_cap(requested_max: int) -> int:
+
     """
     Enforce the Yolo iteration cap.
 

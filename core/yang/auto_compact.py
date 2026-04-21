@@ -93,14 +93,20 @@ async def _run_compaction(
     5. Insert summary message + soft-delete originals.
     """
     # ── 1. Load all active (non-compacted-out) messages ───────────────────
+    # Supabase Python v2 .execute() is synchronous — wrap in asyncio.to_thread
+    # so any blocking I/O (typically 50-200ms) doesn't freeze the event loop
+    # and delay the streaming chat response.
     try:
-        result = db.table("messages").select(
-            "id, role, content, metadata, created_at"
-        ).eq("conversation_id", conversation_id).order("created_at").execute()
+        result = await asyncio.to_thread(
+            lambda: db.table("messages").select(
+                "id, role, content, metadata, created_at"
+            ).eq("conversation_id", conversation_id).order("created_at").execute()
+        )
         all_msgs: List[Dict] = result.data or []
     except Exception as e:
         logger.debug("auto_compact: could not load messages: %s", e)
         return
+
 
     # Filter out already-compacted messages (metadata.compacted_out=true)
     active = [
@@ -203,9 +209,10 @@ def _find_recent_compact(all_msgs: List[Dict], debounce_min: int) -> Optional[st
             created_str = m.get("created_at", "")
             try:
                 if created_str:
-                    # Handle various ISO8601 formats
-                    created_str = created_str.rstrip("Z").split("+")[0]
-                    ts = _dt.datetime.fromisoformat(created_str).timestamp()
+                    # Robust ISO8601 parse: normalise Z → +00:00 so negative
+                    # offsets (e.g. -05:00) are NOT stripped by a naive split('+').
+                    iso = created_str.replace("Z", "+00:00")
+                    ts = _dt.datetime.fromisoformat(iso).timestamp()
                     if ts > cutoff_ts:
                         return m["id"]
             except Exception:
@@ -214,24 +221,35 @@ def _find_recent_compact(all_msgs: List[Dict], debounce_min: int) -> Optional[st
 
 
 def _batch_mark_compacted(db, ids: List[str]) -> None:
-    """Soft-delete messages by setting metadata.compacted_out = true."""
+    """Soft-delete messages by setting metadata.compacted_out = true.
+
+    Each row UPDATE is wrapped in its own try/except so one failure does NOT
+    abort the remaining messages in the batch (which would leave the
+    conversation in an inconsistent half-compacted state).
+    """
     BATCH = 20
     for i in range(0, len(ids), BATCH):
         batch = ids[i : i + BATCH]
         try:
-            # Fetch current metadata for these messages to merge
             rows = db.table("messages").select("id, metadata").in_("id", batch).execute()
-            for row in (rows.data or []):
+        except Exception as e:
+            logger.warning(
+                "auto_compact: could not fetch metadata for batch %d-%d: %s",
+                i, i + BATCH, e,
+            )
+            continue
+        for row in (rows.data or []):
+            try:
                 meta = dict(row.get("metadata") or {})
                 meta["compacted_out"] = True
                 db.table("messages").update({"metadata": meta}).eq(
                     "id", row["id"]
                 ).execute()
-        except Exception as e:
-            logger.debug(
-                "auto_compact: could not mark batch %d-%d as compacted: %s",
-                i, i + BATCH, e,
-            )
+            except Exception as e:
+                logger.warning(
+                    "auto_compact: failed to mark message %s as compacted: %s",
+                    row.get("id"), e,
+                )
 
 
 async def _summarise(

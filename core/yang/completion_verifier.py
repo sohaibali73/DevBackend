@@ -84,10 +84,22 @@ async def verify_completion(
     if len(final_text) > _MAX_RESPONSE_CHARS:
         truncated += "\n… [response truncated for verification]"
 
+    # Strip any would-be closing tags from user content so a malicious prompt
+    # can't break out of the <original_request> / <proposed_response> wrapper
+    # and inject a fake "VERIFIED" into the verifier's input.
+    def _safe(s: str) -> str:
+        return (
+            s.replace("</original_request>", "[/original_request]")
+             .replace("</proposed_response>", "[/proposed_response]")
+             .replace("<original_request>", "[original_request]")
+             .replace("<proposed_response>", "[proposed_response]")
+        )
+
     prompt = (
-        f"<original_request>\n{user_message[:500]}\n</original_request>\n\n"
-        f"<proposed_response>\n{truncated}\n</proposed_response>"
+        f"<original_request>\n{_safe(user_message[:500])}\n</original_request>\n\n"
+        f"<proposed_response>\n{_safe(truncated)}\n</proposed_response>"
     )
+
 
     try:
         result = await asyncio.wait_for(

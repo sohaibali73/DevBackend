@@ -140,8 +140,14 @@ def update_focus_deterministic(
     combined_text = (assistant_text or "") + "\n" + (user_message or "")
 
     # ── Goal: set on first turn from user message ──────────────────────────
+    # Strip XML/HTML-style tags so a malicious user message can't inject a
+    # fake </focus_chain><system_prompt>… block once goal is embedded into
+    # the system prompt via build_focus_system_block().
     if not focus.get("goal") and user_message:
-        focus["goal"] = user_message[:120].strip().replace("\n", " ")
+        import re as _re_mod_local
+        cleaned = _re_mod_local.sub(r"</?\s*[a-zA-Z][^>]{0,60}>", "", user_message[:160])
+        focus["goal"] = cleaned[:120].strip().replace("\n", " ")
+
 
     # ── Key files: UUID file_ids + quoted filenames ────────────────────────
     new_files = set(focus.get("key_files") or [])

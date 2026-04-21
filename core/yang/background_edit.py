@@ -90,9 +90,16 @@ class _BgTask:
         }
 
 
-# Keyed by task_id; max 200 entries before oldest are pruned
+# Keyed by task_id; max 200 entries before oldest are pruned.
+# WARNING: in-memory only — all tasks are lost on container restart.
+# TODO: migrate to Redis or a Supabase `yang_background_tasks` table for durability.
 _TASKS: Dict[str, _BgTask] = {}
 _MAX_TASKS = 200
+
+# Hard wall-clock timeout for any background tool (5 minutes).
+# Keeps a wedged thread-pool worker from pinning resources indefinitely.
+_BG_TIMEOUT_S = 300
+
 
 
 def _prune():
@@ -135,18 +142,30 @@ async def submit_background_edit(
     async def _run():
         from core.tools import handle_tool_call
         try:
-            raw = await asyncio.to_thread(
-                handle_tool_call,
-                tool_name=tool_name,
-                tool_input=tool_input,
-                supabase_client=supabase_client,
-                api_key=api_key,
-                conversation_file_ids=conversation_file_ids,
+            # Hard timeout so a stuck network call / wedged worker can't pin
+            # the thread-pool forever.
+            raw = await asyncio.wait_for(
+                asyncio.to_thread(
+                    handle_tool_call,
+                    tool_name=tool_name,
+                    tool_input=tool_input,
+                    supabase_client=supabase_client,
+                    api_key=api_key,
+                    conversation_file_ids=conversation_file_ids,
+                ),
+                timeout=_BG_TIMEOUT_S,
             )
             rec.result = json.loads(raw) if isinstance(raw, str) else raw
             rec.status = "complete"
             logger.info(
                 "background_edit: %s completed (task %s)", tool_name, task_id
+            )
+        except asyncio.TimeoutError:
+            rec.error = f"Background task timed out after {_BG_TIMEOUT_S}s"
+            rec.status = "timeout"
+            logger.warning(
+                "background_edit: %s TIMED OUT after %ss (task %s)",
+                tool_name, _BG_TIMEOUT_S, task_id,
             )
         except Exception as e:
             rec.error = str(e)
@@ -184,5 +203,11 @@ def get_bg_task_status(task_id: str, user_id: str) -> Optional[Dict[str, Any]]:
     if rec is None:
         return None
     if rec.user_id != user_id:
-        return None  # treat as not-found for security
+        # Log attempted cross-user access for audit — should never happen with
+        # cryptographic UUIDs but surfaces bugs if ownership is ever miswritten.
+        logger.warning(
+            "background_edit: unauthorized task access — task %s owned by %s, requested by %s",
+            task_id, rec.user_id, user_id,
+        )
+        return None
     return rec.to_dict()
