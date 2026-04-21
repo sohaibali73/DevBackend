@@ -1,0 +1,285 @@
+"""
+core/yang/auto_compact.py — Background Conversation History Compression
+========================================================================
+When a conversation grows beyond the configured token / message threshold,
+this module summarizes the oldest 60 % of messages using a cheap Haiku
+call and stores a compact summary message in the DB.  Original messages
+are soft-deleted by setting `metadata.compacted_out = true` so they are
+excluded from future history loads without losing the audit trail.
+
+Design:
+- Runs as asyncio.create_task — NEVER on the hot path, NEVER blocking the
+  user's response stream.
+- Debounced: skips if the conversation already has a recent compact summary
+  (checks for messages with metadata.compacted = true within the last N min).
+- Graceful: any exception is caught and logged; the conversation continues
+  normally with un-compacted history.
+
+DB changes made during compaction:
+  INSERT  messages (role=user, content=summary, metadata.compacted=true)
+  UPDATE  messages SET metadata.compacted_out=true WHERE id IN (old_ids)
+
+Filtering compacted messages in history loads:
+  The chat route filters: `if not (m.get("metadata") or {}).get("compacted_out")`
+  The compact summary itself is kept and included in future history loads.
+
+Usage (from api/routes/chat.py):
+    from core.yang.auto_compact import schedule_compaction
+
+    schedule_compaction(
+        db=db, conversation_id=conversation_id, user_id=user_id,
+        yang_cfg=yang_cfg, api_key=api_keys.get("claude"),
+    )
+"""
+
+import asyncio
+import json
+import logging
+import time
+from typing import Any, Dict, List, Optional
+
+logger = logging.getLogger(__name__)
+
+
+# ─── Public entry-point ───────────────────────────────────────────────────────
+
+def schedule_compaction(
+    db,
+    conversation_id: str,
+    user_id: str,
+    yang_cfg: Any,
+    api_key: Optional[str],
+) -> Optional[asyncio.Task]:
+    """
+    Schedule a background compaction task.
+
+    Returns the asyncio.Task (or None if compaction is not needed / scheduled).
+    The caller can safely ignore the return value.
+    """
+    if not api_key:
+        return None  # can't call LLM without key
+
+    async def _task():
+        try:
+            await _run_compaction(db, conversation_id, user_id, yang_cfg, api_key)
+        except Exception as e:
+            logger.warning(
+                "auto_compact: compaction failed for conv %s (non-fatal): %s",
+                conversation_id, e,
+            )
+
+    task = asyncio.create_task(_task())
+    logger.debug("auto_compact: scheduled for conv %s", conversation_id)
+    return task
+
+
+# ─── Core compaction logic ────────────────────────────────────────────────────
+
+async def _run_compaction(
+    db,
+    conversation_id: str,
+    user_id: str,
+    yang_cfg: Any,
+    api_key: str,
+) -> None:
+    """
+    Evaluate whether compaction is needed and, if so, execute it.
+
+    Steps:
+    1. Load all non-compacted messages from DB.
+    2. Estimate payload tokens.
+    3. If over threshold AND over min message count AND not debounced: compact.
+    4. Summarise the oldest 60 % using Haiku.
+    5. Insert summary message + soft-delete originals.
+    """
+    # ── 1. Load all active (non-compacted-out) messages ───────────────────
+    try:
+        result = db.table("messages").select(
+            "id, role, content, metadata, created_at"
+        ).eq("conversation_id", conversation_id).order("created_at").execute()
+        all_msgs: List[Dict] = result.data or []
+    except Exception as e:
+        logger.debug("auto_compact: could not load messages: %s", e)
+        return
+
+    # Filter out already-compacted messages (metadata.compacted_out=true)
+    active = [
+        m for m in all_msgs
+        if not (m.get("metadata") or {}).get("compacted_out")
+    ]
+
+    # ── 2. Estimate token count ────────────────────────────────────────────
+    payload_tokens = sum(
+        len(json.dumps(m.get("content") or "")) // 4
+        for m in active
+    )
+    msg_count = len(active)
+
+    threshold = int(yang_cfg.compact_token_threshold)
+    min_msgs  = int(yang_cfg.compact_message_min)
+
+    if payload_tokens <= threshold or msg_count <= min_msgs:
+        logger.debug(
+            "auto_compact: conv %s — %d tokens / %d msgs, below threshold (%d / %d), skipping",
+            conversation_id, payload_tokens, msg_count, threshold, min_msgs,
+        )
+        return
+
+    # ── 3. Debounce check ─────────────────────────────────────────────────
+    debounce_min = int(yang_cfg.compact_debounce_min)
+    recent_compact = _find_recent_compact(all_msgs, debounce_min)
+    if recent_compact:
+        logger.debug(
+            "auto_compact: conv %s — recent compaction found (%s), skipping",
+            conversation_id, recent_compact,
+        )
+        return
+
+    logger.info(
+        "auto_compact: conv %s — %d tokens / %d msgs over threshold, compacting…",
+        conversation_id, payload_tokens, msg_count,
+    )
+
+    # ── 4. Choose messages to compact (oldest 60 %) ───────────────────────
+    cutoff = int(len(active) * 0.6)
+    to_compact = active[:cutoff]
+    to_keep    = active[cutoff:]
+
+    if not to_compact:
+        return
+
+    # ── 5. Summarise with Haiku ───────────────────────────────────────────
+    summary = await _summarise(to_compact, yang_cfg, api_key)
+    if not summary:
+        logger.warning("auto_compact: Haiku returned empty summary, aborting")
+        return
+
+    # ── 6. Insert compact summary message ─────────────────────────────────
+    # Use the created_at of the LAST compacted message so the summary sits
+    # just before the kept messages in chronological order.
+    last_compact_ts = to_compact[-1].get("created_at", "")
+    compact_ids = [m["id"] for m in to_compact]
+
+    try:
+        db.table("messages").insert({
+            "conversation_id": conversation_id,
+            "role":            "user",
+            "content":         f"[COMPACTED CONTEXT]\n{summary}",
+            "metadata": {
+                "compacted":      True,
+                "compacted_ids":  compact_ids,
+                "original_count": len(to_compact),
+                "token_estimate": payload_tokens,
+            },
+        }).execute()
+    except Exception as e:
+        logger.warning("auto_compact: could not insert summary message: %s", e)
+        return
+
+    # ── 7. Soft-delete the original compacted messages ────────────────────
+    # Mark in batches of 20 to avoid URL-length limits.
+    _batch_mark_compacted(db, compact_ids)
+
+    logger.info(
+        "auto_compact: conv %s — compacted %d messages into summary",
+        conversation_id, len(to_compact),
+    )
+
+
+# ─── Helpers ──────────────────────────────────────────────────────────────────
+
+def _find_recent_compact(all_msgs: List[Dict], debounce_min: int) -> Optional[str]:
+    """
+    Return the id of the most recent compact-summary message if it was created
+    within the debounce window, else None.
+    """
+    import datetime as _dt
+    cutoff_ts = time.time() - debounce_min * 60
+
+    for m in reversed(all_msgs):
+        meta = m.get("metadata") or {}
+        if meta.get("compacted"):
+            # Parse created_at
+            created_str = m.get("created_at", "")
+            try:
+                if created_str:
+                    # Handle various ISO8601 formats
+                    created_str = created_str.rstrip("Z").split("+")[0]
+                    ts = _dt.datetime.fromisoformat(created_str).timestamp()
+                    if ts > cutoff_ts:
+                        return m["id"]
+            except Exception:
+                pass
+    return None
+
+
+def _batch_mark_compacted(db, ids: List[str]) -> None:
+    """Soft-delete messages by setting metadata.compacted_out = true."""
+    BATCH = 20
+    for i in range(0, len(ids), BATCH):
+        batch = ids[i : i + BATCH]
+        try:
+            # Fetch current metadata for these messages to merge
+            rows = db.table("messages").select("id, metadata").in_("id", batch).execute()
+            for row in (rows.data or []):
+                meta = dict(row.get("metadata") or {})
+                meta["compacted_out"] = True
+                db.table("messages").update({"metadata": meta}).eq(
+                    "id", row["id"]
+                ).execute()
+        except Exception as e:
+            logger.debug(
+                "auto_compact: could not mark batch %d-%d as compacted: %s",
+                i, i + BATCH, e,
+            )
+
+
+async def _summarise(
+    messages: List[Dict],
+    yang_cfg: Any,
+    api_key: str,
+) -> str:
+    """
+    Call Haiku to summarise a list of conversation messages.
+    Returns the summary string or empty string on failure.
+    """
+    # Build a compact transcript for the LLM
+    lines = []
+    for m in messages:
+        role = m.get("role", "?")
+        content = m.get("content") or ""
+        if isinstance(content, list):
+            content = " ".join(
+                b.get("text", "") for b in content if isinstance(b, dict) and b.get("type") == "text"
+            )
+        # Truncate very long messages to keep Haiku input small
+        content = content[:500].replace("\n", " ")
+        lines.append(f"{role.upper()}: {content}")
+
+    transcript = "\n".join(lines)
+
+    try:
+        import anthropic as _anth
+        client = _anth.Anthropic(api_key=api_key)
+        response = client.messages.create(
+            model=yang_cfg.compact_model,
+            max_tokens=int(yang_cfg.compact_token_threshold * 0.05),  # ~5% of threshold
+            system=(
+                "You are a conversation summarizer. "
+                "Condense the conversation into concise bullet points. "
+                "Preserve: file names, file IDs (UUIDs), decisions made, tasks completed, "
+                "code snippets (abbreviated), and any open questions. "
+                "Be factual. Do not add commentary. Return plain text, no markdown headers."
+            ),
+            messages=[{
+                "role": "user",
+                "content": (
+                    f"Summarize this conversation history into bullet points:\n\n{transcript}"
+                ),
+            }],
+        )
+        text = response.content[0].text.strip() if response.content else ""
+        return text
+    except Exception as e:
+        logger.warning("auto_compact: Haiku summarization failed: %s", e)
+        return ""
