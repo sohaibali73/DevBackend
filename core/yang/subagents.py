@@ -180,14 +180,40 @@ async def run_subagents(
 
     results: List[Dict] = await asyncio.gather(*coroutines, return_exceptions=False)
 
+    # Truncate each subtask summary BEFORE aggregation so final JSON stays valid
+    _PER_RESULT_CHAR_BUDGET = max(512, _MAX_AGGREGATE_CHARS // max(1, len(results)) - 256)
+    for r in results:
+        summary = r.get("summary")
+        if isinstance(summary, str) and len(summary) > _PER_RESULT_CHAR_BUDGET:
+            r["summary"] = summary[:_PER_RESULT_CHAR_BUDGET] + "… [truncated]"
+
     # Build aggregate response
     output = {"subtask_results": results, "count": len(results)}
-
-    # Truncate to avoid flooding the main model context
     raw = json.dumps(output, indent=2)
+
+    # Hard safety net — in the rare case we still overflow, return a minimal
+    # but VALID JSON summary rather than a truncated (invalid) blob.
     if len(raw) > _MAX_AGGREGATE_CHARS:
-        raw = raw[:_MAX_AGGREGATE_CHARS] + "\n… [truncated to fit context window]"
-        logger.debug("subagents: aggregate truncated to %d chars", _MAX_AGGREGATE_CHARS)
+        logger.warning(
+            "subagents: aggregate still %d chars after per-result trim — falling back to summaries-only",
+            len(raw),
+        )
+        stripped = [
+            {
+                "role": r.get("role"),
+                "prompt": (r.get("prompt") or "")[:80],
+                "summary": (r.get("summary") or "")[: _PER_RESULT_CHAR_BUDGET // 2]
+                           + ("… [truncated]" if r.get("summary") else ""),
+                "error": r.get("error"),
+                "elapsed_s": r.get("elapsed_s"),
+            }
+            for r in results
+        ]
+        raw = json.dumps(
+            {"subtask_results": stripped, "count": len(stripped), "truncated": True},
+            indent=2,
+        )
+
 
     logger.info(
         "subagents: %d subtasks complete (%d chars)",

@@ -147,18 +147,24 @@ async def execute_tool_calls_parallel(
 
     results: List[Optional[Dict]] = [None] * len(calls)
     semaphore = asyncio.Semaphore(_MAX_PARALLEL)
+    # Sequential tools also share a semaphore so we don't starve the thread-pool
+    # when many side-effectful tools queue up behind one another.
+    sequential_semaphore = asyncio.Semaphore(_MAX_PARALLEL)
 
     # ── Heartbeat background task ─────────────────────────────────────────
+    # Fire as long as we have ANY tool to run — a single long tool can still
+    # blow past Railway's SSE proxy timeout without heartbeats.
     heartbeat_task: Optional[asyncio.Task] = None
-    if heartbeat and (len(calls) > 1 or len(parallel_indices) > 0):
+    if heartbeat and calls:
         async def _heartbeat_loop():
             while True:
                 await asyncio.sleep(_HEARTBEAT_INTERVAL_S)
                 try:
                     await heartbeat()
-                except Exception:
-                    pass
+                except Exception as hb_err:
+                    logger.debug("parallel_tools heartbeat error: %s", hb_err)
         heartbeat_task = asyncio.create_task(_heartbeat_loop())
+
 
     try:
         # ── Phase 1: parallel batch ───────────────────────────────────────
