@@ -95,8 +95,23 @@ _SANDBOX_GLOBALS: Dict[str, Any] = {
         "ImportError": ImportError, "ModuleNotFoundError": ModuleNotFoundError,
         "AssertionError": AssertionError, "LookupError": LookupError,
         "ArithmeticError": ArithmeticError,
+        "FileNotFoundError": FileNotFoundError, "PermissionError": PermissionError,
+        "IOError": IOError, "OSError": OSError,
+        "UnicodeDecodeError": UnicodeDecodeError, "UnicodeEncodeError": UnicodeEncodeError,
+        "StopAsyncIteration": StopAsyncIteration, "GeneratorExit": GeneratorExit,
+        "KeyboardInterrupt": KeyboardInterrupt,
+        "frozenset": frozenset, "bytes": bytes, "bytearray": bytearray,
+        "memoryview": memoryview, "complex": complex,
         "__import__": __import__,   # needed for `import pandas` etc in exec
+        "__build_class__": __build_class__,   # REQUIRED for `class Foo: ...` statements
+        "__name__": "__sandbox__",
+        "__doc__": None,
+        "__spec__": None,
+        "__loader__": None,
+        "__package__": None,
+        "__debug__": False,
     },
+
     "random": random,
     "math": math,
     "statistics": statistics,

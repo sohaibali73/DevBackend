@@ -123,7 +123,10 @@ _ROLE_TOOLS: Dict[str, frozenset] = {
 _MAX_AGGREGATE_CHARS = 8_000
 
 # Haiku-tier subagent model (cheap, fast)
-_DEFAULT_SUBAGENT_MODEL = "claude-haiku-4-5-20251101"
+# NOTE: must be a real Anthropic model slug — a stale/invalid slug causes every
+# subagent call to fail with `404 not_found_error` and the dispatcher appears offline.
+_DEFAULT_SUBAGENT_MODEL = "claude-haiku-4-5"
+_FALLBACK_SUBAGENT_MODEL = "claude-3-5-haiku-latest"
 
 
 # ─── Public entry-point ───────────────────────────────────────────────────────
@@ -153,7 +156,9 @@ async def run_subagents(
     max_concurrent = int(yang_cfg.subagent_max)
     timeout_s = int(yang_cfg.subagent_timeout_s)
     max_tokens_cap = int(yang_cfg.subagent_max_tokens)
-    subagent_model = getattr(yang_cfg, "double_check_model", _DEFAULT_SUBAGENT_MODEL)
+    # Prefer explicit subagent_model on yang_cfg; fall back to the default alias.
+    # Do NOT reuse double_check_model — that slug may point at a verifier-only model.
+    subagent_model = getattr(yang_cfg, "subagent_model", None) or _DEFAULT_SUBAGENT_MODEL
 
     # Cap number of subtasks
     tasks = subtasks[:max_concurrent]
@@ -273,8 +278,15 @@ def _call_subagent(
     if role_tools:
         kwargs["tools"] = role_tools
 
-    # Simple non-streaming call (subagent responses are short)
-    response = client.messages.create(**kwargs)
+    # Simple non-streaming call (subagent responses are short).
+    # Retry once with the fallback slug if the primary model 404s.
+    try:
+        response = client.messages.create(**kwargs)
+    except _anth.NotFoundError as e:
+        logger.warning("subagent model '%s' returned 404; retrying with fallback '%s'",
+                       model, _FALLBACK_SUBAGENT_MODEL)
+        kwargs["model"] = _FALLBACK_SUBAGENT_MODEL
+        response = client.messages.create(**kwargs)
 
     # Extract text from response
     text_parts = [
