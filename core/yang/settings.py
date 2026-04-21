@@ -41,7 +41,8 @@ class YangConfig:
     subagent_max:          int   = 5        # max concurrent subagents
     subagent_timeout_s:    int   = 45       # per-subagent timeout
     subagent_max_tokens:   int   = 2048     # per-subagent output budget
-    compact_token_threshold: int = 30_000   # payload tokens before compaction
+    compact_token_threshold: int   = 30_000  # absolute fallback token threshold
+    compact_utilization_threshold: float = 0.70  # trigger at 70% of context window used
     compact_message_min:   int   = 20       # min messages before compaction
     compact_debounce_min:  int   = 10       # minutes between compactions
     focus_llm_every_n:     int   = 5        # turns between LLM focus polish
@@ -72,8 +73,9 @@ class YangConfig:
                 "subagent_max":           self.subagent_max,
                 "subagent_timeout_s":     self.subagent_timeout_s,
                 "subagent_max_tokens":    self.subagent_max_tokens,
-                "compact_token_threshold": self.compact_token_threshold,
-                "compact_message_min":    self.compact_message_min,
+                "compact_token_threshold":        self.compact_token_threshold,
+                "compact_utilization_threshold":  self.compact_utilization_threshold,
+                "compact_message_min":            self.compact_message_min,
                 "compact_debounce_min":   self.compact_debounce_min,
                 "focus_llm_every_n":      self.focus_llm_every_n,
                 "double_check_model":     self.double_check_model,
@@ -95,6 +97,10 @@ _ADVANCED_INT_FIELDS = {
     "subagent_max", "subagent_timeout_s", "subagent_max_tokens",
     "compact_token_threshold", "compact_message_min",
     "compact_debounce_min", "focus_llm_every_n",
+}
+
+_ADVANCED_FLOAT_FIELDS = {
+    "compact_utilization_threshold",
 }
 
 _ADVANCED_STR_FIELDS = {
@@ -130,6 +136,7 @@ def _build_config(row: Dict[str, Any]) -> YangConfig:
         subagent_timeout_s=adv_int("subagent_timeout_s", 45),
         subagent_max_tokens=adv_int("subagent_max_tokens", 2048),
         compact_token_threshold=adv_int("compact_token_threshold", 30_000),
+        compact_utilization_threshold=float(advanced.get("compact_utilization_threshold", 0.70)),
         compact_message_min=adv_int("compact_message_min", 20),
         compact_debounce_min=adv_int("compact_debounce_min", 10),
         focus_llm_every_n=adv_int("focus_llm_every_n", 5),

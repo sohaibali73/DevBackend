@@ -285,10 +285,32 @@ def estimate_token_count(text: str) -> int:
     return len(text) // 4
 
 
+def _is_compact_summary(msg: dict) -> bool:
+    """Return True if this message is a YANG auto-compact summary.
+
+    Compact summaries must NEVER be dropped by the context window manager —
+    they are the only record of the conversation history they replaced.
+    Detection uses both the metadata flag (preferred) and a content prefix
+    fallback for older rows written before the XML wrapper was added.
+    """
+    meta = msg.get("metadata") or {}
+    if meta.get("compacted"):
+        return True
+    content = msg.get("content", "")
+    if isinstance(content, str) and (
+        content.startswith("<context>") or content.startswith("[COMPACTED CONTEXT]")
+    ):
+        return True
+    return False
+
+
 def manage_context_window(messages: list, context_limit: int, system_prompt: str) -> list:
     """
     Ensure messages fit within context window by removing oldest messages if needed.
     Keep system prompt and most recent messages.
+
+    YANG auto-compact summary messages are NEVER dropped — they are the sole
+    record of the history they replaced.  Dropping them would defeat compaction.
     """
     system_tokens = estimate_token_count(system_prompt)
     available_tokens = context_limit - system_tokens - 10000  # Reserve 10k for response
@@ -305,11 +327,18 @@ def manage_context_window(messages: list, context_limit: int, system_prompt: str
     if current_tokens <= available_tokens:
         return messages
 
-    # Remove oldest messages until we fit
+    # Remove oldest messages until we fit, but NEVER remove a compact summary.
+    i = 0
     while current_tokens > available_tokens and len(messages) > 2:
-        # Always keep at least the last user message
-        removed = messages.pop(0)
-        current_tokens -= estimate_token_count(json.dumps(removed.get("content", "")))
+        if i >= len(messages) - 1:
+            break  # nothing left to drop
+        candidate = messages[i]
+        if _is_compact_summary(candidate):
+            i += 1  # skip this message, try the next oldest
+            continue
+        messages.pop(i)
+        current_tokens -= estimate_token_count(json.dumps(candidate.get("content", "")))
+        # Don't advance i — the next candidate is now at position i
 
     return messages
 
@@ -1906,17 +1935,40 @@ async def chat_agent(
 
             # ── YANG: auto compact — background conversation history compression ──
             # Runs as asyncio.create_task — never blocks the response stream.
-            # The task itself decides if compaction is needed (token/msg thresholds).
+            # Passes the real API token counts so the trigger uses context-window
+            # utilisation % (like Cline) rather than a rough character estimate.
             if yang_cfg.auto_compact:
                 try:
                     from core.yang.auto_compact import schedule_compaction
-                    schedule_compaction(
+                    _ac_task = schedule_compaction(
                         db=db,
                         conversation_id=conversation_id,
                         user_id=user_id,
                         yang_cfg=yang_cfg,
                         api_key=api_keys.get("claude"),
+                        actual_input_tokens=total_usage["input_tokens"],
+                        context_window_size=model_config["context_window"],
                     )
+                    # Notify the frontend whenever compaction is actually scheduled
+                    # so the UI can show a "Context compressed" indicator (like Cline).
+                    if _ac_task is not None:
+                        _util_pct = round(
+                            total_usage["input_tokens"] / model_config["context_window"] * 100, 1
+                        ) if model_config["context_window"] > 0 else 0
+                        yield encoder.encode_data({
+                            "yang_auto_compact": True,
+                            "input_tokens":      total_usage["input_tokens"],
+                            "context_window":    model_config["context_window"],
+                            "utilization_pct":   _util_pct,
+                            "message":           "Context compression running in background — old messages will be summarized.",
+                        })
+                        logger.info(
+                            "auto_compact: scheduled for conv %s — %d tokens / %.1f%% of %d context",
+                            conversation_id,
+                            total_usage["input_tokens"],
+                            _util_pct,
+                            model_config["context_window"],
+                        )
                 except Exception as _ac_err:
                     logger.debug("auto_compact schedule failed (non-fatal): %s", _ac_err)
 

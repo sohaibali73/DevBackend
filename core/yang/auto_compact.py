@@ -49,19 +49,29 @@ def schedule_compaction(
     user_id: str,
     yang_cfg: Any,
     api_key: Optional[str],
+    actual_input_tokens: int = 0,       # real token count from API usage object
+    context_window_size: int = 0,       # model context window (e.g. 200_000)
 ) -> Optional[asyncio.Task]:
     """
     Schedule a background compaction task.
 
     Returns the asyncio.Task (or None if compaction is not needed / scheduled).
     The caller can safely ignore the return value.
+
+    When actual_input_tokens > 0 AND context_window_size > 0, the compaction
+    trigger uses the real context-window utilisation percentage (like Cline)
+    instead of a rough character-count estimate.
     """
     if not api_key:
         return None  # can't call LLM without key
 
     async def _task():
         try:
-            await _run_compaction(db, conversation_id, user_id, yang_cfg, api_key)
+            await _run_compaction(
+                db, conversation_id, user_id, yang_cfg, api_key,
+                actual_input_tokens=actual_input_tokens,
+                context_window_size=context_window_size,
+            )
         except Exception as e:
             logger.warning(
                 "auto_compact: compaction failed for conv %s (non-fatal): %s",
@@ -81,16 +91,20 @@ async def _run_compaction(
     user_id: str,
     yang_cfg: Any,
     api_key: str,
+    actual_input_tokens: int = 0,
+    context_window_size: int = 0,
 ) -> None:
     """
     Evaluate whether compaction is needed and, if so, execute it.
 
     Steps:
     1. Load all non-compacted messages from DB.
-    2. Estimate payload tokens.
-    3. If over threshold AND over min message count AND not debounced: compact.
-    4. Summarise the oldest 60 % using Haiku.
-    5. Insert summary message + soft-delete originals.
+    2. Determine token count (real API usage when available, else rough estimate).
+    3. Check threshold: utilisation % when context_window_size is known (like
+       Cline), absolute token count otherwise.
+    4. If over threshold AND over min message count AND not debounced: compact.
+    5. Summarise the oldest 60 % using a cheap model.
+    6. Insert summary message + soft-delete originals.
     """
     # ── 1. Load all active (non-compacted-out) messages ───────────────────
     # Supabase Python v2 .execute() is synchronous — wrap in asyncio.to_thread
@@ -107,27 +121,61 @@ async def _run_compaction(
         logger.debug("auto_compact: could not load messages: %s", e)
         return
 
-
     # Filter out already-compacted messages (metadata.compacted_out=true)
     active = [
         m for m in all_msgs
         if not (m.get("metadata") or {}).get("compacted_out")
     ]
 
-    # ── 2. Estimate token count ────────────────────────────────────────────
-    payload_tokens = sum(
-        len(json.dumps(m.get("content") or "")) // 4
-        for m in active
-    )
     msg_count = len(active)
 
-    threshold = int(yang_cfg.compact_token_threshold)
-    min_msgs  = int(yang_cfg.compact_message_min)
-
-    if payload_tokens <= threshold or msg_count <= min_msgs:
+    # ── 2. Determine token count ───────────────────────────────────────────
+    # Prefer the real API-returned input_tokens count (passed in from chat.py)
+    # because it includes the system prompt, tool definitions, and file context
+    # — things the rough character estimate misses entirely.
+    if actual_input_tokens > 0:
+        payload_tokens = actual_input_tokens
         logger.debug(
-            "auto_compact: conv %s — %d tokens / %d msgs, below threshold (%d / %d), skipping",
-            conversation_id, payload_tokens, msg_count, threshold, min_msgs,
+            "auto_compact: conv %s — using real API token count: %d",
+            conversation_id, payload_tokens,
+        )
+    else:
+        payload_tokens = sum(
+            len(json.dumps(m.get("content") or "")) // 4
+            for m in active
+        )
+        logger.debug(
+            "auto_compact: conv %s — using estimated token count: %d",
+            conversation_id, payload_tokens,
+        )
+
+    min_msgs = int(yang_cfg.compact_message_min)
+
+    # ── 3. Threshold check ─────────────────────────────────────────────────
+    # Use utilisation % when we have real token counts + context window size
+    # (mirrors how Cline decides when to compact).
+    # Fall back to the absolute token threshold otherwise.
+    utilization: float = 0.0
+    if context_window_size > 0 and actual_input_tokens > 0:
+        utilization = payload_tokens / context_window_size
+        util_threshold = float(getattr(yang_cfg, "compact_utilization_threshold", 0.70))
+        threshold_met = utilization >= util_threshold
+        logger.debug(
+            "auto_compact: conv %s — %.1f%% context used (threshold %.0f%%), %d msgs",
+            conversation_id, utilization * 100, util_threshold * 100, msg_count,
+        )
+    else:
+        threshold = int(yang_cfg.compact_token_threshold)
+        threshold_met = payload_tokens >= threshold
+        logger.debug(
+            "auto_compact: conv %s — %d tokens / %d msgs, absolute threshold %d",
+            conversation_id, payload_tokens, msg_count, threshold,
+        )
+
+    if not threshold_met or msg_count <= min_msgs:
+        logger.debug(
+            "auto_compact: conv %s — below threshold or too few msgs (%d), skipping",
+            conversation_id, msg_count,
         )
         return
 
@@ -163,6 +211,8 @@ async def _run_compaction(
     # ── 6. Insert compact summary message ─────────────────────────────────
     # Use the created_at of the LAST compacted message so the summary sits
     # just before the kept messages in chronological order.
+    # Role is "user" with an XML context wrapper so Claude understands this
+    # is injected context, not a genuine user statement.
     last_compact_ts = to_compact[-1].get("created_at", "")
     compact_ids = [m["id"] for m in to_compact]
 
@@ -170,12 +220,19 @@ async def _run_compaction(
         db.table("messages").insert({
             "conversation_id": conversation_id,
             "role":            "user",
-            "content":         f"[COMPACTED CONTEXT]\n{summary}",
+            "content":         (
+                f"<context>\n"
+                f"[Conversation history compressed — {len(to_compact)} older messages summarized]\n\n"
+                f"{summary}\n"
+                f"</context>"
+            ),
             "metadata": {
-                "compacted":      True,
-                "compacted_ids":  compact_ids,
-                "original_count": len(to_compact),
-                "token_estimate": payload_tokens,
+                "compacted":          True,
+                "compacted_ids":      compact_ids,
+                "original_count":     len(to_compact),
+                "token_estimate":     payload_tokens,
+                "utilization_pct":    round(utilization * 100, 1),
+                "context_window":     context_window_size,
             },
         }).execute()
     except Exception as e:
