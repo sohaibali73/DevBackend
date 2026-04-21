@@ -35,6 +35,14 @@ router = APIRouter(prefix="/chat", tags=["Chat"])
 
 # Model capability matrix - update as new models are released
 MODEL_CAPABILITIES = {
+    # Claude 4.7 models
+    "claude-opus-4-7": {
+        "max_output_tokens": 128000,
+        "context_window": 1000000,
+        "supports_adaptive_thinking": True,
+        "supports_prompt_caching": True,
+        "default_top_p": 0.99,
+    },
     # Claude 4.6 models
     "claude-opus-4-6": {
         "max_output_tokens": 128000,
@@ -69,6 +77,7 @@ MODEL_CAPABILITIES = {
 
 # Pinned model snapshots for production stability
 RECOMMENDED_MODEL_SNAPSHOTS = {
+    "claude-opus-4-7": "claude-opus-4-7",
     "claude-opus-4-6": "claude-opus-4-6",
     "claude-sonnet-4-6": "claude-sonnet-4-6",
     "claude-opus-4-5": "claude-opus-4-5-20251101",
