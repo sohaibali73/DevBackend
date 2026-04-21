@@ -22,7 +22,7 @@ from anthropic import APIError, RateLimitError
 from api.dependencies import get_current_user_id, get_user_api_keys
 from core.claude_engine import ClaudeAFLEngine
 from core.prompts import get_base_prompt, get_chat_prompt
-from core.tools import get_all_tools, handle_tool_call
+from core.tools import get_all_tools, get_tools_for_api, handle_tool_call, is_tool_search_block
 from core.artifact_parser import ArtifactParser
 from core.streaming import VercelAIStreamEncoder, GenerativeUIStreamBuilder
 from db.supabase_client import get_supabase
@@ -379,6 +379,24 @@ class RenameConversationRequest(BaseModel):
     title: str
 
 
+class YangOverrides(BaseModel):
+    """
+    Per-request overrides for YANG advanced agentic features.
+    Any field left as None inherits the user's persistent DB setting.
+    Persistent defaults live in user_yang_settings (GET /yang/settings).
+    """
+    subagents:       Optional[bool] = None  # parallel focused subagents
+    parallel_tools:  Optional[bool] = None  # concurrent read-only tool calls
+    plan_mode:       Optional[bool] = None  # restrict to read-only tools
+    tool_search:     Optional[bool] = None  # lazy-load tool definitions
+    auto_compact:    Optional[bool] = None  # background history compression
+    focus_chain:     Optional[bool] = None  # rolling goal/task tracker
+    background_edit: Optional[bool] = None  # queue doc generation async
+    checkpoints:     Optional[bool] = None  # save rollback points
+    yolo_mode:       Optional[bool] = None  # skip all confirmations
+    double_check:    Optional[bool] = None  # verify completion before finish
+
+
 class ChatAgentRequest(BaseModel):
     content: str
     conversation_id: Optional[str] = None
@@ -390,6 +408,7 @@ class ChatAgentRequest(BaseModel):
     use_prompt_caching: bool = True  # NEW: enable prompt caching by default
     max_iterations: int = 5  # NEW: configurable, increased default
     pin_model_version: bool = False  # NEW: option to use pinned snapshots
+    yang: Optional[YangOverrides] = None  # YANG per-request feature overrides
 
 
 # ---------------------------------------------------------------------------
@@ -950,13 +969,15 @@ async def chat_agent(
         "metadata": {"parts": _user_parts},
     }).execute()
 
-    history_result = db.table("messages").select("role, content").eq(
+    # Include metadata so we can filter out compacted_out messages (YANG auto-compact).
+    history_result = db.table("messages").select("role, content, metadata").eq(
         "conversation_id", conversation_id
     ).order("created_at").limit(40).execute()  # Increased limit for better context
 
     history = [
         {"role": m["role"], "content": m["content"]}
         for m in history_result.data[:-1]
+        if not (m.get("metadata") or {}).get("compacted_out")  # YANG: skip soft-deleted
     ]
 
     file_context = await _fetch_file_context(db, conversation_id)
@@ -1068,10 +1089,116 @@ async def chat_agent(
                 system_prompt_base
             )
 
-            tools = get_all_tools()
+            # ── YANG: load per-user config (merge with per-request overrides) ──
+            # Loads from user_yang_settings table; falls back to safe defaults
+            # on any DB error. Zero behavior change when yang is None.
+            try:
+                from core.yang.settings import load_yang_config
+                yang_cfg = load_yang_config(user_id, data.yang)
+            except Exception as _yang_err:
+                logger.warning("yang config load failed — using defaults: %s", _yang_err)
+                from core.yang.settings import YangConfig
+                yang_cfg = YangConfig.defaults()
 
-            # NEW: Configurable iteration limit with increased default
-            max_iterations = data.max_iterations
+            # ── YANG: tool list (tool search + plan mode filtering) ────────────
+            # get_tools_for_api prepends the tool-search entry and marks all but
+            # the most-used tools as deferred when tool_search=True. This keeps
+            # context usage ~85% lower without sacrificing tool accuracy.
+            # When tool_search=False (default), ALL_TOOLS is returned unchanged.
+            tools = get_tools_for_api(tool_search=yang_cfg.tool_search)
+            if yang_cfg.tool_search:
+                yield encoder.encode_data({
+                    "yang_tool_search": True,
+                    "message": "Tool Search active — tools loaded on-demand to save context.",
+                })
+                logger.info("yang tool_search active for user %s", user_id)
+
+            if yang_cfg.plan_mode and not yang_cfg.yolo_mode:
+                from core.yang.plan_guard import filter_tools_for_plan_mode
+                tools = filter_tools_for_plan_mode(tools)
+                # Notify frontend that plan mode is active
+                yield encoder.encode_data({
+                    "yang_plan_mode": True,
+                    "yang_plan_mode_tools_allowed": len(tools),
+                    "message": "Plan Mode active — restricted to read-only tools.",
+                })
+                logger.info("yang plan_mode active for user %s: %d tools allowed", user_id, len(tools))
+
+            # ── YANG: yolo mode — filter tools + cap iterations + auto-checkpoint ──
+            # Yolo wins over Plan Mode: tool list already has all tools (plan guard
+            # was skipped above).  We only remove confirmation/approval tools.
+            if yang_cfg.yolo_mode:
+                from core.yang.yolo import (
+                    filter_tools_for_yolo,
+                    apply_yolo_iteration_cap,
+                    get_yolo_stream_events,
+                )
+                tools = filter_tools_for_yolo(tools)
+
+                # Auto-checkpoint before yolo execution (safety net).
+                # Skipped gracefully if checkpoints feature is off or DB fails.
+                if yang_cfg.checkpoints:
+                    try:
+                        from core.yang.checkpoints import create_checkpoint
+                        create_checkpoint(
+                            db=db,
+                            user_id=user_id,
+                            conversation_id=conversation_id,
+                            trigger="pre_yolo",
+                        )
+                        logger.info(
+                            "yang yolo_mode: pre-yolo checkpoint saved for conv %s",
+                            conversation_id,
+                        )
+                    except Exception as _ycp_err:
+                        logger.warning(
+                            "yang yolo_mode: pre-yolo checkpoint failed (non-fatal): %s",
+                            _ycp_err,
+                        )
+
+                # Emit warning banner to frontend
+                for _yev in get_yolo_stream_events(encoder):
+                    yield _yev
+
+            # ── YANG: subagents — add spawn_subagents tool ────────────────────
+            # Appended AFTER all filtering so it's always available regardless
+            # of plan_mode / yolo settings.  The tool is async-aware and handled
+            # specially in the content_block_stop section below.
+            if yang_cfg.subagents:
+                try:
+                    from core.yang.subagents import SPAWN_SUBAGENTS_TOOL_DEF
+                    tools = list(tools) + [SPAWN_SUBAGENTS_TOOL_DEF]
+                    logger.debug("yang subagents: spawn_subagents tool added to list")
+                except Exception as _sa_import_err:
+                    logger.warning("yang subagents: failed to add tool: %s", _sa_import_err)
+
+            # ── YANG: focus chain — inject as un-cached system block ──────────
+            # Loaded AFTER yang_cfg so feature flag is respected.
+            # Appended to system_prompt (after the cached base block) so the
+            # base prompt cache hit-rate is not affected by focus updates.
+            if yang_cfg.focus_chain:
+                try:
+                    from core.yang.focus_chain import get_focus, build_focus_system_block
+                    _fc_data = get_focus(db, conversation_id)
+                    _fc_block = build_focus_system_block(_fc_data)
+                    if _fc_block:
+                        if isinstance(system_prompt, list):
+                            # Append as a second system block (no cache_control → not cached)
+                            system_prompt = list(system_prompt) + [
+                                {"type": "text", "text": _fc_block}
+                            ]
+                        else:
+                            system_prompt = system_prompt + "\n\n" + _fc_block
+                        logger.debug("focus_chain injected (%d chars)", len(_fc_block))
+                except Exception as _fc_err:
+                    logger.debug("focus_chain injection failed (non-fatal): %s", _fc_err)
+
+            # Configurable iteration limit — Yolo hard-cap takes precedence
+            if yang_cfg.yolo_mode:
+                from core.yang.yolo import apply_yolo_iteration_cap
+                max_iterations = apply_yolo_iteration_cap(data.max_iterations)
+            else:
+                max_iterations = data.max_iterations
             iteration = 0
 
             # NEW: Build thinking configuration based on model capabilities
@@ -1100,6 +1227,7 @@ async def chat_agent(
                 tool_results_for_next_call = []
                 assistant_content_blocks = []
                 pending_tool_calls = []
+                deferred_tool_calls: list = []   # YANG parallel tools: collected this iteration
                 iteration_start_time = datetime.now()
 
                 # Build API request parameters
@@ -1173,6 +1301,139 @@ async def chat_agent(
                                     _slug = tool_input.get("skill_slug", "")
                                     _label = _SKILL_LABELS.get(_slug, f"Running {_slug} skill…")
                                     yield encoder.encode_data({"skill_status": _label, "skill_slug": _slug})
+
+                                # ── YANG subagents: spawn_subagents gets its own async path ──
+                                # Runs before parallel_tools check — always inline since
+                                # subagents are already parallel internally.
+                                if tool_name == "spawn_subagents" and yang_cfg.subagents:
+                                    from core.yang.subagents import run_subagents
+                                    yield encoder.encode_data({
+                                        "yang_subagents_running": True,
+                                        "count": len(tool_input.get("subtasks", [])),
+                                        "message": "Dispatching parallel subagents…",
+                                    })
+                                    _sub_task = asyncio.create_task(
+                                        run_subagents(
+                                            subtasks=tool_input.get("subtasks", []),
+                                            api_key=api_keys.get("claude"),
+                                            yang_cfg=yang_cfg,
+                                        )
+                                    )
+                                    while True:
+                                        _done_sub, _ = await asyncio.wait({_sub_task}, timeout=15.0)
+                                        if _done_sub:
+                                            result = await _sub_task
+                                            break
+                                        yield encoder.encode_data({
+                                            "skill_heartbeat": True,
+                                            "skill_slug": "subagents",
+                                        })
+                                    try:
+                                        result_data = json.loads(result) if isinstance(result, str) else result
+                                    except (json.JSONDecodeError, TypeError):
+                                        result_data = {"raw": str(result)}
+                                    tools_used.append({
+                                        "tool":       tool_name,
+                                        "toolCallId": tool_call_id,
+                                        "input":      tool_input,
+                                        "result":     result_data,
+                                        "skill_slug": "",
+                                        "skill_name": "",
+                                    })
+                                    yield encoder.encode_tool_result(tool_call_id, result)
+                                    tool_results_for_next_call.append({
+                                        "type":        "tool_result",
+                                        "tool_use_id": tool_call_id,
+                                        "content":     result,
+                                    })
+                                    assistant_content_blocks.append({
+                                        "type":  "tool_use",
+                                        "id":    tool_call_id,
+                                        "name":  tool_name,
+                                        "input": tool_input,
+                                    })
+                                    pending_tool_calls.pop()
+                                    continue  # skip parallel_tools and sequential paths
+
+                                # ── YANG background edit: file-gen tools queued async ─────
+                                # When yang_cfg.background_edit=True, document generation
+                                # tools run in the background. The tool result is a
+                                # {"task_id":..., "status":"queued"} payload so Claude
+                                # can respond immediately. Frontend polls /yang/tasks/{id}.
+                                if yang_cfg.background_edit and tool_name in (
+                                    "generate_pptx", "generate_docx", "generate_xlsx",
+                                    "revise_pptx", "generate_presentation", "transform_xlsx",
+                                ):
+                                    from core.yang.background_edit import submit_background_edit
+                                    _bg_task_id, _bg_result = await submit_background_edit(
+                                        tool_name=tool_name,
+                                        tool_input=tool_input,
+                                        api_key=api_keys.get("claude", ""),
+                                        supabase_client=db,
+                                        conversation_file_ids=conversation_file_ids,
+                                        user_id=user_id,
+                                        conversation_id=conversation_id,
+                                    )
+                                    _bg_label = {
+                                        "generate_pptx": "Building presentation",
+                                        "generate_docx": "Building document",
+                                        "generate_xlsx": "Building spreadsheet",
+                                    }.get(tool_name, f"Running {tool_name}")
+                                    yield encoder.encode_data({
+                                        "yang_background_edit": True,
+                                        "task_id":      _bg_task_id,
+                                        "tool":         tool_name,
+                                        "tool_name":    tool_name,
+                                        "tool_call_id": tool_call_id,
+                                        "label":        _bg_label,
+                                        "poll_url":     f"/yang/tasks/{_bg_task_id}",
+                                        "message":      "File generation queued - running in background.",
+                                    })
+
+                                    yield encoder.encode_tool_result(tool_call_id, _bg_result)
+                                    try:
+                                        _bg_rd = json.loads(_bg_result)
+                                    except Exception:
+                                        _bg_rd = {"task_id": _bg_task_id}
+                                    tools_used.append({
+                                        "tool":       tool_name,
+                                        "toolCallId": tool_call_id,
+                                        "input":      tool_input,
+                                        "result":     _bg_rd,
+                                        "skill_slug": "",
+                                        "skill_name": "",
+                                    })
+                                    tool_results_for_next_call.append({
+                                        "type":        "tool_result",
+                                        "tool_use_id": tool_call_id,
+                                        "content":     _bg_result,
+                                    })
+                                    assistant_content_blocks.append({
+                                        "type":  "tool_use",
+                                        "id":    tool_call_id,
+                                        "name":  tool_name,
+                                        "input": tool_input,
+                                    })
+                                    pending_tool_calls.pop()
+                                    continue  # skip sequential / parallel paths
+
+                                # ── YANG parallel tools: defer or execute inline ───────────
+                                if yang_cfg.parallel_tools:
+                                    # Batch this call; all deferred calls execute concurrently
+                                    # via execute_tool_calls_parallel() after the stream ends.
+                                    deferred_tool_calls.append({
+                                        "id": tool_call_id,
+                                        "name": tool_name,
+                                        "input": tool_input,
+                                    })
+                                    assistant_content_blocks.append({
+                                        "type": "tool_use",
+                                        "id": tool_call_id,
+                                        "name": tool_name,
+                                        "input": tool_input,
+                                    })
+                                    pending_tool_calls.pop()
+                                    continue  # skip sequential inline execution
 
                                 # CRITICAL FIX: Don't skip web_search - handle it properly
                                 # If you don't have the tool handler, return an error result
@@ -1328,6 +1589,109 @@ async def chat_agent(
                     iteration_duration = (datetime.now() - iteration_start_time).total_seconds()
                     print(f"Iteration {iteration}: {iteration_duration:.2f}s, tokens: {iteration_usage}")
 
+                # ── YANG parallel tools: execute deferred batch ───────────────
+                # When yang_cfg.parallel_tools=True tools were only collected during
+                # streaming (no inline execution). Run them now — safe ones
+                # concurrently, side-effectful ones sequentially — then populate
+                # tool_results_for_next_call so the next API turn sees all results.
+                if deferred_tool_calls:
+                    from core.yang.parallel_tools import execute_tool_calls_parallel
+
+                    _STRIP_PAR = {"download_url", "document_id", "presentation_id", "file_id"}
+
+                    # Wrap dispatch as an asyncio Task so we can emit heartbeats
+                    # every 15 s from the outer generator (avoids SSE timeout).
+                    _par_task = asyncio.create_task(
+                        execute_tool_calls_parallel(
+                            calls=deferred_tool_calls,
+                            handle_tool_call=handle_tool_call,
+                            supabase_client=db,
+                            api_key=api_keys.get("claude"),
+                            conversation_file_ids=conversation_file_ids,
+                        )
+                    )
+
+                    while True:
+                        _done_par, _ = await asyncio.wait({_par_task}, timeout=15.0)
+                        if _done_par:
+                            par_results = await _par_task
+                            break
+                        yield encoder.encode_data({
+                            "skill_heartbeat": True,
+                            "parallel_tools": True,
+                            "pending": len(deferred_tool_calls),
+                        })
+
+                    # Process results (in input order — guaranteed by executor)
+                    for par_res in par_results:
+                        _pid   = par_res["id"]
+                        _pname = par_res["name"]
+                        _pinp  = par_res["input"]
+                        _praw  = par_res["result"]
+                        _pdata = par_res["result_data"]
+
+                        tools_used.append({
+                            "tool":       _pname,
+                            "toolCallId": _pid,
+                            "input":      _pinp,
+                            "result":     _pdata,
+                            "skill_slug": _pdata.get("skill", _pinp.get("skill_slug", "")) if _pname == "invoke_skill" else "",
+                            "skill_name": _pdata.get("skill_name", "") if _pname == "invoke_skill" else "",
+                        })
+
+                        try:
+                            _pst = "error" if isinstance(_pdata, dict) and _pdata.get("error") else "completed"
+                            db.table("tool_results").insert({
+                                "user_id":         user_id,
+                                "conversation_id": conversation_id,
+                                "tool_call_id":    _pid,
+                                "tool_name":       _pname,
+                                "input":           _pinp,
+                                "output":          _pdata,
+                                "state":           _pst,
+                                "error_text":      _pdata.get("error") if _pst == "error" else None,
+                            }).execute()
+                        except Exception as _pterr:
+                            print(f"[chat/agent] ⚠ parallel tool_results insert failed: {_pterr}")
+
+                        yield encoder.encode_tool_result(_pid, _praw)
+
+                        if isinstance(_pdata, dict) and _pdata.get("download_url"):
+                            _pdl  = _pdata["download_url"]
+                            _pfid = _pdata.get("presentation_id") or _pdata.get("document_id") or ""
+                            if _pfid:
+                                _pdl = f"/files/{_pfid}/download"
+                            yield encoder.encode_file_download(
+                                file_id=_pfid,
+                                filename=_pdata.get("filename", "download"),
+                                download_url=_pdl,
+                                file_type=(_pdata.get("filename", "").rsplit(".", 1)[-1] if _pdata.get("filename") else "unknown"),
+                                size_kb=_pdata.get("file_size_kb", 0),
+                                tool_name=_pname,
+                            )
+
+                        _pclaude = _praw
+                        if isinstance(_pdata, dict) and _pdata.get("download_url"):
+                            _pclean = {k: v for k, v in _pdata.items() if k not in _STRIP_PAR}
+                            _pclean["file_ready"] = True
+                            _pclean["note"] = (
+                                "The file has been prepared and a download card will "
+                                "appear in the chat UI automatically. Do NOT include "
+                                "any download URL or file path in your response."
+                            )
+                            _pclaude = json.dumps(_pclean)
+
+                        tool_results_for_next_call.append({
+                            "type":        "tool_result",
+                            "tool_use_id": _pid,
+                            "content":     _pclaude,
+                        })
+
+                    logger.info(
+                        "yang parallel_tools: iteration %d executed %d tools",
+                        iteration, len(deferred_tool_calls),
+                    )
+
                 # Continue if there are tool calls to process
                 if final_message.stop_reason == "tool_use" and tool_results_for_next_call:
                     messages.append({"role": "assistant", "content": final_message.content})
@@ -1338,6 +1702,94 @@ async def chat_agent(
                     messages.append({"role": "user", "content": user_message_content})
                 else:
                     break
+
+            # ── YANG yolo mode: emit cap event if iteration limit was hit ─────
+            # If we exhausted max_iterations while Claude still wanted tool calls,
+            # notify the frontend so it can show a "stopped early" warning.
+            if (
+                yang_cfg.yolo_mode
+                and iteration >= max_iterations
+                and final_message is not None
+                and getattr(final_message, "stop_reason", None) == "tool_use"
+            ):
+                from core.yang.yolo import get_yolo_cap_event
+                yield get_yolo_cap_event(encoder, iteration)
+                logger.info(
+                    "yang yolo_mode: iteration cap (%d) reached for conv %s",
+                    max_iterations, conversation_id,
+                )
+
+            # ── YANG: double-check completion ─────────────────────────────────
+            # After the primary response ends (stop_reason=end_turn), run a
+            # Haiku verifier call.  If it finds unmet requirements, stream a
+            # separator + revision, replacing accumulated_content.
+            # Max 1 retry — the second attempt always accepts.
+            if (
+                yang_cfg.double_check
+                and accumulated_content
+                and final_message is not None
+                and getattr(final_message, "stop_reason", None) == "end_turn"
+                and api_keys.get("claude")
+            ):
+                try:
+                    from core.yang.completion_verifier import verify_completion
+                    _dc_ok, _dc_critique = await verify_completion(
+                        user_message=data.content,
+                        final_text=accumulated_content,
+                        api_key=api_keys["claude"],
+                        yang_cfg=yang_cfg,
+                    )
+                    # Emit verification result to frontend (before any retry)
+                    yield encoder.encode_data({
+                        "yang_verification": True,
+                        "verified":          bool(_dc_ok),
+                        "critique":          "" if _dc_ok else (_dc_critique or "")[:600],
+                        "iteration":         iteration,
+                        "retry_triggered":   bool((not _dc_ok) and _dc_critique),
+                    })
+                    if not _dc_ok and _dc_critique:
+
+                        # Stream a visible separator + brief note about the revision
+                        yield encoder.encode_text(
+                            f"\n\n---\n*Verifier note: {_dc_critique[:200]}*\n\n"
+                        )
+                        # Append critique to messages and do ONE retry turn
+                        messages.append({"role": "assistant", "content": accumulated_content})
+                        messages.append({
+                            "role": "user",
+                            "content": (
+                                f"<verification_feedback>\n{_dc_critique}\n"
+                                "</verification_feedback>\n"
+                                "Please revise your response to fully address the points above."
+                            ),
+                        })
+                        # Retry: streaming text-only turn (no tools → no tool calls to handle)
+                        _retry_content = ""
+                        async with client.messages.stream(
+                            model=model_to_use,
+                            max_tokens=model_config["max_output_tokens"],
+                            system=system_prompt,
+                            messages=messages,
+                            top_p=model_config["default_top_p"],
+                        ) as _rstream:
+                            async for _rev in _rstream:
+                                if (
+                                    _rev.type == "content_block_delta"
+                                    and hasattr(_rev.delta, "type")
+                                    and _rev.delta.type == "text_delta"
+                                ):
+                                    _rt = _rev.delta.text
+                                    _retry_content += _rt
+                                    yield encoder.encode_text(_rt)
+
+                        if _retry_content:
+                            accumulated_content = _retry_content
+                        logger.info(
+                            "double_check: revision complete for conv %s",
+                            conversation_id,
+                        )
+                except Exception as _dc_err:
+                    logger.warning("double_check failed (non-fatal): %s", _dc_err)
 
             # ── Artifact detection & Generative UI streaming ──────────────
             artifacts = ArtifactParser.extract_artifacts(accumulated_content)
@@ -1409,6 +1861,64 @@ async def chat_agent(
                 ).execute()
             except Exception as conv_err:
                 print(f"[chat/agent] ✗ FAILED to update conversation timestamp: {conv_err}")
+
+            # ── YANG: focus chain — deterministic update + background LLM polish ──
+            # Runs AFTER the response is fully assembled so the update has the
+            # complete assistant text.  Zero LLM calls on the hot path.
+            if yang_cfg.focus_chain and (accumulated_content or tools_used):
+                try:
+                    from core.yang.focus_chain import (
+                        update_focus_deterministic,
+                        schedule_llm_polish,
+                        get_focus,
+                        serialize_focus,
+                    )
+                    update_focus_deterministic(
+                        db=db,
+                        conversation_id=conversation_id,
+                        user_id=user_id,
+                        assistant_text=accumulated_content,
+                        tool_names=[t["tool"] for t in tools_used] if tools_used else None,
+                        user_message=data.content,
+                    )
+                    # Emit updated focus snapshot to frontend for the right-rail widget
+                    try:
+                        _fc_snapshot = serialize_focus(get_focus(db, conversation_id))
+                        if _fc_snapshot:
+                            yield encoder.encode_data({
+                                "yang_focus_chain": True,
+                                "focus":            _fc_snapshot,
+                            })
+                    except Exception as _fc_emit_err:
+                        logger.debug("focus_chain emit skipped: %s", _fc_emit_err)
+                    # Optional background LLM polish every N turns (non-blocking)
+
+                    if api_keys.get("claude"):
+                        schedule_llm_polish(
+                            db=db,
+                            conversation_id=conversation_id,
+                            user_id=user_id,
+                            yang_cfg=yang_cfg,
+                            api_key=api_keys["claude"],
+                        )
+                except Exception as _fc_upd_err:
+                    logger.debug("focus_chain update failed (non-fatal): %s", _fc_upd_err)
+
+            # ── YANG: auto compact — background conversation history compression ──
+            # Runs as asyncio.create_task — never blocks the response stream.
+            # The task itself decides if compaction is needed (token/msg thresholds).
+            if yang_cfg.auto_compact:
+                try:
+                    from core.yang.auto_compact import schedule_compaction
+                    schedule_compaction(
+                        db=db,
+                        conversation_id=conversation_id,
+                        user_id=user_id,
+                        yang_cfg=yang_cfg,
+                        api_key=api_keys.get("claude"),
+                    )
+                except Exception as _ac_err:
+                    logger.debug("auto_compact schedule failed (non-fatal): %s", _ac_err)
 
             # NEW: Enhanced usage reporting with caching metrics
             usage = {

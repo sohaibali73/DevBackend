@@ -452,6 +452,16 @@ except Exception as e:
     logger.error(f"✗ Failed to load pptx_assets router: {e}")
     logger.debug(traceback.format_exc())
 
+try:
+    from api.routes import yang
+    app.include_router(yang.router)
+    routers_loaded.append("yang")
+    logger.info("✓ Loaded yang router (YANG advanced agentic features)")
+except Exception as e:
+    routers_failed.append(("yang", str(e)))
+    logger.error(f"✗ Failed to load yang router: {e}")
+    logger.debug(traceback.format_exc())
+
 # Start background task cleanup loop on app startup
 @app.on_event("startup")
 async def startup_task_manager():

@@ -461,6 +461,21 @@ class VercelAIGatewayClient:
                                     current_tool["id"],
                                     current_tool["name"]
                                 )
+
+                            elif event.content_block.type == "server_tool_use":
+                                # ── YANG Tool Search: server-resolved block ────────────
+                                # The Anthropic API dispatches tool-catalog queries
+                                # server-side — no client action required.
+                                # Emit a transient data event so the UI can show a
+                                # "Searching tools…" indicator while it resolves.
+                                _ts_inp = getattr(event.content_block, "input", {}) or {}
+                                _ts_q = _ts_inp.get("query", "") if isinstance(_ts_inp, dict) else ""
+                                yield protocol.encode_data(
+                                    "tool-search",
+                                    {"query": _ts_q, "status": "searching"},
+                                    transient=True,
+                                )
+                                logger.debug("tool search query dispatched: %r", _ts_q)
                                 
                     elif event.type == "content_block_delta":
                         if hasattr(event.delta, "type"):
