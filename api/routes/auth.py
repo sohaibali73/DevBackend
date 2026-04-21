@@ -188,21 +188,26 @@ async def login(data: UserLogin):
     except HTTPException:
         raise
     except Exception as e:
+        logger.error(f"Login failed (raw Supabase error): {e}")  # always log first
         error_msg = str(e).lower()
-        if "invalid" in error_msg or "credentials" in error_msg:
-            raise HTTPException(status_code=401, detail="Invalid credentials")
-        logger.error(f"Login failed: {e}")
+        if "not confirmed" in error_msg or "email_not_confirmed" in error_msg:
+            raise HTTPException(status_code=401, detail="Email not confirmed. Please check your inbox.")
+        if "rate" in error_msg or "too many" in error_msg:
+            raise HTTPException(status_code=429, detail="Too many login attempts. Please wait a few minutes.")
         raise HTTPException(status_code=401, detail="Invalid credentials")
 
 
 @router.post("/logout")
 async def logout(user: dict = Depends(get_current_user)):
-    """Logout user (client should discard token)."""
-    try:
-        db = get_supabase()
-        db.auth.sign_out()
-    except Exception:
-        pass
+    """
+    Logout user.
+
+    Supabase JWTs are self-contained and stateless — there is no server-side
+    session to invalidate.  Calling sign_out() on the shared service-role
+    singleton can corrupt its auth state and interfere with other requests.
+    The client is responsible for discarding the token on its side.
+    """
+    # Do NOT call db.auth.sign_out() on the singleton — it mutates shared state.
     return {"message": "Logged out successfully"}
 
 

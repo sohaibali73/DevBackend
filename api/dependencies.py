@@ -19,6 +19,10 @@ async def get_current_user_id(
     """
     Extract and validate user ID from Supabase JWT token.
     Returns the user ID (UUID string).
+
+    Returns detail="token_expired" on 401 when the JWT has expired so the
+    frontend can automatically trigger a token refresh instead of showing
+    a hard "not authenticated" error to the user.
     """
     token = credentials.credentials
     db = get_supabase()
@@ -32,6 +36,12 @@ async def get_current_user_id(
         raise
     except Exception as e:
         logger.error(f"Token validation failed: {e}")
+        if "expired" in str(e).lower():
+            raise HTTPException(
+                status_code=401,
+                detail="token_expired",
+                headers={"X-Token-Expired": "true"},
+            )
         raise HTTPException(status_code=401, detail="Invalid or expired token")
 
 
@@ -99,6 +109,12 @@ async def get_current_user(
         raise
     except Exception as e:
         logger.error(f"Failed to get current user: {e}")
+        if "expired" in str(e).lower():
+            raise HTTPException(
+                status_code=401,
+                detail="token_expired",
+                headers={"X-Token-Expired": "true"},
+            )
         raise HTTPException(status_code=401, detail="Invalid or expired token")
 
 
