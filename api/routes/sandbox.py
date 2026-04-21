@@ -68,7 +68,7 @@ class SandboxPackagesResponse(BaseModel):
 class LLMSandboxExecuteRequest(BaseModel):
     code: str
     language: str = "python"
-    timeout: int = 60
+    timeout: int = 6000
     context: Optional[dict] = None
 
 

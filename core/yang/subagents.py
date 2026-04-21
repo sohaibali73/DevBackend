@@ -73,7 +73,7 @@ SPAWN_SUBAGENTS_TOOL_DEF: Dict[str, Any] = {
                         "max_tokens": {
                             "type": "integer",
                             "description": "Max output tokens (default 2048, max 4096).",
-                            "default": 2048,
+                            "default": 4096,
                         },
                     },
                 },
@@ -120,12 +120,12 @@ _ROLE_TOOLS: Dict[str, frozenset] = {
 }
 
 # Hard cap on aggregate output length returned to the main model
-_MAX_AGGREGATE_CHARS = 8_000
+_MAX_AGGREGATE_CHARS = 50000
 
 # Haiku-tier subagent model (cheap, fast)
 # NOTE: must be a real Anthropic model slug — a stale/invalid slug causes every
 # subagent call to fail with `404 not_found_error` and the dispatcher appears offline.
-_DEFAULT_SUBAGENT_MODEL = "claude-haiku-4-5"
+_DEFAULT_SUBAGENT_MODEL = "claude-sonnet-4-6"
 _FALLBACK_SUBAGENT_MODEL = "claude-3-5-haiku-latest"
 
 
