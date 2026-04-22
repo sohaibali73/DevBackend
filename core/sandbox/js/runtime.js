@@ -121,24 +121,103 @@ process.stderr.write = (chunk, ...rest) => {
 // ── Freestyle sandbox ────────────────────────────────────────────────────────
 /**
  * Run user-provided JS code against an existing slide (or create one if the
- * code adds its own).  The code has access to: slide, pres, engine, prim,
- * brand (palette/fonts), logos, resolveAsset, data, and the `require` is
- * omitted to prevent arbitrary module loading.
+ * code adds its own).
+ *
+ * Variables available inside the user's `code` string
+ * ----------------------------------------------------
+ *   slide, pres, engine, prim, data, resolveAsset
+ *   PALETTE, FONTS                         (brand objects)
+ *   YELLOW, DARK_GRAY, WHITE, BLACK        (palette shortcuts)
+ *   GRAY_60, GRAY_40, GRAY_20, GRAY_10, GRAY_05
+ *   YELLOW_80, YELLOW_20, YELLOW_10
+ *   GREEN, RED, BLUE
+ *   FONT_H  (= 'Rajdhani')    FONT_B  (= 'Quicksand')    FONT_M  (= 'Consolas')
+ *   logos   (raw registry)
+ *   LOGOS   (same registry + shorthand aliases: .black, .white, .yellow)
+ *   addLogo(slide, x, y, w, h, variant='full')
  */
 function runFreestyle(slide, code, data) {
-  const {
-    PALETTE, FONTS,
-  } = brand;
+  const { PALETTE, FONTS } = brand;
+
+  // ── Individual palette constants ────────────────────────────────────────
+  const YELLOW    = PALETTE.YELLOW;
+  const DARK_GRAY = PALETTE.DARK_GRAY;
+  const WHITE     = PALETTE.WHITE;
+  const BLACK     = PALETTE.BLACK;
+  const GRAY_60   = PALETTE.GRAY_60;
+  const GRAY_40   = PALETTE.GRAY_40;
+  const GRAY_20   = PALETTE.GRAY_20;
+  const GRAY_10   = PALETTE.GRAY_10;
+  const GRAY_05   = PALETTE.GRAY_05;
+  const YELLOW_80 = PALETTE.YELLOW_80;
+  const YELLOW_20 = PALETTE.YELLOW_20;
+  const YELLOW_10 = PALETTE.YELLOW_10;
+  const GREEN     = PALETTE.GREEN;
+  const RED       = PALETTE.RED;
+  const BLUE      = PALETTE.BLUE;
+
+  // ── Font shorthands ─────────────────────────────────────────────────────
+  const FONT_H = FONTS.HEADLINE;  // 'Rajdhani'
+  const FONT_B = FONTS.BODY;      // 'Quicksand'
+  const FONT_M = FONTS.MONO;      // 'Consolas'
+
+  // ── Logo registry with convenience aliases ───────────────────────────────
+  // The full logos object has keys: full, full_black, full_white, icon,
+  // icon_black, icon_white, icon_yellow.  We also expose short aliases
+  // (.black, .white, .yellow) so both naming styles work.
+  const LOGOS = Object.assign({}, logos, {
+    black:  logos.full_black  || logos.icon_black  || null,
+    white:  logos.full_white  || logos.icon_white  || null,
+    yellow: logos.icon_yellow || null,
+  });
+
+  // ── addLogo helper ───────────────────────────────────────────────────────
+  function addLogo(s, x, y, w, h, variant) {
+    const v = variant || 'full';
+    const entry = LOGOS[v] || LOGOS['full'];
+    if (!entry || !entry.dataUrl) return;
+    s.addImage({
+      data:   entry.dataUrl,
+      x, y, w, h,
+      sizing: { type: 'contain', w, h },
+    });
+  }
+
   // eslint-disable-next-line no-new-func
   const fn = new Function(
-    'slide', 'pres', 'engine', 'prim', 'data',
-    'PALETTE', 'FONTS', 'logos', 'resolveAsset',
+    // core context
+    'slide', 'pres', 'engine', 'prim', 'data', 'resolveAsset',
+    // brand objects
+    'PALETTE', 'FONTS',
+    // palette constants
+    'YELLOW', 'DARK_GRAY', 'WHITE', 'BLACK',
+    'GRAY_60', 'GRAY_40', 'GRAY_20', 'GRAY_10', 'GRAY_05',
+    'YELLOW_80', 'YELLOW_20', 'YELLOW_10',
+    'GREEN', 'RED', 'BLUE',
+    // font shorthands
+    'FONT_H', 'FONT_B', 'FONT_M',
+    // logo helpers
+    'logos', 'LOGOS', 'addLogo',
     '"use strict";\n' + code,
   );
   try {
-    fn(slide, pres, engine, prim, data || {}, PALETTE, FONTS, logos, resolveAsset);
+    fn(
+      // core context
+      slide, pres, engine, prim, data || {}, resolveAsset,
+      // brand objects
+      PALETTE, FONTS,
+      // palette constants
+      YELLOW, DARK_GRAY, WHITE, BLACK,
+      GRAY_60, GRAY_40, GRAY_20, GRAY_10, GRAY_05,
+      YELLOW_80, YELLOW_20, YELLOW_10,
+      GREEN, RED, BLUE,
+      // font shorthands
+      FONT_H, FONT_B, FONT_M,
+      // logo helpers
+      logos, LOGOS, addLogo,
+    );
   } catch (err) {
-    process.stderr.write(`WARN:freestyle_error ${err.message}\n`);
+    process.stderr.write(`WARN:freestyle_error ${err.stack || err.message}\n`);
   }
 }
 
