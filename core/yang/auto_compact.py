@@ -67,7 +67,7 @@ def schedule_compaction(
 
     async def _task():
         try:
-            await _run_compaction(
+            return await _run_compaction(
                 db, conversation_id, user_id, yang_cfg, api_key,
                 actual_input_tokens=actual_input_tokens,
                 context_window_size=context_window_size,
@@ -77,6 +77,7 @@ def schedule_compaction(
                 "auto_compact: compaction failed for conv %s (non-fatal): %s",
                 conversation_id, e,
             )
+            return {"compacted": False, "error": str(e)}
 
     task = asyncio.create_task(_task())
     logger.debug("auto_compact: scheduled for conv %s", conversation_id)
@@ -93,7 +94,7 @@ async def _run_compaction(
     api_key: str,
     actual_input_tokens: int = 0,
     context_window_size: int = 0,
-) -> None:
+) -> Dict:
     """
     Evaluate whether compaction is needed and, if so, execute it.
 
@@ -119,7 +120,7 @@ async def _run_compaction(
         all_msgs: List[Dict] = result.data or []
     except Exception as e:
         logger.debug("auto_compact: could not load messages: %s", e)
-        return
+        return {"compacted": False, "reason": "load_error"}
 
     # Filter out already-compacted messages (metadata.compacted_out=true)
     active = [
@@ -177,7 +178,8 @@ async def _run_compaction(
             "auto_compact: conv %s — below threshold or too few msgs (%d), skipping",
             conversation_id, msg_count,
         )
-        return
+        return {"compacted": False, "reason": "below_threshold", "msg_count": msg_count,
+                "payload_tokens": payload_tokens, "utilization_pct": round(utilization * 100, 1)}
 
     # ── 3. Debounce check ─────────────────────────────────────────────────
     debounce_min = int(yang_cfg.compact_debounce_min)
@@ -187,7 +189,7 @@ async def _run_compaction(
             "auto_compact: conv %s — recent compaction found (%s), skipping",
             conversation_id, recent_compact,
         )
-        return
+        return {"compacted": False, "reason": "debounced"}
 
     logger.info(
         "auto_compact: conv %s — %d tokens / %d msgs over threshold, compacting…",
@@ -200,13 +202,13 @@ async def _run_compaction(
     to_keep    = active[cutoff:]
 
     if not to_compact:
-        return
+        return {"compacted": False, "reason": "empty"}
 
     # ── 5. Summarise with Haiku ───────────────────────────────────────────
     summary = await _summarise(to_compact, yang_cfg, api_key)
     if not summary:
         logger.warning("auto_compact: Haiku returned empty summary, aborting")
-        return
+        return {"compacted": False, "reason": "empty_summary"}
 
     # ── 6. Insert compact summary message ─────────────────────────────────
     # Use the created_at of the LAST compacted message so the summary sits
@@ -237,7 +239,7 @@ async def _run_compaction(
         }).execute()
     except Exception as e:
         logger.warning("auto_compact: could not insert summary message: %s", e)
-        return
+        return {"compacted": False, "reason": "insert_failed", "error": str(e)}
 
     # ── 7. Soft-delete the original compacted messages ────────────────────
     # Mark in batches of 20 to avoid URL-length limits.
@@ -247,6 +249,15 @@ async def _run_compaction(
         "auto_compact: conv %s — compacted %d messages into summary",
         conversation_id, len(to_compact),
     )
+
+    return {
+        "compacted":       True,
+        "compacted_count": len(to_compact),
+        "kept_count":      len(to_keep),
+        "payload_tokens":  payload_tokens,
+        "utilization_pct": round(utilization * 100, 1),
+        "context_window":  context_window_size,
+    }
 
 
 # ─── Helpers ──────────────────────────────────────────────────────────────────

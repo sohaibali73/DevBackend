@@ -10,6 +10,7 @@ from .base import (
     get_chat_prompt,
     FUNCTION_REFERENCE,
     RESERVED_KEYWORDS,
+    YANG_CAPABILITIES_PROMPT,
 )
 
 # Import from afl.py (shim that fixes claude_engine.py import chain)
@@ -138,6 +139,7 @@ __all__ = [
     "get_afl_system_prompt",
     "FUNCTION_REFERENCE",
     "RESERVED_KEYWORDS",
+    "YANG_CAPABILITIES_PROMPT",
 
     # Aliases for backwards compatibility
     "get_afl_base_prompt",

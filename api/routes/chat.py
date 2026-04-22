@@ -1618,6 +1618,25 @@ async def chat_agent(
                     iteration_duration = (datetime.now() - iteration_start_time).total_seconds()
                     print(f"Iteration {iteration}: {iteration_duration:.2f}s, tokens: {iteration_usage}")
 
+                    # ── YANG: live token counter ──────────────────────────────────
+                    # Emitted after every API call so the frontend can render a
+                    # real-time "X / Y tokens (Z%)" badge without waiting for the
+                    # stream to close.
+                    _ctx_win = model_config["context_window"]
+                    _tok_util = round(
+                        total_usage["input_tokens"] / _ctx_win * 100, 1
+                    ) if _ctx_win > 0 else 0
+                    yield encoder.encode_data({
+                        "yang_token_usage":      True,
+                        "input_tokens":          total_usage["input_tokens"],
+                        "output_tokens":         total_usage["output_tokens"],
+                        "cache_read_tokens":     total_usage["cache_read_input_tokens"],
+                        "cache_creation_tokens": total_usage["cache_creation_input_tokens"],
+                        "context_window":        _ctx_win,
+                        "utilization_pct":       _tok_util,
+                        "iteration":             iteration,
+                    })
+
                 # ── YANG parallel tools: execute deferred batch ───────────────
                 # When yang_cfg.parallel_tools=True tools were only collected during
                 # streaming (no inline execution). Run them now — safe ones
@@ -1933,10 +1952,12 @@ async def chat_agent(
                 except Exception as _fc_upd_err:
                     logger.debug("focus_chain update failed (non-fatal): %s", _fc_upd_err)
 
-            # ── YANG: auto compact — background conversation history compression ──
-            # Runs as asyncio.create_task — never blocks the response stream.
-            # Passes the real API token counts so the trigger uses context-window
-            # utilisation % (like Cline) rather than a rough character estimate.
+            # ── YANG: auto compact — inline-awaited history compression ──────────
+            # schedule_compaction() returns an asyncio.Task immediately.
+            # We await it here (max 30 s) so we can emit yang_compaction_complete
+            # BEFORE the stream closes — this triggers a conversation refresh in
+            # the frontend, giving the "new conversation in the same pane" effect.
+            # If compaction takes longer than 30 s it finishes in the background.
             if yang_cfg.auto_compact:
                 try:
                     from core.yang.auto_compact import schedule_compaction
@@ -1949,18 +1970,17 @@ async def chat_agent(
                         actual_input_tokens=total_usage["input_tokens"],
                         context_window_size=model_config["context_window"],
                     )
-                    # Notify the frontend whenever compaction is actually scheduled
-                    # so the UI can show a "Context compressed" indicator (like Cline).
                     if _ac_task is not None:
                         _util_pct = round(
                             total_usage["input_tokens"] / model_config["context_window"] * 100, 1
                         ) if model_config["context_window"] > 0 else 0
+                        # Notify frontend: compaction is starting
                         yield encoder.encode_data({
                             "yang_auto_compact": True,
                             "input_tokens":      total_usage["input_tokens"],
                             "context_window":    model_config["context_window"],
                             "utilization_pct":   _util_pct,
-                            "message":           "Context compression running in background — old messages will be summarized.",
+                            "message":           "Compressing conversation history…",
                         })
                         logger.info(
                             "auto_compact: scheduled for conv %s — %d tokens / %.1f%% of %d context",
@@ -1969,6 +1989,42 @@ async def chat_agent(
                             _util_pct,
                             model_config["context_window"],
                         )
+                        # Await the task inline so we can emit the refresh event
+                        # before the stream closes (30 s wall-clock budget).
+                        try:
+                            _ac_result = await asyncio.wait_for(
+                                asyncio.shield(_ac_task), timeout=30.0
+                            )
+                            if isinstance(_ac_result, dict) and _ac_result.get("compacted"):
+                                # Emit refresh signal — frontend reloads messages,
+                                # giving the "new conversation in same pane" feel.
+                                yield encoder.encode_data({
+                                    "yang_compaction_complete": True,
+                                    "refresh_conversation":     True,
+                                    "conversation_id":          conversation_id,
+                                    "compacted_count":          _ac_result.get("compacted_count", 0),
+                                    "kept_count":               _ac_result.get("kept_count", 0),
+                                    "utilization_pct":          _ac_result.get("utilization_pct", 0),
+                                    "message": (
+                                        f"Context compressed: "
+                                        f"{_ac_result.get('compacted_count', 0)} older messages "
+                                        "summarized. History refreshed."
+                                    ),
+                                })
+                                logger.info(
+                                    "auto_compact: complete for conv %s — "
+                                    "%d compacted, %d kept",
+                                    conversation_id,
+                                    _ac_result.get("compacted_count", 0),
+                                    _ac_result.get("kept_count", 0),
+                                )
+                        except asyncio.TimeoutError:
+                            # Still running — let it finish in background silently
+                            logger.info(
+                                "auto_compact: timed out after 30 s for conv %s "
+                                "(still running in background)",
+                                conversation_id,
+                            )
                 except Exception as _ac_err:
                     logger.debug("auto_compact schedule failed (non-fatal): %s", _ac_err)
 
