@@ -96,6 +96,10 @@ _ESM_IMPORT_MAP: Dict[str, str] = {
     "react-dom":                   "https://esm.sh/react-dom@18?external=react",
     "react-dom/client":            "https://esm.sh/react-dom@18/client?external=react,react-dom",
     "react-dom/server":            "https://esm.sh/react-dom@18/server?external=react,react-dom",
+    # Babel @preset-react (automatic runtime) emits these sub-path imports;
+    # they MUST be in the importmap or the browser throws a bare-specifier error.
+    "react/jsx-runtime":           "https://esm.sh/react@18/jsx-runtime",
+    "react/jsx-dev-runtime":       "https://esm.sh/react@18/jsx-dev-runtime",
 
     # ── React component libraries (external=react,react-dom) ─────────────
     "lucide-react":                "https://esm.sh/lucide-react?external=react",
@@ -307,7 +311,7 @@ def _wrap_for_client_render(jsx_code: str) -> str:
   <script type="importmap">
 {import_map_json}
   </script>
-  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+  <script src="https://unpkg.com/@babel/standalone@7.24.7/babel.min.js"></script>
   <script src="https://cdn.tailwindcss.com"></script>
   <style>
     body {{ margin: 0; padding: 0; background: transparent; font-family: sans-serif; }}
