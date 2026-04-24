@@ -51,8 +51,8 @@ class PotomacSlideTemplates {
 
     // ── SINGLE SOURCE OF TRUTH ───────────────────────────────────────────────
     // Every geometric value in this class is derived from these two numbers.
-    const W = 13.333;   // slide width  (inches, LAYOUT_WIDE)
-    const H = 7.5;      // slide height (inches, LAYOUT_WIDE)
+    // Read live from the pptx instance so any layout change propagates automatically.
+    const { width: W, height: H } = this.pptx.presLayout;
 
     // Margins
     const ML = W * 0.0375;    // left  margin  ≈ 0.5"

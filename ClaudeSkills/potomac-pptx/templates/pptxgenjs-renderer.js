@@ -180,14 +180,12 @@ function renderSlide(pptx, templates, spec) {
       const style = spec.style || spec.background;
       if (style === 'executive' || style === 'dark') {
         return templates.createExecutiveTitleSlide(
-          pptx,
           spec.title,
           spec.subtitle || spec.tagline || null,
           spec.tagline  || null
         );
       }
       return templates.createStandardTitleSlide(
-        pptx,
         spec.title,
         spec.subtitle || null
       );
@@ -195,7 +193,6 @@ function renderSlide(pptx, templates, spec) {
 
     case 'section_divider':
       return templates.createSectionDividerSlide(
-        pptx,
         spec.title,
         spec.description || spec.body_text || spec.subtitle || null
       );
@@ -203,14 +200,12 @@ function renderSlide(pptx, templates, spec) {
     // ── Content variants ─────────────────────────────────────────────────
     case 'content':
       return templates.createContentSlide(
-        pptx,
         spec.title,
         bulletOrText(spec)
       );
 
     case 'executive_summary':
       return templates.createExecutiveSummarySlide(
-        pptx,
         spec.headline || spec.title,
         spec.supporting_points || spec.bullets || [],
         spec.body_text || null
@@ -218,7 +213,6 @@ function renderSlide(pptx, templates, spec) {
 
     case 'two_column':
       return templates.createTwoColumnSlide(
-        pptx,
         spec.title,
         spec.left_content  || columnAt(spec, 0) || '',
         spec.right_content || columnAt(spec, 1) || '',
@@ -230,7 +224,6 @@ function renderSlide(pptx, templates, spec) {
 
     case 'three_column':
       return templates.createThreeColumnSlide(
-        pptx,
         spec.title,
         spec.left_content   || columnAt(spec, 0) || '',
         spec.center_content || columnAt(spec, 1) || '',
@@ -240,7 +233,6 @@ function renderSlide(pptx, templates, spec) {
 
     case 'metrics':
       return templates.createMetricSlide(
-        pptx,
         spec.title,
         spec.metrics || bulletsToMetrics(spec.bullets),
         spec.context || null
@@ -248,7 +240,6 @@ function renderSlide(pptx, templates, spec) {
 
     case 'process':
       return templates.createProcessSlide(
-        pptx,
         spec.title,
         spec.steps || bulletsToSteps(spec.bullets),
         { layout: spec.layout || 'horizontal' }
@@ -256,7 +247,6 @@ function renderSlide(pptx, templates, spec) {
 
     case 'quote':
       return templates.createQuoteSlide(
-        pptx,
         spec.quote || spec.body_text || '',
         spec.attribution || spec.subtitle || null,
         spec.context     || null
@@ -264,21 +254,18 @@ function renderSlide(pptx, templates, spec) {
 
     case 'card_grid':
       return templates.createCardGridSlide(
-        pptx,
         spec.title,
         spec.cards || bulletsToCards(spec.bullets)
       );
 
     case 'icon_grid':
       return templates.createIconGridSlide(
-        pptx,
         spec.title,
         spec.items || bulletsToIconItems(spec.bullets)
       );
 
     case 'hub_spoke':
       return templates.createHubSpokeSlide(
-        pptx,
         spec.title,
         {
           title:    spec.center_title    || 'POTOMAC',
@@ -291,14 +278,12 @@ function renderSlide(pptx, templates, spec) {
 
     case 'timeline':
       return templates.createTimelineSlide(
-        pptx,
         spec.title,
         spec.milestones || bulletsToMilestones(spec.bullets)
       );
 
     case 'matrix_2x2':
       return templates.createMatrix2x2Slide(
-        pptx,
         spec.title,
         spec.x_axis_label || '',
         spec.y_axis_label || '',
@@ -307,7 +292,6 @@ function renderSlide(pptx, templates, spec) {
 
     case 'scorecard':
       return templates.createScorecardSlide(
-        pptx,
         spec.title,
         spec.metrics  || [],
         spec.subtitle || null
@@ -315,7 +299,6 @@ function renderSlide(pptx, templates, spec) {
 
     case 'comparison':
       return templates.createComparisonSlide(
-        pptx,
         spec.title,
         spec.left_label  || 'OPTION A',
         spec.right_label || 'OPTION B',
@@ -325,7 +308,6 @@ function renderSlide(pptx, templates, spec) {
 
     case 'table':
       return templates.createTableSlide(
-        pptx,
         spec.title,
         spec.headers      || spec.table_headers || [],
         spec.rows         || spec.table_rows    || [],
@@ -337,7 +319,6 @@ function renderSlide(pptx, templates, spec) {
 
     case 'chart':
       return templates.createChartSlide(
-        pptx,
         spec.title,
         spec.chart_type  || 'bar',
         spec.chart_data  || spec.data || [],
@@ -351,7 +332,6 @@ function renderSlide(pptx, templates, spec) {
 
     case 'image_content':
       return templates.createImageContentSlide(
-        pptx,
         spec.title,
         spec.image_path    || null,
         bulletOrText(spec),
@@ -360,7 +340,6 @@ function renderSlide(pptx, templates, spec) {
 
     case 'image':
       return templates.createImageSlide(
-        pptx,
         spec.image_path || null,
         spec.title      || null,
         spec.overlay    !== false
@@ -369,7 +348,6 @@ function renderSlide(pptx, templates, spec) {
     // ── Closing variants ─────────────────────────────────────────────────
     case 'closing':
       return templates.createClosingSlide(
-        pptx,
         spec.title        || 'THANK YOU',
         spec.contact_info || null
       );
@@ -377,7 +355,6 @@ function renderSlide(pptx, templates, spec) {
     case 'call_to_action':
     case 'cta':
       return templates.createCallToActionSlide(
-        pptx,
         spec.title,
         spec.action_text  || spec.body_text    || '',
         spec.contact_info || 'potomac.com | (305) 824-2702 | info@potomac.com',
@@ -388,7 +365,6 @@ function renderSlide(pptx, templates, spec) {
     default:
       console.warn(`  ⚠  Unknown slide type "${type}", falling back to content slide`);
       return templates.createContentSlide(
-        pptx,
         spec.title || 'SLIDE',
         bulletOrText(spec)
       );
