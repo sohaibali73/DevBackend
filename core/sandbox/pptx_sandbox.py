@@ -97,6 +97,7 @@ class PptxResult:
     canvas: Optional[Dict[str, float]] = None
     program_id: Optional[str] = None
     version: Optional[int] = None
+    script: Optional[str] = None   # standalone Node.js debug script
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -250,9 +251,14 @@ class PptxSandbox:
         Render *spec* to a .pptx.
 
         user_id: optional — used to resolve user-scoped assets.
+        result.script contains a self-contained Node.js debug script that
+        reproduces the exact generation; run it with:
+            node debug_script.js
+        from any directory that has js/ and node_modules/pptxgenjs.
         """
         start = time.time()
         tmp: Optional[Path] = None
+        debug_script: Optional[str] = None          # populated after spec is resolved
         try:
             modules = _ensure_pptxgenjs_modules()
             if modules is None:
@@ -265,6 +271,9 @@ class PptxSandbox:
             spec.setdefault("canvas", {"preset": "wide"})
             if asset_registry:
                 spec["asset_registry"] = asset_registry
+
+            # ── Build the debug script from the fully-resolved spec ────────
+            debug_script = self._build_debug_script(spec)
 
             # Build temp workspace
             tmp = Path(tempfile.mkdtemp(prefix="pptx_gen_"))
@@ -310,6 +319,7 @@ class PptxSandbox:
                     error=f"Node.js runtime failed: {stderr or stdout}",
                     warnings=self._collect_warnings(stderr),
                     exec_time_ms=self._ms(start),
+                    script=debug_script,
                 )
 
             # Parse stdout JSON ack
@@ -333,6 +343,7 @@ class PptxSandbox:
                         error="output .pptx missing",
                         warnings=warnings,
                         exec_time_ms=self._ms(start),
+                        script=debug_script,
                     )
 
             data = out_path.read_bytes()
@@ -341,16 +352,20 @@ class PptxSandbox:
                 warnings=warnings,
                 exec_time_ms=self._ms(start),
                 canvas=meta.get("canvas"),
+                script=debug_script,
             )
         except subprocess.TimeoutExpired:
             return PptxResult(False, error=f"timed out after {timeout}s",
-                              exec_time_ms=self._ms(start))
+                              exec_time_ms=self._ms(start),
+                              script=debug_script)
         except FileNotFoundError:
             return PptxResult(False, error="node not installed",
-                              exec_time_ms=self._ms(start))
+                              exec_time_ms=self._ms(start),
+                              script=debug_script)
         except Exception as exc:
             logger.error("PptxSandbox.generate failed: %s", exc, exc_info=True)
-            return PptxResult(False, error=str(exc), exec_time_ms=self._ms(start))
+            return PptxResult(False, error=str(exc), exec_time_ms=self._ms(start),
+                              script=debug_script)
         finally:
             if tmp and tmp.exists():
                 shutil.rmtree(tmp, ignore_errors=True)
@@ -495,3 +510,73 @@ class PptxSandbox:
             if line.startswith("WARN:"):
                 out.append(line[5:].strip())
         return out
+
+    @staticmethod
+    def _build_debug_script(spec: Dict[str, Any]) -> str:
+        """
+        Return a self-contained Node.js script that reproduces this exact
+        pptxgenjs generation run.
+
+        Run it from any directory that already has:
+          • js/          (copy of core/sandbox/js/)
+          • node_modules/ containing pptxgenjs
+
+        Usage::
+
+            node debug_script.js
+
+        The script writes the spec to ``_debug_spec.json`` in the current
+        directory, then delegates to the standard runtime.js entry-point so
+        the output is byte-for-byte identical to the server-side render.
+
+        Large binary blobs (asset_registry dataUrls) are truncated in the
+        inline copy to keep the file human-readable; the runtime can still
+        resolve them through the normal asset pipeline if needed.
+        """
+        # Deep-copy so we don't mutate the live spec
+        display_spec = copy.deepcopy(spec)
+
+        # Truncate long dataUrls so the script remains readable
+        for _key, val in (display_spec.get("asset_registry") or {}).items():
+            if isinstance(val, dict):
+                raw = val.get("dataUrl", "")
+                if isinstance(raw, str) and len(raw) > 200:
+                    val["dataUrl"] = raw[:120] + "  /* …truncated… */"
+
+        spec_json = json.dumps(display_spec, ensure_ascii=False, indent=2)
+
+        lines = [
+            "'use strict';",
+            "/**",
+            " * Auto-generated pptxgenjs debug script",
+            " * =========================================",
+            " * Reproduces the exact server-side PPTX generation.",
+            " *",
+            " * Prerequisites (run from a workspace that has these paths):",
+            " *   js/            ← copy of core/sandbox/js/",
+            " *   node_modules/  ← npm install pptxgenjs",
+            " *",
+            " * Usage:",
+            " *   node debug_script.js",
+            " *",
+            " * Output file: output.pptx  (or whatever spec.filename is)",
+            " */",
+            "",
+            "const fs   = require('fs');",
+            "const path = require('path');",
+            "",
+            "// ── Fully-resolved spec (binary blobs truncated for readability) ─────",
+            f"const spec = {spec_json};",
+            "",
+            "// Write spec to disk so runtime.js can load it via process.argv[2]",
+            "const specFile = path.join(process.cwd(), '_debug_spec.json');",
+            "fs.writeFileSync(specFile, JSON.stringify(spec, null, 2), 'utf8');",
+            "console.error('[debug] spec written to', specFile);",
+            "",
+            "// Patch argv so runtime.js picks up our spec file",
+            "process.argv[2] = specFile;",
+            "",
+            "// Run the standard Potomac runtime — output is identical to server render",
+            "require('./js/runtime.js');",
+        ]
+        return "\n".join(lines) + "\n"

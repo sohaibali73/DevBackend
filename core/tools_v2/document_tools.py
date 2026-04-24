@@ -469,6 +469,7 @@ def handle_generate_pptx(
             "size_kb":      entry.size_kb,
             "download_url": f"/files/{entry.file_id}/download",
             "exec_time_ms": elapsed_ms,
+            "script":       result.script,
             "message": (
                 f"✅ Presentation '{entry.filename}' generated successfully "
                 f"({entry.size_kb:.1f} KB, {len(slides)} slides). "
@@ -612,6 +613,7 @@ def handle_generate_pptx_freestyle(
             "size_kb":      entry.size_kb,
             "download_url": f"/files/{entry.file_id}/download",
             "exec_time_ms": elapsed_ms,
+            "script":       result.script,
             "message": (
                 f"✅ Custom presentation '{entry.filename}' generated successfully "
                 f"({entry.size_kb:.1f} KB). "

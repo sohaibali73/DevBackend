@@ -65,6 +65,7 @@ class GenerateResponse(BaseModel):
     canvas: Optional[Dict[str, Any]] = None
     warnings: List[str] = []
     exec_time_ms: float = 0.0
+    script: Optional[str] = None    # standalone Node.js debug script
 
 
 class EditRequest(BaseModel):
@@ -144,6 +145,7 @@ def _store_and_respond(result, program_id: str, version: int) -> GenerateRespons
         canvas=result.canvas,
         warnings=result.warnings or [],
         exec_time_ms=result.exec_time_ms,
+        script=result.script,
     )
 
 
@@ -242,6 +244,7 @@ async def render(
         canvas=result.canvas,
         warnings=result.warnings or [],
         exec_time_ms=result.exec_time_ms,
+        script=result.script,
     )
 
 
