@@ -291,6 +291,36 @@ for (const raw of (spec.slides || [])) {
       // Default background
       slide.background = { color: brand.PALETTE.WHITE };
       runFreestyle(slide, n.code || '', n.data);
+
+      // ── Blank-first-slide guard ───────────────────────────────────────────
+      // When the LLM writes multi-slide freestyle code, it typically calls
+      // pres.addSlide() for EVERY slide — including slide 1 — rather than
+      // using the runtime-pre-created `slide` variable.  That leaves the
+      // pre-created slide with zero _slideObjects, which PowerPoint renders
+      // as a blank white slide 1.
+      //
+      // Detection: if more slides now exist AND the pre-created slide has no
+      // objects on it, the code never used it → remove it.
+      //
+      // Renumber _slideNum / _slideId / _rId so they stay in sync with the
+      // positional rId2/rId3/… scheme used by makeXmlPresentationRels().
+      if (
+        pres._slides.length > 1 &&
+        Array.isArray(slide._slideObjects) &&
+        slide._slideObjects.length === 0
+      ) {
+        var blankIdx = pres._slides.indexOf(slide);
+        if (blankIdx !== -1) {
+          pres._slides.splice(blankIdx, 1);
+          pres._slides.forEach(function(s, i) {
+            s._slideNum = i + 1;
+            s._slideId  = i + 256;
+            s._rId      = i + 2;
+          });
+        }
+      }
+      // ── End blank-first-slide guard ───────────────────────────────────────
+
       continue;
     }
 
