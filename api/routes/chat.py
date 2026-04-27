@@ -1248,7 +1248,12 @@ async def chat_agent(
                 from core.yang.yolo import apply_yolo_iteration_cap
                 max_iterations = apply_yolo_iteration_cap(data.max_iterations)
             else:
-                max_iterations = data.max_iterations
+                # Floor at 15 — frontend often defaults to 5, which is too low
+                # for data-cleaning / multi-stage workflows.  This guarantees the
+                # agent has enough iterations to finish file generation even if
+                # the client sends a smaller value.
+                max_iterations = max(data.max_iterations, 15)
+
             iteration = 0
 
             # NEW: Build thinking configuration based on model capabilities
