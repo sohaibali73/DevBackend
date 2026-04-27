@@ -172,14 +172,43 @@ function runFreestyle(slide, code, data) {
   });
 
   // ── addLogo helper ───────────────────────────────────────────────────────
+  // Mirrors prim.placeLogo() — uses the real PNG-measured aspect ratio so the
+  // logo is NEVER stretched.  `w` and `h` define the bounding box; the image
+  // is scaled to fit inside while preserving its aspect ratio and centred.
   function addLogo(s, x, y, w, h, variant) {
     const v = variant || 'full';
     const entry = LOGOS[v] || LOGOS['full'];
     if (!entry || !entry.dataUrl) return;
+
+    // Real aspect ratio from PNG header (brand.loadLogos measures it).
+    // Fall back to the LOGO_ASPECTS table, then to a safe wide default.
+    const aspect = entry.aspect
+      || brand.LOGO_ASPECTS[v]
+      || brand.LOGO_ASPECTS['full']
+      || 4.875;
+
+    // Fit the logo inside the bounding box without stretching.
+    let displayW, displayH;
+    if (w / h >= aspect) {
+      // Box is wider than the logo — constrain by height.
+      displayH = h;
+      displayW = h * aspect;
+    } else {
+      // Box is taller (relative to logo) — constrain by width.
+      displayW = w;
+      displayH = w / aspect;
+    }
+
+    // Centre within the caller's bounding box.
+    const offsetX = (w - displayW) / 2;
+    const offsetY = (h - displayH) / 2;
+
     s.addImage({
-      data:   entry.dataUrl,
-      x, y, w, h,
-      sizing: { type: 'contain', w, h },
+      data: entry.dataUrl,
+      x:    x + offsetX,
+      y:    y + offsetY,
+      w:    displayW,
+      h:    displayH,
     });
   }
 
