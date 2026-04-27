@@ -109,6 +109,7 @@ async def execute_tool_calls_parallel(
     api_key: str,
     conversation_file_ids: Optional[List[str]] = None,
     heartbeat: Optional[Callable[[], Coroutine]] = None,
+    conversation_id: Optional[str] = None,
 ) -> List[Dict[str, Any]]:
     """
     Execute a batch of tool calls (parallel-safe ones concurrently,
@@ -178,6 +179,7 @@ async def execute_tool_calls_parallel(
                         api_key=api_key,
                         conversation_file_ids=conversation_file_ids,
                         semaphore=semaphore,
+                        conversation_id=conversation_id,
                     )
                 )
                 for i in parallel_indices
@@ -200,6 +202,7 @@ async def execute_tool_calls_parallel(
                 api_key=api_key,
                 conversation_file_ids=conversation_file_ids,
                 semaphore=None,  # no semaphore needed for sequential
+                conversation_id=conversation_id,
             )
             results[i] = res
 
@@ -229,6 +232,7 @@ async def _run_tool(
     api_key: str,
     conversation_file_ids: Optional[List[str]],
     semaphore: Optional[asyncio.Semaphore],
+    conversation_id: Optional[str] = None,
 ) -> Dict[str, Any]:
     """
     Run a single tool call in a thread-pool worker.
@@ -248,6 +252,7 @@ async def _run_tool(
             supabase_client=supabase_client,
             api_key=api_key,
             conversation_file_ids=conversation_file_ids or [],
+            conversation_id=conversation_id,
         )
 
     try:

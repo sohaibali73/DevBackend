@@ -57,6 +57,12 @@ import urllib.parse
 from typing import Dict, Any, List, Optional, Tuple
 from datetime import datetime, timedelta
 from collections import OrderedDict
+from contextvars import ContextVar
+
+# Per-conversation in-memory namespace cache — preserves Python variables
+# across successive execute_python() calls within the same conversation.
+_SESSION_NAMESPACES: Dict[str, Dict[str, Any]] = {}
+_current_session_id: ContextVar[Optional[str]] = ContextVar("_current_session_id", default=None)
 
 # ---------------------------------------------------------------------------
 # Tool Search — tool-type constants (no extra beta headers required)
@@ -2086,6 +2092,7 @@ def execute_python(
     code: str,
     description: str = "",
     sandbox_files: Optional[Dict[str, bytes]] = None,
+    session_id: Optional[str] = None,
 ) -> Dict[str, Any]:
     """
     Execute Python code in the unified PythonSandbox.
@@ -2101,6 +2108,11 @@ def execute_python(
     into the sandbox working dir and exposed to the code as:
         _files["report.pdf"]   → absolute path  (use with open(), PyPDF, pandas…)
         _images["chart.png"]   → base64 string  (images only)
+
+    When ``session_id`` (or the _current_session_id ContextVar) is set, the
+    Python namespace is persisted in _SESSION_NAMESPACES so variables defined
+    in one execute_python call are visible in subsequent calls within the same
+    conversation.
     """
     try:
         from core.sandbox.python_sandbox import PythonSandbox
@@ -2109,10 +2121,18 @@ def execute_python(
         if sandbox_files:
             ctx = {"_sandbox_files": sandbox_files}
 
+        # ── Load persisted namespace for this session ──────────────────────
+        _sid = session_id or _current_session_id.get() or None
+        _ns_in: Dict[str, Any] = _SESSION_NAMESPACES.get(_sid, {}) if _sid else {}
+
         # Use __new__ to skip __init__ (which schedules an async task).
         # _execute_sync is fully synchronous and safe to call directly.
         sandbox = object.__new__(PythonSandbox)
-        result, _namespace = sandbox._execute_sync(code, context=ctx, persisted_namespace={})
+        result, _namespace = sandbox._execute_sync(code, context=ctx, persisted_namespace=_ns_in)
+
+        # ── Save namespace back for next call in this session ──────────────
+        if _sid and result.success and _namespace:
+            _SESSION_NAMESPACES[_sid] = _namespace
 
         # ── Log sandbox execution to debug transcript ─────────────────────────
         # This gives a dedicated SANDBOX_EXEC event (language, code, stdout,
@@ -4994,6 +5014,7 @@ def handle_tool_call(
     supabase_client=None,
     api_key:         str = None,
     conversation_file_ids: Optional[List[str]] = None,
+    conversation_id: Optional[str] = None,
 ) -> str:
     """
     Dispatch a tool call and return a JSON string.
@@ -5013,7 +5034,13 @@ def handle_tool_call(
       the attached files are materialized into the sandbox working dir and exposed
       as ``_files["name.ext"]`` / ``_images["name.png"]`` so Claude never has to
       guess a path like ``/uploads/<uuid>`` (which doesn't exist on disk).
+
+    Namespace persistence (FIX for sandbox state loss):
+      Sets _current_session_id ContextVar so execute_python() can load/save
+      the Python namespace across successive calls within the same conversation.
     """
+    # Propagate conversation_id so execute_python() can load/save namespace
+    _sid_token = _current_session_id.set(conversation_id or "")
     start_time = time.time()
     try:
         logger.debug("Handling tool call: %s", tool_name)
@@ -5030,6 +5057,7 @@ def handle_tool_call(
                 code=tool_input.get("code", ""),
                 description=tool_input.get("description", ""),
                 sandbox_files=sandbox_files or None,
+                session_id=conversation_id,
             )
             elapsed_ms = round((time.time() - start_time) * 1000, 2)
             result["_tool_time_ms"] = elapsed_ms
@@ -5237,6 +5265,8 @@ def handle_tool_call(
             pass
         logger.error("Error in tool call %s: %s", tool_name, e, exc_info=True)
         return json.dumps({"error": str(e), "traceback": traceback.format_exc()[:500]})
+    finally:
+        _current_session_id.reset(_sid_token)
 
 
 

@@ -436,7 +436,7 @@ class ChatAgentRequest(BaseModel):
     thinking_effort: Optional[str] = None  # NEW: for Claude 4.6 adaptive thinking
     skill_slug: Optional[str] = None
     use_prompt_caching: bool = True  # NEW: enable prompt caching by default
-    max_iterations: int = 5  # NEW: configurable, increased default
+    max_iterations: int = 10  # default raised: 5 was too low for data-heavy tasks
     pin_model_version: bool = False  # NEW: option to use pinned snapshots
     yang: Optional[YangOverrides] = None  # YANG per-request feature overrides
 
@@ -1504,6 +1504,7 @@ async def chat_agent(
                                             supabase_client=db,
                                             api_key=api_keys.get("claude"),
                                             conversation_file_ids=conversation_file_ids,
+                                            conversation_id=conversation_id,
                                         )
                                     )
 
@@ -1683,6 +1684,7 @@ async def chat_agent(
                             supabase_client=db,
                             api_key=api_keys.get("claude"),
                             conversation_file_ids=conversation_file_ids,
+                            conversation_id=conversation_id,
                         )
                     )
 
