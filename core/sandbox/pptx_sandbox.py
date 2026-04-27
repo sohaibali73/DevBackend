@@ -331,6 +331,21 @@ class PptxSandbox:
 
             warnings = meta.get("warnings") or self._collect_warnings(stderr)
             filename = spec.get("filename") or meta.get("filename") or "output.pptx"
+
+            # If any slides rendered as error placeholders, treat as hard failure
+            error_slides = meta.get("error_slides", 0)
+            if error_slides > 0:
+                slide_error = next(
+                    (w for w in warnings if w.startswith("slide[")),
+                    "Slide rendering failed — syntax error in generated code",
+                )
+                return PptxResult(
+                    False,
+                    error=slide_error,
+                    warnings=warnings,
+                    exec_time_ms=self._ms(start),
+                    script=debug_script,
+                )
             out_path = tmp / filename
             if not out_path.exists():
                 cand = sorted(tmp.glob("*.pptx"))

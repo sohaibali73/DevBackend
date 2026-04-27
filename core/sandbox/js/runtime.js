@@ -25,8 +25,9 @@
  *   exit 0 on success, non-zero on error.
  */
 
-const fs   = require('fs');
-const path = require('path');
+const fs      = require('fs');
+const path    = require('path');
+const vm      = require('vm');
 const pptxgen = require('pptxgenjs');
 
 const brand    = require('./brand');
@@ -106,6 +107,9 @@ const templates = {
   get(name) { return registry[name] || core.get('content'); },
 };
 
+// ── Error-slide counter (incremented by the slide router catch block) ────────
+let errorSlideCount = 0;
+
 // ── Warnings capture ─────────────────────────────────────────────────────────
 const warnings = [];
 const origWrite = process.stderr.write.bind(process.stderr);
@@ -170,6 +174,18 @@ function runFreestyle(slide, code, data) {
     white:  logos.full_white  || logos.icon_white  || null,
     yellow: logos.icon_yellow || null,
   });
+
+  // ── Syntax pre-check using vm.Script ────────────────────────────────────
+  // new Function() gives "missing ) after argument list" with NO line number.
+  // vm.Script throws the same SyntaxError but WITH lineNumber + columnNumber,
+  // making the error message far more actionable.
+  try {
+    new vm.Script('"use strict";\n' + code, { filename: 'freestyle.js' });
+  } catch (syntaxErr) {
+    const line = syntaxErr.lineNumber != null ? ` at line ${syntaxErr.lineNumber - 1}` : '';
+    const col  = syntaxErr.columnNumber != null ? `:${syntaxErr.columnNumber}` : '';
+    throw new SyntaxError(`Syntax error${line}${col} — ${syntaxErr.message}`);
+  }
 
   // ── addLogo helper ───────────────────────────────────────────────────────
   // Mirrors prim.placeLogo() — uses the real PNG-measured aspect ratio so the
@@ -291,6 +307,7 @@ for (const raw of (spec.slides || [])) {
   } catch (err) {
     const label = n.template || n.mode || 'unknown';
     process.stderr.write(`WARN:slide[${label}] ${err.message}\n`);
+    errorSlideCount++;
     // The slide was already added — render a visible error placeholder so the
     // deck is never silently blank.  This makes the problem obvious to the user
     // rather than producing a mystery empty slide.
@@ -323,6 +340,7 @@ pres.writeFile({ fileName: outName })
       filename: outName,
       canvas: { width: engine.W, height: engine.H },
       warnings,
+      error_slides: errorSlideCount,
     }) + '\n');
   })
   .catch(err => {
