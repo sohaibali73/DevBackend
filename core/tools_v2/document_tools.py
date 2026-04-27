@@ -537,7 +537,7 @@ GENERATE_PPTX_FREESTYLE_TOOL_DEF: Dict[str, Any] = {
         "  slide.addImage({ data:LOGOS.full.dataUrl, x:8.5, y:0.15, w:1.25, h:0.5, sizing:{type:'contain',w:1.25,h:0.5} });\n"
         "  slide.addChart(pres.charts.BAR, [{name:'S1',labels:['A','B'],values:[10,20]}], { x:1,y:2,w:8,h:4 });\n"
         "  slide.addTable([[{text:'H1',options:{bold:true,fill:{color:YELLOW}}}]], { x:0.5, y:2, w:9 });\n\n"
-        "Canvas is 13.333\" wide × 7.5\" tall (LAYOUT_WIDE — standard PowerPoint 16:9). Coordinates are in inches. "
+        "Canvas is(LAYOUT_WIDE — standard PowerPoint 16:9). Coordinates are in inches. "
         "Always keep x≥0 and y≥0. Place Potomac logo top-right on every slide: "
         "addLogo(slide, 11.73, 0.15, 1.25, 0.5, 'full') unless intentionally omitted."
     ),
