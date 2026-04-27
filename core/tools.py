@@ -2114,6 +2114,67 @@ def execute_python(
         sandbox = object.__new__(PythonSandbox)
         result, _namespace = sandbox._execute_sync(code, context=ctx, persisted_namespace={})
 
+        # ── Log sandbox execution to debug transcript ─────────────────────────
+        # This gives a dedicated SANDBOX_EXEC event (language, code, stdout,
+        # stderr, exit code, duration) instead of burying stdout inside the
+        # raw TOOL_CALL_END JSON blob.
+        try:
+            from core.debug_transcript import get_current_transcript as _get_dt
+            _dt_ref = _get_dt()
+            if _dt_ref is not None:
+                _dt_ref.log_sandbox_exec(
+                    language="python",
+                    code=code,
+                    stdout=result.output or "",
+                    stderr=result.error if not result.success else "",
+                    exit_code=0 if result.success else 1,
+                    duration_ms=result.execution_time_ms or 0.0,
+                )
+        except Exception:
+            pass
+
+        # ── Store file artifacts and generate download URLs ───────────────────
+        # _collect_file_artifacts() in python_sandbox.py returns any file the
+        # user's code wrote to the sandbox dir as a base64 DisplayArtifact.
+        # Store each one via file_store so the frontend can offer a real
+        # /files/{id}/download link rather than embedding raw bytes in the JSON.
+        _stored_file_ids: Dict[str, str] = {}   # artifact_id → file_id
+        if result.artifacts:
+            try:
+                import base64 as _b64
+                from core.file_store import store_file as _sf
+                for _a in result.artifacts:
+                    if (
+                        getattr(_a, "display_type", None) == "file"
+                        and (_a.metadata or {}).get("downloadable")
+                        and _a.data
+                    ):
+                        try:
+                            _raw = (
+                                _b64.b64decode(_a.data)
+                                if _a.encoding == "base64"
+                                else _a.data.encode("utf-8", errors="replace")
+                            )
+                            _fname = (_a.metadata or {}).get("filename", "output")
+                            _ext   = (_a.metadata or {}).get("extension", ".bin").lstrip(".")
+                            _entry = _sf(
+                                data=_raw,
+                                filename=_fname,
+                                file_type=_ext,
+                                tool_name="execute_python",
+                            )
+                            _stored_file_ids[_a.artifact_id] = _entry.file_id
+                            logger.info(
+                                "execute_python: stored sandbox file '%s' → %s",
+                                _fname, _entry.file_id,
+                            )
+                        except Exception as _fe:
+                            logger.debug(
+                                "execute_python: could not store file artifact %s: %s",
+                                _a.artifact_id, _fe,
+                            )
+            except ImportError:
+                pass
 
         out: Dict[str, Any] = {
             "success": result.success,
@@ -2124,18 +2185,44 @@ def execute_python(
             out["error"] = result.error
             out["traceback"] = result.output  # _execute_sync puts tb in output on failure
         if result.artifacts:
-            out["artifacts"] = [
-                {
+            _art_list = []
+            for a in result.artifacts:
+                _art: Dict[str, Any] = {
                     "artifact_id": a.artifact_id,
-                    "type": a.type,
+                    "type":        a.type,
                     "display_type": a.display_type,
-                    "data": a.data,
-                    "encoding": a.encoding,
-                    "metadata": a.metadata,
+                    "encoding":    a.encoding,
+                    "metadata":    a.metadata,
                 }
-                for a in result.artifacts
-            ]
+                if a.artifact_id in _stored_file_ids:
+                    # Replace raw base64 blob with a download URL so the
+                    # frontend renders a download card (not a 10 MB JSON blob).
+                    _fid = _stored_file_ids[a.artifact_id]
+                    _art["data"] = f"/files/{_fid}/download"
+                    _art["metadata"] = {
+                        **(a.metadata or {}),
+                        "file_id":      _fid,
+                        "download_url": f"/files/{_fid}/download",
+                    }
+                else:
+                    _art["data"] = a.data
+                _art_list.append(_art)
+            out["artifacts"]    = _art_list
             out["display_type"] = result.display_type
+            # Convenience: surface stored file download URLs at top level
+            if _stored_file_ids:
+                out["files"] = [
+                    {
+                        "file_id":      fid,
+                        "filename":     next(
+                            (a.metadata or {}).get("filename", "output")
+                            for a in result.artifacts
+                            if a.artifact_id == aid
+                        ),
+                        "download_url": f"/files/{fid}/download",
+                    }
+                    for aid, fid in _stored_file_ids.items()
+                ]
         return out
 
     except Exception as e:
@@ -4946,6 +5033,18 @@ def handle_tool_call(
             )
             elapsed_ms = round((time.time() - start_time) * 1000, 2)
             result["_tool_time_ms"] = elapsed_ms
+            # Log tool call end for debug transcript (early-return path)
+            # log_sandbox_exec was already called inside execute_python() above.
+            # Here we log the tool-level end so TOOL_CALL_END appears in the
+            # transcript, stripping artifact data to avoid bloating the log.
+            try:
+                from core.debug_transcript import get_current_transcript as _gct
+                _dt = _gct()
+                if _dt:
+                    _log_res = {k: v for k, v in result.items() if k != "artifacts"}
+                    _dt.log_tool_call_end(tool_name, _log_res, elapsed_ms)
+            except Exception:
+                pass
             return json.dumps(result, indent=2, default=str)
 
         # ── Fast path: static tools (no injected deps) — O(1), zero allocation ─
