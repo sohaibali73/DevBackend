@@ -14,6 +14,14 @@ const path    = require("path");
 const fs      = require("fs");
 
 // ---------------------------------------------------------------------------
+// Shape and chart type constants — resolved from the module (constructor),
+// not from a pres instance, so behaviour is consistent across pptxgenjs
+// versions that may not expose these enums on instances.
+// ---------------------------------------------------------------------------
+const PPTX_SHAPES = pptxgen.shapes ?? pptxgen.ShapeType;
+const PPTX_CHARTS = pptxgen.charts ?? pptxgen.ChartType;
+
+// ---------------------------------------------------------------------------
 // Layout registry — add new layouts here; everything else adapts automatically
 // ---------------------------------------------------------------------------
 const LAYOUTS = {
@@ -22,6 +30,12 @@ const LAYOUTS = {
   LAYOUT_16x10: { w: 10.0, h: 6.25 },
   LAYOUT_4x3:   { w: 10.0, h: 7.5 },
 };
+
+// ---------------------------------------------------------------------------
+// Font — Calibri is the brand font but is Windows-only.
+// Override FONT_FACE here (e.g. "Arial") when building on Linux/macOS CI.
+// ---------------------------------------------------------------------------
+const FONT_FACE = "Calibri";
 
 // ---------------------------------------------------------------------------
 // Brand palette
@@ -143,7 +157,7 @@ class SlideRenderer {
       w:        this.CW,
       h:        fh,
       fontSize: FONT.caption(this.H),
-      fontFace: "Calibri",
+      fontFace: FONT_FACE,
       color:    col,
       align:    "center",
       valign:   "bottom",
@@ -163,7 +177,7 @@ class SlideRenderer {
       w:        this.CW,
       h:        th,
       fontSize: FONT.title(this.H),
-      fontFace: "Calibri",
+      fontFace: FONT_FACE,
       bold:     true,
       color:    col,
       align:    "left",
@@ -185,7 +199,7 @@ class SlideRenderer {
 
     // Teal accent strip — 1% of width, full-height
     const stripW = W * 0.010;
-    slide.addShape(this.pres.shapes.RECTANGLE, {
+    slide.addShape(PPTX_SHAPES.RECTANGLE, {
       x: 0, y: 0, w: stripW, h: H,
       fill: { color: PALETTE.teal },
       line: { color: PALETTE.teal },
@@ -200,7 +214,7 @@ class SlideRenderer {
       w:        CW - stripW - GY,
       h:        titleH,
       fontSize: FONT.display(H),
-      fontFace: "Calibri",
+      fontFace: FONT_FACE,
       bold:     true,
       color:    PALETTE.white,
       align:    "left",
@@ -218,7 +232,7 @@ class SlideRenderer {
         w:        CW - stripW - GY,
         h:        subH,
         fontSize: FONT.heading(H),
-        fontFace: "Calibri",
+        fontFace: FONT_FACE,
         color:    PALETTE.teal,
         align:    "left",
         valign:   "top",
@@ -236,7 +250,7 @@ class SlideRenderer {
         w:        CW,
         h:        tgH,
         fontSize: FONT.body(H),
-        fontFace: "Calibri",
+        fontFace: FONT_FACE,
         italic:   true,
         color:    PALETTE.midGray,
         align:    "left",
@@ -258,7 +272,7 @@ class SlideRenderer {
     // Full-width teal bar at 40% height
     const barH = H * 0.40;
     const barY = (H - barH) / 2;
-    slide.addShape(this.pres.shapes.RECTANGLE, {
+    slide.addShape(PPTX_SHAPES.RECTANGLE, {
       x: 0, y: barY, w: W, h: barH,
       fill: { color: PALETTE.teal },
       line: { color: PALETTE.teal },
@@ -273,7 +287,7 @@ class SlideRenderer {
       w:        CW,
       h:        titleH,
       fontSize: FONT.display(H),
-      fontFace: "Calibri",
+      fontFace: FONT_FACE,
       bold:     true,
       color:    PALETTE.white,
       align:    "center",
@@ -291,7 +305,7 @@ class SlideRenderer {
         w:        CW,
         h:        descH,
         fontSize: FONT.body(H),
-        fontFace: "Calibri",
+        fontFace: FONT_FACE,
         color:    PALETTE.midGray,
         align:    "center",
         valign:   "middle",
@@ -315,7 +329,7 @@ class SlideRenderer {
     const bullets = toBullets(content);
     slide.addText(bulletsToRichText(bullets, {
       fontSize: FONT.body(H),
-      fontFace: "Calibri",
+      fontFace: FONT_FACE,
       color:    PALETTE.charcoal,
     }), {
       x:      MX,
@@ -344,7 +358,7 @@ class SlideRenderer {
 
     // Column accent lines
     cols.forEach((col) => {
-      slide.addShape(this.pres.shapes.RECTANGLE, {
+      slide.addShape(PPTX_SHAPES.RECTANGLE, {
         x: col.x, y: colsY, w: col.w * 0.015, h: colsH,
         fill: { color: PALETTE.teal },
         line: { color: PALETTE.teal },
@@ -361,7 +375,7 @@ class SlideRenderer {
           w:        col.w,
           h:        labelH,
           fontSize: FONT.heading(H),
-          fontFace: "Calibri",
+          fontFace: FONT_FACE,
           bold:     true,
           color:    PALETTE.navy,
           align:    "left",
@@ -377,7 +391,7 @@ class SlideRenderer {
       const bullets = toBullets(content);
       slide.addText(bulletsToRichText(bullets, {
         fontSize: FONT.body(H),
-        fontFace: "Calibri",
+        fontFace: FONT_FACE,
         color:    PALETTE.charcoal,
       }), {
         x:      col.x + textOffsetX,
@@ -410,7 +424,7 @@ class SlideRenderer {
       const colContent = typeof colData === "string" ? colData : (colData.content || colData.text || "");
 
       // Card background
-      slide.addShape(this.pres.shapes.RECTANGLE, {
+      slide.addShape(PPTX_SHAPES.RECTANGLE, {
         x: col.x, y: contentY, w: col.w, h: colsH,
         fill: { color: PALETTE.lightGray },
         line: { color: PALETTE.lightGray },
@@ -419,7 +433,7 @@ class SlideRenderer {
 
       // Top accent
       const accentH = H * 0.007;
-      slide.addShape(this.pres.shapes.RECTANGLE, {
+      slide.addShape(PPTX_SHAPES.RECTANGLE, {
         x: col.x, y: contentY, w: col.w, h: accentH,
         fill: { color: PALETTE.teal },
         line: { color: PALETTE.teal },
@@ -439,7 +453,7 @@ class SlideRenderer {
           w:        innerW,
           h:        headH,
           fontSize: FONT.heading(H),
-          fontFace: "Calibri",
+          fontFace: FONT_FACE,
           bold:     true,
           color:    PALETTE.navy,
           align:    "left",
@@ -453,7 +467,7 @@ class SlideRenderer {
       const bullets = toBullets(colContent);
       slide.addText(bulletsToRichText(bullets, {
         fontSize: FONT.body(H),
-        fontFace: "Calibri",
+        fontFace: FONT_FACE,
         color:    PALETTE.charcoal,
       }), {
         x:      innerX,
@@ -488,7 +502,7 @@ class SlideRenderer {
       const sub   = m.sub   || "";
 
       // Card
-      slide.addShape(this.pres.shapes.RECTANGLE, {
+      slide.addShape(PPTX_SHAPES.RECTANGLE, {
         x: col.x, y: contentY, w: col.w, h: cardH,
         fill: { color: PALETTE.navy },
         line: { color: PALETTE.navy },
@@ -504,7 +518,7 @@ class SlideRenderer {
         w:        col.w,
         h:        valueH,
         fontSize: FONT.display(H),
-        fontFace: "Calibri",
+        fontFace: FONT_FACE,
         bold:     true,
         color:    PALETTE.teal,
         align:    "center",
@@ -521,7 +535,7 @@ class SlideRenderer {
         w:        col.w,
         h:        labelH,
         fontSize: FONT.body(H),
-        fontFace: "Calibri",
+        fontFace: FONT_FACE,
         color:    PALETTE.white,
         align:    "center",
         valign:   "middle",
@@ -538,7 +552,7 @@ class SlideRenderer {
           w:        col.w,
           h:        subH,
           fontSize: FONT.caption(H),
-          fontFace: "Calibri",
+          fontFace: FONT_FACE,
           color:    PALETTE.midGray,
           align:    "center",
           valign:   "top",
@@ -557,7 +571,7 @@ class SlideRenderer {
         w:        CW,
         h:        fnH,
         fontSize: FONT.caption(H),
-        fontFace: "Calibri",
+        fontFace: FONT_FACE,
         italic:   true,
         color:    PALETTE.midGray,
         align:    "left",
@@ -588,7 +602,7 @@ class SlideRenderer {
       const num   = String(i + 1);
 
       // Card
-      slide.addShape(this.pres.shapes.RECTANGLE, {
+      slide.addShape(PPTX_SHAPES.RECTANGLE, {
         x: col.x, y: contentY, w: col.w, h: cardH,
         fill: { color: PALETTE.offWhite },
         line: { color: PALETTE.lightGray, width: 1 },
@@ -599,7 +613,7 @@ class SlideRenderer {
       const circleSize = Math.min(col.w * 0.22, H * 0.10);
       const circleX    = col.x + (col.w - circleSize) / 2;
       const circleY    = contentY + cardH * 0.08;
-      slide.addShape(this.pres.shapes.OVAL, {
+      slide.addShape(PPTX_SHAPES.OVAL, {
         x: circleX, y: circleY, w: circleSize, h: circleSize,
         fill: { color: PALETTE.teal },
         line: { color: PALETTE.teal },
@@ -610,7 +624,7 @@ class SlideRenderer {
         w:        circleSize,
         h:        circleSize,
         fontSize: FONT.heading(H),
-        fontFace: "Calibri",
+        fontFace: FONT_FACE,
         bold:     true,
         color:    PALETTE.white,
         align:    "center",
@@ -631,7 +645,7 @@ class SlideRenderer {
         w:        textW,
         h:        titleH,
         fontSize: FONT.heading(H),
-        fontFace: "Calibri",
+        fontFace: FONT_FACE,
         bold:     true,
         color:    PALETTE.navy,
         align:    "center",
@@ -648,7 +662,7 @@ class SlideRenderer {
         w:        textW,
         h:        descH,
         fontSize: FONT.body(H),
-        fontFace: "Calibri",
+        fontFace: FONT_FACE,
         color:    PALETTE.charcoal,
         align:    "center",
         valign:   "top",
@@ -666,7 +680,7 @@ class SlideRenderer {
           w:        arrowW,
           h:        arrowH,
           fontSize: FONT.title(H),
-          fontFace: "Calibri",
+          fontFace: FONT_FACE,
           bold:     true,
           color:    PALETTE.teal,
           align:    "center",
@@ -729,7 +743,7 @@ class SlideRenderer {
         w:        CW - W * 0.06,
         h:        attrH,
         fontSize: FONT.body(H),
-        fontFace: "Calibri",
+        fontFace: FONT_FACE,
         bold:     true,
         color:    PALETTE.teal,
         align:    "left",
@@ -748,7 +762,7 @@ class SlideRenderer {
         w:        CW,
         h:        ctxH,
         fontSize: FONT.caption(H),
-        fontFace: "Calibri",
+        fontFace: FONT_FACE,
         italic:   true,
         color:    PALETTE.midGray,
         align:    "center",
@@ -770,7 +784,7 @@ class SlideRenderer {
     // Teal panel occupying lower 35%
     const panelH = H * 0.35;
     const panelY = H - panelH;
-    slide.addShape(this.pres.shapes.RECTANGLE, {
+    slide.addShape(PPTX_SHAPES.RECTANGLE, {
       x: 0, y: panelY, w: W, h: panelH,
       fill: { color: PALETTE.teal },
       line: { color: PALETTE.teal },
@@ -785,7 +799,7 @@ class SlideRenderer {
       w:        CW,
       h:        titleH,
       fontSize: FONT.display(H),
-      fontFace: "Calibri",
+      fontFace: FONT_FACE,
       bold:     true,
       color:    PALETTE.white,
       align:    "center",
@@ -803,7 +817,7 @@ class SlideRenderer {
         w:        CW,
         h:        actH,
         fontSize: FONT.body(H),
-        fontFace: "Calibri",
+        fontFace: FONT_FACE,
         color:    PALETTE.midGray,
         align:    "center",
         valign:   "middle",
@@ -821,7 +835,7 @@ class SlideRenderer {
         w:        CW,
         h:        ciH,
         fontSize: FONT.heading(H),
-        fontFace: "Calibri",
+        fontFace: FONT_FACE,
         bold:     true,
         color:    PALETTE.white,
         align:    "center",
@@ -850,7 +864,7 @@ class SlideRenderer {
         bold:     true,
         color:    PALETTE.white,
         fontSize: FONT.body(H),
-        fontFace: "Calibri",
+        fontFace: FONT_FACE,
         fill:     { color: PALETTE.navy },
         align:    "center",
       },
@@ -862,7 +876,7 @@ class SlideRenderer {
         options: {
           color:    PALETTE.charcoal,
           fontSize: FONT.body(H),
-          fontFace: "Calibri",
+          fontFace: FONT_FACE,
           fill:     { color: ri % 2 === 0 ? PALETTE.white : PALETTE.lightGray },
           align:    "left",
         },
@@ -892,15 +906,15 @@ class SlideRenderer {
     const chartH   = H * 0.82 - contentY - H * 0.06;
 
     const typeMap = {
-      bar:      this.pres.charts.BAR,
-      column:   this.pres.charts.BAR,
-      line:     this.pres.charts.LINE,
-      pie:      this.pres.charts.PIE,
-      doughnut: this.pres.charts.DOUGHNUT,
-      area:     this.pres.charts.AREA,
-      scatter:  this.pres.charts.SCATTER,
+      bar:      PPTX_CHARTS.BAR,
+      column:   PPTX_CHARTS.BAR,
+      line:     PPTX_CHARTS.LINE,
+      pie:      PPTX_CHARTS.PIE,
+      doughnut: PPTX_CHARTS.DOUGHNUT,
+      area:     PPTX_CHARTS.AREA,
+      scatter:  PPTX_CHARTS.SCATTER,
     };
-    const pptxChartType = typeMap[chartType.toLowerCase()] || this.pres.charts.BAR;
+    const pptxChartType = typeMap[chartType.toLowerCase()] || PPTX_CHARTS.BAR;
 
     slide.addChart(pptxChartType, chartData, {
       x:                MX,
@@ -950,7 +964,7 @@ class SlideRenderer {
       });
     } else {
       // Placeholder
-      slide.addShape(this.pres.shapes.RECTANGLE, {
+      slide.addShape(PPTX_SHAPES.RECTANGLE, {
         x: imgX, y: contentY, w: imgW, h: blockH,
         fill: { color: PALETTE.lightGray },
         line: { color: PALETTE.midGray, width: 1 },
@@ -960,7 +974,7 @@ class SlideRenderer {
     const bullets = toBullets(content);
     slide.addText(bulletsToRichText(bullets, {
       fontSize: FONT.body(H),
-      fontFace: "Calibri",
+      fontFace: FONT_FACE,
       color:    PALETTE.charcoal,
     }), {
       x:      textX,
@@ -987,7 +1001,7 @@ class SlideRenderer {
     // Horizontal spine
     const spineY  = contentY + (H * 0.82 - contentY - H * 0.06) * 0.40;
     const spineH  = H * 0.008;
-    slide.addShape(this.pres.shapes.RECTANGLE, {
+    slide.addShape(PPTX_SHAPES.RECTANGLE, {
       x: MX, y: spineY, w: CW, h: spineH,
       fill: { color: PALETTE.teal },
       line: { color: PALETTE.teal },
@@ -1003,7 +1017,7 @@ class SlideRenderer {
       // Dot
       const dotX = centerX - dotSize / 2;
       const dotY = spineY + spineH / 2 - dotSize / 2;
-      slide.addShape(this.pres.shapes.OVAL, {
+      slide.addShape(PPTX_SHAPES.OVAL, {
         x: dotX, y: dotY, w: dotSize, h: dotSize,
         fill: { color: PALETTE.navy },
         line: { color: PALETTE.navy },
@@ -1020,7 +1034,7 @@ class SlideRenderer {
           w:        stepW * 0.9,
           h:        dateH,
           fontSize: FONT.caption(H),
-          fontFace: "Calibri",
+          fontFace: FONT_FACE,
           bold:     true,
           color:    PALETTE.teal,
           align:    "center",
@@ -1038,7 +1052,7 @@ class SlideRenderer {
         w:        stepW * 0.9,
         h:        labelH,
         fontSize: FONT.body(H),
-        fontFace: "Calibri",
+        fontFace: FONT_FACE,
         color:    PALETTE.charcoal,
         align:    "center",
         valign:   "top",
@@ -1066,7 +1080,7 @@ class SlideRenderer {
         w:        CW,
         h:        subH,
         fontSize: FONT.body(H),
-        fontFace: "Calibri",
+        fontFace: FONT_FACE,
         italic:   true,
         color:    PALETTE.midGray,
         align:    "left",
@@ -1090,7 +1104,7 @@ class SlideRenderer {
       const barFill = score >= 70 ? PALETTE.teal : score >= 40 ? "F0A500" : PALETTE.accent;
 
       // Row background
-      slide.addShape(this.pres.shapes.RECTANGLE, {
+      slide.addShape(PPTX_SHAPES.RECTANGLE, {
         x: MX, y: rowY, w: CW, h: rowH,
         fill: { color: i % 2 === 0 ? PALETTE.lightGray : PALETTE.white },
         line: { color: PALETTE.lightGray, width: 0.5 },
@@ -1103,7 +1117,7 @@ class SlideRenderer {
         w:        labelColW,
         h:        rowH,
         fontSize: FONT.body(H),
-        fontFace: "Calibri",
+        fontFace: FONT_FACE,
         color:    PALETTE.charcoal,
         align:    "left",
         valign:   "middle",
@@ -1118,7 +1132,7 @@ class SlideRenderer {
         w:        valueColW,
         h:        rowH,
         fontSize: FONT.body(H),
-        fontFace: "Calibri",
+        fontFace: FONT_FACE,
         bold:     true,
         color:    PALETTE.navy,
         align:    "center",
@@ -1130,7 +1144,7 @@ class SlideRenderer {
       const barX = valX + valueColW + this.GX;
       const barH = rowH * 0.30;
       const barY = rowY + (rowH - barH) / 2;
-      slide.addShape(this.pres.shapes.RECTANGLE, {
+      slide.addShape(PPTX_SHAPES.RECTANGLE, {
         x: barX, y: barY, w: barColW, h: barH,
         fill: { color: PALETTE.lightGray },
         line: { color: PALETTE.midGray, width: 0.5 },
@@ -1138,7 +1152,7 @@ class SlideRenderer {
 
       // Bar fill
       if (score > 0) {
-        slide.addShape(this.pres.shapes.RECTANGLE, {
+        slide.addShape(PPTX_SHAPES.RECTANGLE, {
           x: barX, y: barY, w: barColW * (score / 100), h: barH,
           fill: { color: barFill },
           line: { color: barFill },
@@ -1167,7 +1181,7 @@ class SlideRenderer {
 
     [{ x: leftX, label: leftLabel, isWinner: winner === "left" },
      { x: rightX, label: rightLabel, isWinner: winner === "right" }].forEach(({ x, label, isWinner }) => {
-      slide.addShape(this.pres.shapes.RECTANGLE, {
+      slide.addShape(PPTX_SHAPES.RECTANGLE, {
         x, y: contentY, w: optionW, h: headerH,
         fill: { color: isWinner ? PALETTE.teal : PALETTE.navy },
         line: { color: isWinner ? PALETTE.teal : PALETTE.navy },
@@ -1176,7 +1190,7 @@ class SlideRenderer {
       slide.addText(label, {
         x, y: contentY, w: optionW, h: headerH,
         fontSize: FONT.heading(H),
-        fontFace: "Calibri",
+        fontFace: FONT_FACE,
         bold:     true,
         color:    PALETTE.white,
         align:    "center",
@@ -1196,26 +1210,26 @@ class SlideRenderer {
       const bg   = ri % 2 === 0 ? PALETTE.lightGray : PALETTE.white;
 
       // Feature cell
-      slide.addShape(this.pres.shapes.RECTANGLE, {
+      slide.addShape(PPTX_SHAPES.RECTANGLE, {
         x: MX, y: rowY, w: featureW, h: rowH,
         fill: { color: bg }, line: { color: PALETTE.lightGray, width: 0.5 },
       });
       slide.addText(r.feature || "", {
         x: MX + this.GX * 0.4, y: rowY, w: featureW - this.GX * 0.4, h: rowH,
-        fontSize: FONT.body(H), fontFace: "Calibri",
+        fontSize: FONT.body(H), fontFace: FONT_FACE,
         bold: true, color: PALETTE.navy,
         align: "left", valign: "middle", margin: 0,
       });
 
       // Left / right option cells
       [{ x: leftX, val: r.left }, { x: rightX, val: r.right }].forEach(({ x, val }) => {
-        slide.addShape(this.pres.shapes.RECTANGLE, {
+        slide.addShape(PPTX_SHAPES.RECTANGLE, {
           x, y: rowY, w: optionW, h: rowH,
           fill: { color: bg }, line: { color: PALETTE.lightGray, width: 0.5 },
         });
         slide.addText(String(val || ""), {
           x, y: rowY, w: optionW, h: rowH,
-          fontSize: FONT.body(H), fontFace: "Calibri",
+          fontSize: FONT.body(H), fontFace: FONT_FACE,
           color: PALETTE.charcoal,
           align: "center", valign: "middle", margin: 0,
         });
@@ -1310,7 +1324,7 @@ class PotomacPresentationBuilder {
     const type  = slideData.type || this.classifier.classify(slideData);
     const slide = this._render(type, slideData);
     this.slideStack.push({ type, data: slideData, slide });
-    console.log(`[slide ${this.slideStack.length}] type="${type}" title="${slideData.title || "(none)}"`);
+    console.log(`[slide ${this.slideStack.length}] type="${type}" title="${slideData.title || '(none)'}"`);
     return slide;
   }
 
@@ -1321,10 +1335,14 @@ class PotomacPresentationBuilder {
    */
   async save(filename) {
     const outputPath = path.join(this.options.outputDir, filename);
-    fs.mkdirSync(path.dirname(outputPath), { recursive: true });
-    await this.pres.writeFile({ fileName: outputPath });
-    console.log(`Saved: ${outputPath}`);
-    return outputPath;
+    try {
+      fs.mkdirSync(path.dirname(outputPath), { recursive: true });
+      await this.pres.writeFile({ fileName: outputPath });
+      console.log(`Saved: ${outputPath}`);
+      return outputPath;
+    } catch (err) {
+      throw new Error(`Failed to save presentation to "${outputPath}": ${err.message}`);
+    }
   }
 
   /** Summary of slide types used (useful for logging) */

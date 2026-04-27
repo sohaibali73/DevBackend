@@ -121,7 +121,7 @@ async function renderDeckPlan(plan, outFile = null) {
   pptx.company  = plan.company  || 'Potomac';
   pptx.title    = plan.title    || 'Potomac Presentation';
   pptx.subject  = plan.audience || '';
-  pptx.revision = '1';
+  pptx.revision = 1;
 
   // ── Layout — LAYOUT_WIDE = 13.3 × 7.5 in ────────────────────────────────
   // All downstream code reads pptx.presLayout so this is the single source.
@@ -135,18 +135,18 @@ async function renderDeckPlan(plan, outFile = null) {
   const { W, H } = getDims(pptx);
   console.log(`🎨 Rendering ${slides.length} slide(s) — palette: ${palette}  layout: ${W}"×${H}"`);
 
-  slides.forEach((spec, idx) => {
+  for (const [idx, spec] of slides.entries()) {
     try {
-      renderSlide(pptx, templates, spec);
+      await renderSlide(pptx, templates, spec);
       console.log(`  ✓ Slide ${idx + 1}: ${spec.type} — "${spec.title || '(no title)'}"`);
     } catch (err) {
       console.error(`  ✗ Slide ${idx + 1} failed (${spec.type}): ${err.message} — falling back to content slide`);
-      templates.createContentSlide(
+      await templates.createContentSlide(
         spec.title  || `Slide ${idx + 1}`,
         spec.bullets || spec.body_text || ''
       );
     }
-  });
+  }
 
   // ── Output ───────────────────────────────────────────────────────────────
   if (outFile) {
@@ -170,7 +170,7 @@ async function renderDeckPlan(plan, outFile = null) {
  * @param {PotomacSlideTemplates} templates
  * @param {object}                spec
  */
-function renderSlide(pptx, templates, spec) {
+async function renderSlide(pptx, templates, spec) {
   const type = (spec.type || 'content').toLowerCase();
 
   switch (type) {
@@ -181,7 +181,7 @@ function renderSlide(pptx, templates, spec) {
       if (style === 'executive' || style === 'dark') {
         return templates.createExecutiveTitleSlide(
           spec.title,
-          spec.subtitle || spec.tagline || null,
+          spec.subtitle || null,
           spec.tagline  || null
         );
       }
@@ -401,10 +401,12 @@ function columnAt(spec, idx) {
  */
 function bulletsToMetrics(bullets = []) {
   return bullets.slice(0, 6).map(b => {
-    const parts = String(b).split(':');
+    const str   = String(b);
+    const colon = str.indexOf(':');
+    if (colon === -1) return { value: str.trim(), label: '' };
     return {
-      value: parts[0].trim(),
-      label: parts.slice(1).join(':').trim(),
+      value: str.slice(0, colon).trim(),
+      label: str.slice(colon + 1).trim(),
     };
   });
 }
@@ -500,7 +502,13 @@ if (require.main === module) {
     process.exit(1);
   }
 
-  const plan = JSON.parse(fs.readFileSync(planPath, 'utf8'));
+  let plan;
+  try {
+    plan = JSON.parse(fs.readFileSync(planPath, 'utf8'));
+  } catch (err) {
+    console.error(`Failed to parse input JSON: ${err.message}`);
+    process.exit(1);
+  }
 
   // CLI --palette flag overrides whatever is in the JSON
   if (args.palette) plan.palette = args.palette;

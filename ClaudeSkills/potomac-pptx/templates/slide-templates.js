@@ -22,6 +22,7 @@
 const { POTOMAC_COLORS, SLIDE_PALETTES } = require('../brand-assets/colors/potomac-colors.js');
 const { POTOMAC_FONTS }                  = require('../brand-assets/fonts/potomac-fonts.js');
 const path                               = require('path');
+const fs                                 = require('fs');
 
 // ── Strip '#' that pptxgenjs does not accept ────────────────────────────────
 function _c(hex) {
@@ -37,6 +38,14 @@ const FULL_LOGO_RATIO = 13.02 / 2.67; // ≈ 4.876  (width : height)
 
 // ── Icon-logo natural aspect ratio  (square hexagon mark, ~4.04 × 4.01") ───
 const ICON_LOGO_RATIO = 1.0;          // effectively 1 : 1
+
+// ── Default contact info — single source so closing slides stay in sync ────
+const DEFAULT_CONTACT_INFO   = 'potomac.com\n(305) 824-2702\ninfo@potomac.com';
+const DEFAULT_CONTACT_INLINE = 'potomac.com | (305) 824-2702 | info@potomac.com';
+
+// ── Watermark scale for full-bleed image slides ────────────────────────────
+// Applied to WORDMARK_W / WORDMARK_H to produce a subtle top-right watermark.
+const WATERMARK_SCALE = 0.34;
 
 
 class PotomacSlideTemplates {
@@ -121,7 +130,6 @@ class PotomacSlideTemplates {
 
   /** Returns the path of the square icon logo, or null. */
   getIconLogoPath(theme = 'light') {
-    const fs         = require('fs');
     const candidates = theme === 'dark'
       ? ['potomac-icon-white.png',  'potomac-icon-yellow.png']
       : ['potomac-icon-black.png',  'potomac-icon-yellow.png'];
@@ -134,7 +142,6 @@ class PotomacSlideTemplates {
 
   /** Returns the path of the full wordmark logo, or null. */
   getFullLogoPath(theme = 'light') {
-    const fs         = require('fs');
     const candidates = theme === 'dark'
       ? ['potomac-full-logo-white.png', 'potomac-full-logo.png']
       : ['potomac-full-logo-black.png', 'potomac-full-logo.png'];
@@ -276,14 +283,19 @@ class PotomacSlideTemplates {
   /**
    * Format an array or string for bullet-point text blocks.
    * Returns a pptxgenjs text array (bullets) or plain string.
+   * bulletIndent and paraSpace default to values proportional to the canvas width/height
+   * so bullet rhythm scales automatically with any layout change.
    */
-  _fmtContent(content, bulletIndent = 12, paraSpace = 5) {
+  _fmtContent(content, bulletIndent, paraSpace) {
+    const { cv } = this;
+    const indent = bulletIndent !== undefined ? bulletIndent : Math.round(cv.W * 0.9);
+    const space  = paraSpace  !== undefined ? paraSpace  : Math.round(cv.H * 0.67);
     if (Array.isArray(content)) {
       return content.map(item => ({
         text: String(typeof item === 'object' ? (item.text || item) : item),
         options: {
-          bullet:        { code: '25AA', indent: bulletIndent },
-          paraSpaceBefore: paraSpace,
+          bullet:        { code: '25AA', indent },
+          paraSpaceBefore: space,
         },
       }));
     }
@@ -845,7 +857,7 @@ class PotomacSlideTemplates {
       color: _c(this.palette.accent), align: 'center', italic: true,
     });
 
-    slide.addText(contactInfo || 'potomac.com\n(305) 824-2702\ninfo@potomac.com', {
+    slide.addText(contactInfo || DEFAULT_CONTACT_INFO, {
       x: cv.CX, y: cv.H * 0.733, w: cv.CW, h: cv.H * 0.2,
       fontFace: F.BODY.family, fontSize: Math.round(cv.W * 1.05),
       color: _c(C.TONES.GRAY_60), align: 'center',
@@ -890,7 +902,7 @@ class PotomacSlideTemplates {
       align: 'center', valign: 'middle',
     });
 
-    slide.addText(String(contactInfo || 'potomac.com | (305) 824-2702 | info@potomac.com'), {
+    slide.addText(String(contactInfo || DEFAULT_CONTACT_INLINE), {
       x: cv.CX, y: cv.H * 0.8, w: cv.CW, h: cv.H * 0.133,
       fontFace: F.BODY.family, fontSize: Math.round(cv.W * 1.05),
       color: _c(C.TONES.GRAY_60), align: 'center',
@@ -1651,7 +1663,6 @@ class PotomacSlideTemplates {
     this.addStandardLogo(slide);
     this._addSlideTitle(slide, title, { fsScale: 0.8125 });
 
-    const fs    = require('fs');
     const imgX  = imagePosition === 'left' ? cv.CX            : cv.CX + colW + gap;
     const txtX  = imagePosition === 'left' ? cv.CX + colW + gap : cv.CX;
     const paneH = cv.H - cv.BODY_Y - cv.MB;
@@ -1688,7 +1699,6 @@ class PotomacSlideTemplates {
     const slide  = this.pptx.addSlide();
     slide.background = { color: _c(C.PRIMARY.DARK_GRAY) };
 
-    const fs = require('fs');
     if (imagePath && fs.existsSync(imagePath)) {
       slide.addImage({ path: imagePath, x: 0, y: 0, w: cv.W, h: cv.H });
     }
@@ -1713,8 +1723,8 @@ class PotomacSlideTemplates {
     this.addLogo(slide, {
       x: cv.W - cv.WORDMARK_W - cv.MR,
       y: cv.MT,
-      w: cv.WORDMARK_W * 0.34,  // smaller — this is a watermark, not a title treatment
-      h: cv.WORDMARK_H * 0.34,
+      w: cv.WORDMARK_W * WATERMARK_SCALE,  // smaller — this is a watermark, not a title treatment
+      h: cv.WORDMARK_H * WATERMARK_SCALE,
     }, 'dark');
 
     return slide;
@@ -1729,20 +1739,15 @@ class PotomacSlideTemplates {
    * Define the three Potomac slide masters on the presentation instance.
    * Call ONCE before creating any slides.
    *
-   * Watermark position derived from the same fractional logic as the instance
-   * method addStandardLogo():
-   *   LOGO_W = W * 0.0712  LOGO_H = LOGO_W  (square icon)
-   *   LOGO_X = W - MR - LOGO_W             MR = W * 0.0375
-   *   LOGO_Y = H * 0.016
+   * Reads W and H from pptxInstance.presLayout — the same source of truth used
+   * by the constructor — so master geometry stays in sync with any layout change.
    */
   static defineAllMasters(pptxInstance, palette = 'STANDARD') {
     const pal     = SLIDE_PALETTES[palette] || SLIDE_PALETTES.STANDARD;
     const logoDir = path.join(__dirname, '../brand-assets/logos/');
-    const fs      = require('fs');
 
-    // Replicate the canvas constants for the static context
-    const W      = 13.333;
-    const H      = 7.5;
+    // Read live from the pptx instance — same source of truth as the constructor.
+    const { width: W, height: H } = pptxInstance.presLayout;
     const MR     = W * 0.0375;
     const LOGO_W = W * 0.0712;
     const LOGO_H = LOGO_W;       // icon is square

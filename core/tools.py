@@ -1468,6 +1468,7 @@ TOOL_DEFINITIONS = [
     },
     # ── PPTX Freestyle — LLM writes raw pptxgenjs JS ─────────────────────────
     # Zero predefined templates; LLM has full pptxgenjs v3 API access.
+    # Canvas: LAYOUT_WIDE 16:9 — 13.333" × 7.5". Logo top-right at x:11.73.
     # Brand constants (YELLOW, DARK_GRAY, FONT_H, FONT_B, LOGOS, addLogo) are
     # pre-loaded in the Node.js execution wrapper — LLM only writes slide logic.
     {
@@ -1478,20 +1479,42 @@ TOOL_DEFINITIONS = [
             "custom layouts, complex diagrams, org charts, infographics, pixel-perfect positioning, "
             "mixed content per slide — anything the pptxgenjs API supports.\n\n"
             "Pre-loaded in code environment (do NOT redefine):\n"
-            "  pres (Presentation), YELLOW='FEC00F', DARK_GRAY='212121', WHITE='FFFFFF',\n"
-            "  GRAY_60='999999', GRAY_20='DDDDDD', YELLOW_20='FEF7D8',\n"
-            "  FONT_H='Rajdhani' (headline), FONT_B='Quicksand' (body),\n"
-            "  LOGOS={full,black,yellow}, addLogo(slide,x,y,w,h,variant)\n\n"
+            "  pres (Presentation)\n"
+            "  const engine — layout engine: engine.W=13.333, engine.H=7.5 (inches)\n"
+            "  const prim   — Potomac primitives library\n"
+            "  Palette constants (hex strings — no leading #):\n"
+            "    YELLOW='FEC00F'  DARK_GRAY='212121'  WHITE='FFFFFF'  BLACK='000000'\n"
+            "    GRAY_60='999999'  GRAY_40='CCCCCC'  GRAY_20='DDDDDD'  GRAY_10='F0F0F0'\n"
+            "    YELLOW_20='FEF7D8'  YELLOW_80='FDD251'  GREEN='22C55E'  RED='EB2F5C'\n"
+            "  Font constants:\n"
+            "    FONT_H='Rajdhani'   (Potomac headline — use UPPERCASE text)\n"
+            "    FONT_B='Quicksand'  (Potomac body / caption)\n"
+            "    FONT_M='Consolas'   (monospace)\n"
+            "  Logo registry — LOGOS object, each entry has .dataUrl and .aspect:\n"
+            "    LOGOS.full        — full color logo (use on light backgrounds)\n"
+            "    LOGOS.full_black  — black logo (alias: LOGOS.black)\n"
+            "    LOGOS.full_white  — white logo (alias: LOGOS.white, use on dark backgrounds)\n"
+            "    LOGOS.icon_yellow — yellow icon only (alias: LOGOS.yellow)\n"
+            "    LOGOS.icon_black  — black icon only\n"
+            "    LOGOS.icon_white  — white icon only\n"
+            "  function addLogo(slide, x, y, w, h, variant='full')  — place logo on slide\n"
+            "  PALETTE, FONTS — full brand objects (PALETTE.YELLOW, FONTS.HEADLINE, ...)\n\n"
             "Your `code` field = slide-building JS only. Do NOT include require(), "
             "new pptxgen(), or pres.writeFile() — those are handled automatically.\n\n"
-            "Quick ref (canvas is 10\"×7.5\", coords in inches):\n"
+            "Canvas is LAYOUT_WIDE (standard PowerPoint 16:9). Coordinates are in inches. "
+            "Always keep x>=0 and y>=0. Place Potomac logo top-right on every slide: "
+            "addLogo(slide, 11.73, 0.15, 1.25, 0.5, 'full') unless intentionally omitted.\n\n"
+            "Quick ref (canvas is 13.333\"x7.5\", coords in inches):\n"
             "  const slide = pres.addSlide();\n"
             "  slide.background = { color: DARK_GRAY };\n"
-            "  slide.addText('TITLE', { x:1, y:1, w:8, h:1, fontFace:FONT_H, fontSize:40, bold:true, color:YELLOW });\n"
+            "  slide.addText('TITLE', { x:1, y:1, w:11, h:1, fontFace:FONT_H, fontSize:40, bold:true, color:YELLOW });\n"
             "  slide.addShape(pres.shapes.RECTANGLE, { x:0, y:0, w:0.2, h:7.5, fill:{color:YELLOW} });\n"
-            "  addLogo(slide, 8.55, 0.15, 1.25, 0.5, 'full');\n"
-            "  slide.addChart(pres.charts.BAR, [{name:'S1',labels:['A','B'],values:[10,20]}], {x:1,y:2,w:8,h:4});\n"
-            "  slide.addTable([[{text:'H',options:{bold:true,fill:{color:YELLOW}}}]], {x:0.5,y:2,w:9});"
+            "  // Use addLogo() helper (recommended — handles dataUrl automatically):\n"
+            "  addLogo(slide, 11.73, 0.15, 1.25, 0.5, 'full');\n"
+            "  // Or access dataUrl directly (note .dataUrl — LOGOS.full is an object):\n"
+            "  slide.addImage({ data:LOGOS.full.dataUrl, x:11.73, y:0.15, w:1.25, h:0.5, sizing:{type:'contain',w:1.25,h:0.5} });\n"
+            "  slide.addChart(pres.charts.BAR, [{name:'S1',labels:['A','B'],values:[10,20]}], {x:1,y:2,w:11,h:4});\n"
+            "  slide.addTable([[{text:'H',options:{bold:true,fill:{color:YELLOW}}}]], {x:0.5,y:2,w:12});"
         ),
         "input_schema": {
             "type": "object",
@@ -1502,21 +1525,25 @@ TOOL_DEFINITIONS = [
                 },
                 "filename": {
                     "type": "string",
-                    "description": "Output filename e.g. 'Custom_Deck.pptx'.",
+                    "description": "Output filename e.g. 'Custom_Deck.pptx'. Use underscores.",
                 },
                 "code": {
                     "type": "string",
                     "description": (
                         "Raw pptxgenjs v3 JavaScript — just the slide-building logic. "
-                        "Use pres.addSlide(), slide.addText/addShape/addChart/addImage/addTable. "
-                        "Brand constants and addLogo() are pre-defined. "
-                        "Do NOT include require(), new pptxgen(), or pres.writeFile()."
+                        "Use pres.addSlide(), slide.addText(), slide.addShape(), "
+                        "slide.addChart(), slide.addImage(), slide.addTable(). "
+                        "Brand constants (YELLOW, DARK_GRAY, FONT_H, FONT_B, LOGOS, addLogo) "
+                        "are pre-defined. Do NOT include require(), new pptxgen(), or pres.writeFile(). "
+                        "Canvas is 13.333\" wide x 7.5\" tall (LAYOUT_WIDE 16:9). "
+                        "Logo always placed at addLogo(slide, 11.73, 0.15, 1.25, 0.5, 'full')."
                     ),
                 },
             },
             "required": ["title", "code"],
         },
     },
+
     # ── PPTX Template Engine (pptx-automizer) ────────────────────────────────
     {
         "name": "generate_pptx_template",
