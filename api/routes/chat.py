@@ -26,6 +26,7 @@ from core.tools import get_all_tools, get_tools_for_api, handle_tool_call, is_to
 from core.artifact_parser import ArtifactParser
 from core.streaming import VercelAIStreamEncoder, GenerativeUIStreamBuilder
 from db.supabase_client import get_supabase
+from core.debug_transcript import DebugTranscript, is_debug_enabled, set_current_transcript as _dt_set_ctx
 
 router = APIRouter(prefix="/chat", tags=["Chat"])
 
@@ -1039,6 +1040,18 @@ async def chat_agent(
             "cache_read_input_tokens": 0,
         }
 
+        # ── Debug transcript — zero cost when DEBUG_TRANSCRIPTS_ENABLED != 1 ──
+        _debug_en = is_debug_enabled()
+        _dt = DebugTranscript(conversation_id=conversation_id, user_id=user_id) if _debug_en else None
+        if _dt:
+            _dt_set_ctx(_dt)
+            _dt.log_request(
+                "POST", "/chat/agent",
+                data.model or "",
+                data.content,
+                skill_slug=data.skill_slug or "",
+            )
+
         try:
             engine = _get_engine(api_keys["claude"])
             client = anthropic.AsyncAnthropic(
@@ -1064,6 +1077,8 @@ async def chat_agent(
             )
 
             model_config = get_model_config(model_to_use)
+            if _dt:
+                _dt.log_model_resolved(model_to_use)
 
             # Build system prompt with optional caching markers
             system_prompt_base = (
@@ -1081,6 +1096,10 @@ async def chat_agent(
                     f"Do not write any introductory text before invoking the skill. "
                     f"Pass the user's full message as the `prompt` argument to the skill."
                 )
+
+            # ── Debug: log full assembled system prompt ───────────────────────
+            if _dt:
+                _dt.log_system_prompt(system_prompt_base)
 
             # NEW: Use system blocks with prompt caching for Claude 4.6+
             if data.use_prompt_caching and model_config["supports_prompt_caching"]:
@@ -1117,6 +1136,8 @@ async def chat_agent(
                 model_config["context_window"],
                 system_prompt_base
             )
+            if _dt:
+                _dt.log_messages(messages)
 
             # ── YANG: load per-user config (merge with per-request overrides) ──
             # Loads from user_yang_settings table; falls back to safe defaults
@@ -1295,6 +1316,8 @@ async def chat_agent(
                                     text = event.delta.text
                                     accumulated_content += text
                                     yield encoder.encode_text(text)
+                                    if _dt:
+                                        _dt.log_text_delta(text)
 
                                 elif event.delta.type == "input_json_delta":
                                     if pending_tool_calls:
@@ -1313,6 +1336,8 @@ async def chat_agent(
                                 tool_name = tool_call["name"]
 
                                 yield encoder.encode_tool_call(tool_call_id, tool_name, tool_input)
+                                if _dt:
+                                    _dt.log_tool_call_start(tool_call_id, tool_name, tool_input)
 
                                 if tool_name == "invoke_skill":
                                     _SKILL_LABELS = {
@@ -1617,6 +1642,8 @@ async def chat_agent(
                     # Log per-iteration metrics for debugging
                     iteration_duration = (datetime.now() - iteration_start_time).total_seconds()
                     print(f"Iteration {iteration}: {iteration_duration:.2f}s, tokens: {iteration_usage}")
+                    if _dt:
+                        _dt.log_iteration(iteration, iteration_duration, iteration_usage)
 
                     # ── YANG: live token counter ──────────────────────────────────
                     # Emitted after every API call so the frontend can render a
@@ -2044,15 +2071,25 @@ async def chat_agent(
                 "iterations": iteration,
             })
 
+            if _dt:
+                _dt.log_final_response(accumulated_content, tools_used, total_usage, iteration)
+                _dt.write()
+
             yield encoder.encode_finish_message("stop", usage)
 
         except RateLimitError as e:
             error_msg = f"Rate limit exceeded: {str(e)}\n\nPlease wait a moment and try again."
+            if _dt:
+                _dt.log_error("RateLimitError", error_msg)
+                _dt.write()
             yield encoder.encode_text(f"\n\n{error_msg}")
             yield encoder.encode_error(error_msg)
             yield encoder.encode_finish_message("error")
         except Exception as e:
             error_msg = f"{str(e)}\n{traceback.format_exc()[:500]}"
+            if _dt:
+                _dt.log_error(type(e).__name__, error_msg)
+                _dt.write()
             yield encoder.encode_text(f"\n\nError: {str(e)}")
             yield encoder.encode_error(error_msg)
             yield encoder.encode_finish_message("error")

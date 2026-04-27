@@ -72,7 +72,24 @@ class SandboxManager:
                 language=language,
             )
 
-        return await sandbox.execute(code, timeout, context, session_id)
+        import time as _time
+        _sb_start = _time.time()
+        _sb_result = await sandbox.execute(code, timeout, context, session_id)
+        try:
+            from core.debug_transcript import get_current_transcript as _gct
+            _dt = _gct()
+            if _dt:
+                _dt.log_sandbox_exec(
+                    language=language,
+                    code=code,
+                    stdout=_sb_result.stdout or "",
+                    stderr=_sb_result.stderr or "",
+                    exit_code=0 if _sb_result.success else 1,
+                    duration_ms=round((_time.time() - _sb_start) * 1000, 2),
+                )
+        except Exception:
+            pass
+        return _sb_result
 
     def validate(self, language: str, code: str) -> Dict[str, Any]:
         """Pre-validate code for a given language."""

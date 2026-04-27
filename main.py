@@ -462,6 +462,16 @@ except Exception as e:
     logger.error(f"✗ Failed to load yang router: {e}")
     logger.debug(traceback.format_exc())
 
+try:
+    from api.routes import debug as debug_router
+    app.include_router(debug_router.router)
+    routers_loaded.append("debug")
+    logger.info("✓ Loaded debug router (Debug transcript access — set DEBUG_TRANSCRIPTS_ENABLED=1)")
+except Exception as e:
+    routers_failed.append(("debug", str(e)))
+    logger.error(f"✗ Failed to load debug router: {e}")
+    logger.debug(traceback.format_exc())
+
 # Start background task cleanup loop on app startup
 @app.on_event("startup")
 async def startup_task_manager():

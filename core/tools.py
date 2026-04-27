@@ -5117,9 +5117,25 @@ def handle_tool_call(
             result = {"result": result, "_tool_time_ms": elapsed_ms}
 
         logger.debug("Tool %s completed in %sms", tool_name, result["_tool_time_ms"])
-        return json.dumps(result, indent=2, default=str)
+        _json_out = json.dumps(result, indent=2, default=str)
+        try:
+            from core.debug_transcript import get_current_transcript as _gct
+            _dt = _gct()
+            if _dt:
+                _dt.log_tool_call_end(tool_name, result, elapsed_ms)
+        except Exception:
+            pass
+        return _json_out
 
     except Exception as e:
+        _err_ms = round((time.time() - start_time) * 1000, 2)
+        try:
+            from core.debug_transcript import get_current_transcript as _gct
+            _dt = _gct()
+            if _dt:
+                _dt.log_tool_call_end(tool_name, {"error": str(e)}, _err_ms)
+        except Exception:
+            pass
         logger.error("Error in tool call %s: %s", tool_name, e, exc_info=True)
         return json.dumps({"error": str(e), "traceback": traceback.format_exc()[:500]})
 
