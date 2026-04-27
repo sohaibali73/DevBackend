@@ -552,6 +552,21 @@ class NodeSandbox(BaseSandbox):
             except Exception:
                 pass
 
+            # ── Debug transcript hook ──────────────────────────────────────────
+            try:
+                from core.debug_transcript import get_current_transcript as _gct
+                _dt_ns = _gct()
+                if _dt_ns:
+                    _dt_ns.log_sandbox_exec(
+                        language="javascript",
+                        code=code,
+                        stdout=result.stdout or result.output or "",
+                        stderr=result.stderr or result.error or "",
+                        exit_code=0 if result.success else 1,
+                        duration_ms=result.execution_time_ms or round((time.time() - start_time) * 1000, 2),
+                    )
+            except Exception:
+                pass
             return result
 
         except Exception as e:

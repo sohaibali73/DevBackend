@@ -364,17 +364,17 @@ class DebugTranscript:
             elif ev_type == "system_prompt":
                 prompt = ev.get("prompt", "")
                 lines.append(f"[{ts_label}] SYSTEM_PROMPT ({ev.get('length', len(prompt))} chars)")
-                lines.append(f"  {prompt[:500]}{'...' if len(prompt) > 500 else ''}")
+                lines.append(f"  {prompt}")
 
             elif ev_type == "messages":
                 lines.append(f"[{ts_label}] MESSAGES ({ev.get('count', 0)} messages)")
                 for m in ev.get("messages", []):
-                    lines.append(f"  [{m['index']}] {m['role']}: ({m['length']} chars) {m['preview'][:120]}")
+                    lines.append(f"  [{m['index']}] {m['role']}: ({m['length']} chars) {m['preview'][:2000]}")
 
             elif ev_type == "text_delta":
                 text = ev.get("text", "")
                 lines.append(f"[{ts_label}] TEXT_DELTA ({len(text)} chars)")
-                lines.append(f"  {text[:400]}{'...' if len(text) > 400 else ''}")
+                lines.append(f"  {text}")
 
             elif ev_type == "tool_call_start":
                 inp = ev.get("input", {})
@@ -391,10 +391,8 @@ class DebugTranscript:
                 lines.append(f"[{ts_label}] TOOL_CALL_END")
                 lines.append(f"  Tool: {ev.get('tool_name')}  ({ev.get('duration_ms', 0):.2f} ms)")
                 lines.append("  Output:")
-                for ln in out_str[:2000].splitlines():
+                for ln in out_str.splitlines():
                     lines.append(f"    {ln}")
-                if len(out_str) > 2000:
-                    lines.append("    ... (truncated)")
 
             elif ev_type == "sandbox_exec":
                 code = ev.get("code", "")
@@ -402,19 +400,17 @@ class DebugTranscript:
                 stderr = ev.get("stderr", "") or ""
                 lines.append(f"[{ts_label}] SANDBOX_EXEC  [{ev.get('language')}]  ({ev.get('duration_ms', 0):.2f} ms)")
                 lines.append(f"  Code ({len(code)} chars):")
-                for ln in code[:1500].splitlines():
+                for ln in code.splitlines():
                     lines.append(f"    {ln}")
-                if len(code) > 1500:
-                    lines.append("    ... (truncated)")
                 lines.append(f"  STDOUT:")
                 if stdout.strip():
-                    for ln in stdout[:1000].splitlines():
+                    for ln in stdout.splitlines():
                         lines.append(f"    {ln}")
                 else:
                     lines.append("    (none)")
                 lines.append(f"  STDERR:")
                 if stderr.strip():
-                    for ln in stderr[:500].splitlines():
+                    for ln in stderr.splitlines():
                         lines.append(f"    {ln}")
                 else:
                     lines.append("    (none)")
@@ -445,7 +441,7 @@ class DebugTranscript:
                 if tools:
                     lines.append(f"  Tools used  : {', '.join(str(t) for t in tools)}")
                 lines.append(f"  Content ({len(content)} chars):")
-                lines.append(f"  {content[:600]}{'...' if len(content) > 600 else ''}")
+                lines.append(f"  {content}")
 
             elif ev_type == "error":
                 lines.append(f"[{ts_label}] *** ERROR: {ev.get('error_type')} ***")

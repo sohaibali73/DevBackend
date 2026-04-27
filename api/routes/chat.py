@@ -1643,7 +1643,7 @@ async def chat_agent(
                     iteration_duration = (datetime.now() - iteration_start_time).total_seconds()
                     print(f"Iteration {iteration}: {iteration_duration:.2f}s, tokens: {iteration_usage}")
                     if _dt:
-                        _dt.log_iteration(iteration, iteration_duration, iteration_usage)
+                        _dt.log_iteration(iteration, round(iteration_duration * 1000, 2), iteration_usage)
 
                     # ── YANG: live token counter ──────────────────────────────────
                     # Emitted after every API call so the frontend can render a
