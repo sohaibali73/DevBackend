@@ -1094,7 +1094,34 @@ class PythonSandbox(BaseSandbox):
                 for k, v in local_vars.items()
                 if not k.startswith("_")
             }
-            new_namespace = _serialize_namespace(local_vars)
+            # If the caller passed an in-memory persisted_namespace dict
+            # (i.e. a real Python dict, not from the DB JSON path), we
+            # populate it with the FULL set of locals — DataFrames, numpy
+            # arrays, anything — so the next execute_python call in the
+            # same conversation can reuse them without re-loading.
+            #
+            # Detection: the in-memory caller stamps the dict with the
+            # sentinel key "__inproc__".  When present, we mutate the
+            # caller's dict directly and return an empty serialized blob
+            # (the caller already has everything it needs in-memory).
+            if isinstance(persisted_namespace, dict) and persisted_namespace.get("__inproc__"):
+                # Reuse the same dict object the caller passed in.
+                persisted_namespace.clear()
+                persisted_namespace["__inproc__"] = True
+                for _k, _v in local_vars.items():
+                    if _k.startswith("_"):
+                        continue
+                    if callable(_v):
+                        continue
+                    # Skip modules — they'll be re-imported next call anyway
+                    import types as _types
+                    if isinstance(_v, _types.ModuleType):
+                        continue
+                    persisted_namespace[_k] = _v
+                new_namespace = {}  # nothing to persist via DB path
+            else:
+                new_namespace = _serialize_namespace(local_vars)
+
 
             return SandboxResult(
                 success=True,

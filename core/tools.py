@@ -2122,17 +2122,27 @@ def execute_python(
             ctx = {"_sandbox_files": sandbox_files}
 
         # ── Load persisted namespace for this session ──────────────────────
+        # We use the in-process namespace cache (same Python process across
+        # successive tool calls in the same conversation), which keeps the
+        # FULL Python objects — DataFrames, numpy arrays, dicts of any depth —
+        # not just JSON-serialisable scalars.  The sentinel "__inproc__" tells
+        # _execute_sync to populate the dict in-place with raw locals instead
+        # of going through _serialize_namespace (which strips DataFrames).
         _sid = session_id or _current_session_id.get() or None
-        _ns_in: Dict[str, Any] = _SESSION_NAMESPACES.get(_sid, {}) if _sid else {}
+        if _sid:
+            _ns_in = _SESSION_NAMESPACES.setdefault(_sid, {"__inproc__": True})
+            _ns_in.setdefault("__inproc__", True)
+        else:
+            _ns_in = {}
 
         # Use __new__ to skip __init__ (which schedules an async task).
         # _execute_sync is fully synchronous and safe to call directly.
         sandbox = object.__new__(PythonSandbox)
         result, _namespace = sandbox._execute_sync(code, context=ctx, persisted_namespace=_ns_in)
 
-        # ── Save namespace back for next call in this session ──────────────
-        if _sid and result.success and _namespace:
-            _SESSION_NAMESPACES[_sid] = _namespace
+        # _execute_sync mutated _ns_in in-place when __inproc__ was set, so we
+        # don't need to reassign — _SESSION_NAMESPACES already points at it.
+
 
         # ── Log sandbox execution to debug transcript ─────────────────────────
         # This gives a dedicated SANDBOX_EXEC event (language, code, stdout,
