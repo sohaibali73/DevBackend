@@ -23,6 +23,7 @@ from fastapi import APIRouter, HTTPException, UploadFile, File, Form, Header, Qu
 from pydantic import BaseModel, Field
 
 from db.supabase_client import get_supabase
+from core.rag_chunker import chunk_and_index
 from api.routes.upload import (
     _storage_path,
     _write_file,
@@ -43,8 +44,9 @@ logger = logging.getLogger(__name__)
 SYSTEM_UPLOADER_ID = "00000000-0000-0000-0000-000000000000"
 
 MAX_BATCH_FILES = 200      # safety cap per request
-CHUNK_SIZE = 500           # characters per brain_chunk row
-MAX_CHUNKS_PER_DOC = 100   # cap chunks to avoid Supabase row bloat
+CHUNK_SIZE = 1500          # characters per brain_chunk row (Msty-style RAG)
+CHUNK_OVERLAP = 150        # overlap between consecutive chunks
+MAX_CHUNKS_PER_DOC = 0     # 0 = no cap (index the whole doc)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -170,22 +172,20 @@ def _insert_document(
 
     document_id = doc_result.data[0]["id"]
 
-    # ── Chunk for RAG ──────────────────────────────────────────────────────────
-    chunks = [
-        content[i : i + CHUNK_SIZE]
-        for i in range(0, len(content), CHUNK_SIZE)
-    ][:MAX_CHUNKS_PER_DOC]
-
-    for idx, chunk in enumerate(chunks):
-        db.table("brain_chunks").insert({
-            "document_id": document_id,
-            "chunk_index": idx,
-            "content": chunk,
-        }).execute()
+    # ── Smart chunk + batch embed + batch insert (1 DB round trip) ───────────
+    index_result = chunk_and_index(
+        db=db,
+        document_id=document_id,
+        text=content,
+        chunk_size=CHUNK_SIZE,
+        overlap=CHUNK_OVERLAP,
+        max_chunks=MAX_CHUNKS_PER_DOC,
+        generate_embeddings=True,
+    )
 
     db.table("brain_documents").update({
         "is_processed": True,
-        "chunk_count": len(chunks),
+        "chunk_count": index_result["chunks_created"],
         "processed_at": now,
     }).eq("id", document_id).execute()
 
@@ -194,7 +194,8 @@ def _insert_document(
         "status": "success",
         "document_id": document_id,
         "storage_path": storage_path,
-        "chunks_created": len(chunks),
+        "chunks_created": index_result["chunks_created"],
+        "embeddings_generated": index_result["embeddings_generated"],
     }
 
 
@@ -490,22 +491,20 @@ async def upload_preparsed(
 
             document_id = doc_result.data[0]["id"]
 
-            # ── Chunk for RAG ──────────────────────────────────────────────────
-            chunks = [
-                content[i : i + CHUNK_SIZE]
-                for i in range(0, len(content), CHUNK_SIZE)
-            ][:MAX_CHUNKS_PER_DOC]
-
-            for idx, chunk in enumerate(chunks):
-                db.table("brain_chunks").insert({
-                    "document_id": document_id,
-                    "chunk_index": idx,
-                    "content": chunk,
-                }).execute()
+            # ── Smart chunk + batch embed + batch insert ──────────────────────
+            index_result = chunk_and_index(
+                db=db,
+                document_id=document_id,
+                text=content,
+                chunk_size=CHUNK_SIZE,
+                overlap=CHUNK_OVERLAP,
+                max_chunks=MAX_CHUNKS_PER_DOC,
+                generate_embeddings=True,
+            )
 
             db.table("brain_documents").update({
                 "is_processed": True,
-                "chunk_count": len(chunks),
+                "chunk_count": index_result["chunks_created"],
                 "processed_at": now,
             }).eq("id", document_id).execute()
 
@@ -514,7 +513,8 @@ async def upload_preparsed(
                 "filename": doc.filename,
                 "status": "success",
                 "document_id": document_id,
-                "chunks_created": len(chunks),
+                "chunks_created": index_result["chunks_created"],
+                "embeddings_generated": index_result["embeddings_generated"],
                 "text_length": len(content),
             })
 

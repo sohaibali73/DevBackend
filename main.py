@@ -373,6 +373,16 @@ except Exception as e:
     logger.debug(traceback.format_exc())
 
 try:
+    from api.routes import stacks
+    app.include_router(stacks.router)
+    routers_loaded.append("stacks")
+    logger.info("✓ Loaded stacks router (Msty-style Knowledge Stacks)")
+except Exception as e:
+    routers_failed.append(("stacks", str(e)))
+    logger.error(f"✗ Failed to load stacks router: {e}")
+    logger.debug(traceback.format_exc())
+
+try:
     from api.routes import settings
     app.include_router(settings.router)
     routers_loaded.append("settings")

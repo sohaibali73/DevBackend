@@ -17,6 +17,7 @@ from pydantic import BaseModel
 
 from api.dependencies import get_current_user_id, get_user_api_keys
 from core.document_classifier import AIDocumentClassifier
+from core.rag_chunker import chunk_and_index, generate_embeddings_batch
 from db.supabase_client import get_supabase
 
 # Reuse the storage helpers from upload.py so files always land in the same place
@@ -142,25 +143,28 @@ def _process_document_background(
             "summary": classification_data["summary"],
         }).eq("id", document_id).execute()
 
-        # ── Chunk for RAG ─────────────────────────────────────────────────────
-        chunk_size = 500
-        chunks = [content[i:i + chunk_size] for i in range(0, len(content), chunk_size)][:50]
-        for idx, chunk_text in enumerate(chunks):
-            db.table("brain_chunks").insert({
-                "document_id": document_id,
-                "chunk_index": idx,
-                "content": chunk_text,
-            }).execute()
+        # ── Smart chunk + batch embed + batch insert ──────────────────────────
+        index_result = chunk_and_index(
+            db=db,
+            document_id=document_id,
+            text=content,
+            chunk_size=1500,
+            overlap=150,
+            max_chunks=0,            # no cap — index the entire document
+            generate_embeddings=True,
+        )
 
         # ── Mark as ready ─────────────────────────────────────────────────────
         db.table("brain_documents").update({
             "is_processed": True,
-            "chunk_count": len(chunks),
+            "chunk_count": index_result["chunks_created"],
             "processed_at": now,
         }).eq("id", document_id).execute()
 
         logger.info(
-            f"Background processing complete: {filename} → {len(chunks)} chunks "
+            f"Background processing complete: {filename} → "
+            f"{index_result['chunks_created']} chunks, "
+            f"{index_result['embeddings_generated']} embeddings "
             f"(doc_id={document_id})"
         )
 
@@ -398,18 +402,20 @@ async def upload_documents_batch(
 
             document_id = doc_result.data[0]["id"]
 
-            chunk_size = 500
-            chunks = [content[i:i + chunk_size] for i in range(0, len(content), chunk_size)][:50]
-            for idx, chunk in enumerate(chunks):
-                db.table("brain_chunks").insert({
-                    "document_id": document_id,
-                    "chunk_index": idx,
-                    "content": chunk,
-                }).execute()
+            # Smart chunk + batch embed + batch insert (single DB round trip)
+            index_result = chunk_and_index(
+                db=db,
+                document_id=document_id,
+                text=content,
+                chunk_size=1500,
+                overlap=150,
+                max_chunks=0,
+                generate_embeddings=True,
+            )
 
             db.table("brain_documents").update({
                 "is_processed": True,
-                "chunk_count": len(chunks),
+                "chunk_count": index_result["chunks_created"],
                 "processed_at": now,
             }).eq("id", document_id).execute()
 
@@ -423,7 +429,8 @@ async def upload_documents_batch(
                     "confidence": classification_data["confidence"],
                     "summary": classification_data["summary"],
                 },
-                "chunks_created": len(chunks),
+                "chunks_created": index_result["chunks_created"],
+                "embeddings_generated": index_result["embeddings_generated"],
             })
 
         except Exception as e:

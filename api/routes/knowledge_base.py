@@ -11,7 +11,7 @@ import uuid
 from datetime import datetime, timezone
 from typing import Optional, List
 
-from fastapi import APIRouter, HTTPException, UploadFile, File, Form, Depends
+from fastapi import APIRouter, BackgroundTasks, HTTPException, UploadFile, File, Form, Depends
 from fastapi.responses import Response as FastAPIResponse
 from pydantic import BaseModel
 
@@ -47,15 +47,25 @@ async def upload_document(
     file: UploadFile = File(...),
     title: Optional[str] = Form(None),
     category: Optional[str] = Form("general"),
+    background_tasks: BackgroundTasks = BackgroundTasks(),
     user_id: str = Depends(get_current_user_id),
     api_keys: dict = Depends(get_user_api_keys),
 ):
-    """Upload and index a document into the knowledge base."""
-    # Delegate to the brain upload logic to avoid code duplication
+    """Upload and index a document into the knowledge base.
+
+    This is an alias for /brain/upload — we forward the SAME ``background_tasks``
+    object FastAPI injected here so the actual indexing work runs after the
+    response is returned. Previously this delegated without forwarding the
+    BackgroundTasks instance, so files saved here never got chunked or indexed.
+    """
     from api.routes.brain import upload_document as brain_upload
     return await brain_upload(
-        file=file, title=title, category=category,
-        user_id=user_id, api_keys=api_keys,
+        file=file,
+        title=title,
+        category=category,
+        background_tasks=background_tasks,
+        user_id=user_id,
+        api_keys=api_keys,
     )
 
 
