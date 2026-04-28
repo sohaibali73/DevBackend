@@ -450,6 +450,25 @@ TOOL_DEFINITIONS = [
         "name": "web_search",
         "max_uses": 5
     },
+    # ── Reference / documentation tools (return static prompt content on demand) ──
+    # These exist so the system prompt can stay slim — Claude only loads detailed
+    # reference material when it actually needs it (saves ~1500 tokens per turn).
+    {
+        "name": "get_afl_syntax_reference",
+        "description": "Load the authoritative AFL syntax reference: function signatures (single/double/multi-arg), reserved-word list, the Param/Optimize template, and timeframe-expansion rules. Call this before writing or correcting any AFL code.",
+        "input_schema": {"type": "object", "properties": {}, "required": []},
+    },
+    {
+        "name": "get_yang_capabilities",
+        "description": "Load documentation for the YANG agentic environment: auto-compact context, focus chain, spawn_subagents, background edit, checkpoints, yolo mode, plan mode, double-check verifier, parallel tool dispatch, and tool-search. Call this when you need to explain, rely on, or correctly use any of these capabilities.",
+        "input_schema": {"type": "object", "properties": {}, "required": []},
+    },
+    {
+        "name": "get_genui_card_schema",
+        "description": "Load the GenUI structured-card catalog: full list of card types (stock, weather, afl, backtest, news, etc.) and the exact JSON envelope format the frontend renders. Call this before emitting a structured data card in your reply.",
+        "input_schema": {"type": "object", "properties": {}, "required": []},
+    },
+
     # Custom: Python Code Execution
     {
         "name": "execute_python",
@@ -4409,9 +4428,60 @@ def search_flights(
 # The dynamic sub-table is only built when a dynamic tool is requested AND only
 # those 5 lambdas are created, not all 45.
 
+# ── Reference tool handlers (return static prompt content) ──────────────────
+# Defined as module-level functions so they're cheap (no closure allocation).
+def _get_afl_syntax_reference(_ti: Dict[str, Any]) -> Dict[str, Any]:
+    """Return the full AFL syntax reference string for the agent."""
+    try:
+        from core.prompts.base import (
+            FUNCTION_REFERENCE, RESERVED_KEYWORDS,
+            PARAM_OPTIMIZE_PATTERN, TIMEFRAME_RULES,
+        )
+        content = "\n\n".join([
+            FUNCTION_REFERENCE.strip(),
+            RESERVED_KEYWORDS.strip(),
+            PARAM_OPTIMIZE_PATTERN.strip(),
+            TIMEFRAME_RULES.strip(),
+        ])
+        return {"success": True, "tool": "get_afl_syntax_reference", "reference": content}
+    except Exception as e:
+        return {"success": False, "tool": "get_afl_syntax_reference", "error": str(e)}
+
+
+def _get_yang_capabilities(_ti: Dict[str, Any]) -> Dict[str, Any]:
+    """Return the YANG agentic capabilities documentation."""
+    try:
+        from core.prompts.base import YANG_CAPABILITIES_PROMPT
+        return {
+            "success": True,
+            "tool": "get_yang_capabilities",
+            "capabilities": YANG_CAPABILITIES_PROMPT.strip(),
+        }
+    except Exception as e:
+        return {"success": False, "tool": "get_yang_capabilities", "error": str(e)}
+
+
+def _get_genui_card_schema(_ti: Dict[str, Any]) -> Dict[str, Any]:
+    """Return the GenUI structured-card schema."""
+    try:
+        from core.prompts.base import GENUI_CARD_SCHEMA
+        return {
+            "success": True,
+            "tool": "get_genui_card_schema",
+            "schema": GENUI_CARD_SCHEMA.strip(),
+        }
+    except Exception as e:
+        return {"success": False, "tool": "get_genui_card_schema", "error": str(e)}
+
+
 _STATIC_DISPATCH: Dict[str, Any] = {
     # Each entry: tool_name → lambda tool_input: handler(...)
+    # ── Reference / documentation tools (slim system prompt → load on demand) ──
+    "get_afl_syntax_reference": _get_afl_syntax_reference,
+    "get_yang_capabilities":    _get_yang_capabilities,
+    "get_genui_card_schema":    _get_genui_card_schema,
     "execute_python":         lambda ti: execute_python(code=ti.get("code",""), description=ti.get("description","")),
+
     "execute_react":          lambda ti: execute_react(code=ti.get("code",""), description=ti.get("description","")),
     "get_stock_data":         lambda ti: get_stock_data(symbol=ti.get("symbol",""), period=ti.get("period","1mo"), info_type=ti.get("info_type","price")),
     "validate_afl":           lambda ti: validate_afl(code=ti.get("code","")),

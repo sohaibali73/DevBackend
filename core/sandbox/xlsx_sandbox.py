@@ -4,10 +4,10 @@ XLSX Sandbox
 Generates Potomac-branded Excel workbooks (.xlsx) entirely in Python using
 ``openpyxl``.  No Node.js, no subprocess — runs directly in-process.
 
-The sandbox implements the full Potomac brand palette and spreadsheet standards
-from ``ClaudeSkills/potomac-xlsx/SKILL.md``:
+The sandbox implements the full Potomac brand palette and spreadsheet
+standards:
   - Yellow (#FEC00F) column headers, title block, and accent fills
-  - Dark-gray (#212121) body text, Rajdhani (headings) / Quicksand (body) fonts
+  - Dark-gray (#212121) body text, Rajdhani (headings) / Quicksand (body)
   - Zebra-striped data rows, thin borders, yellow footers
   - Optional DISCLOSURES sheet
 
@@ -33,27 +33,33 @@ from typing import Any, Dict, List, Optional
 logger = logging.getLogger(__name__)
 
 # =============================================================================
-# Potomac Brand Constants
+# Potomac brand constants
 # =============================================================================
 
-_YELLOW        = "FEC00F"   # Primary yellow — headers, accent
-_DARK_GRAY     = "212121"   # All body text
-_YELLOW_LIGHT  = "FEE896"   # Subheader / subtitle fill
-_ROW_ALT       = "F5F5F5"   # Alternating row background
-_WHITE         = "FFFFFF"   # Primary row background
-_PINK          = "EB2F5C"   # Risk / alert (use sparingly)
-_TEAL          = "00DED1"   # Investment Strategies only (use sparingly)
+_YELLOW       = "FEC00F"   # Primary yellow — headers, accent
+_DARK_GRAY    = "212121"   # All body text
+_YELLOW_LIGHT = "FEE896"   # Subheader / subtitle fill
+_ROW_ALT      = "F5F5F5"   # Alternating row background
+_WHITE        = "FFFFFF"   # Primary row background
+_PINK         = "EB2F5C"   # Risk / alert  (use sparingly)
+_TEAL         = "00DED1"   # Investment Strategies only (use sparingly)
 
-# Tab color defaults by sheet position
-_TAB_COLORS = {0: _YELLOW, 1: _DARK_GRAY, 2: _DARK_GRAY, 3: _PINK}
+# Default tab colour by sheet index
+_TAB_COLORS: Dict[int, str] = {
+    0: _YELLOW,
+    1: _DARK_GRAY,
+    2: _DARK_GRAY,
+    3: _PINK,
+}
 
 
 # =============================================================================
-# Result dataclass
+# Result container
 # =============================================================================
 
 class XlsxResult:
-    """Lightweight result container from XlsxSandbox.generate()."""
+    """Lightweight result from :meth:`XlsxSandbox.generate`."""
+
     __slots__ = ("success", "data", "filename", "error", "exec_time_ms")
 
     def __init__(
@@ -63,7 +69,7 @@ class XlsxResult:
         filename: Optional[str] = None,
         error: Optional[str] = None,
         exec_time_ms: float = 0.0,
-    ):
+    ) -> None:
         self.success      = success
         self.data         = data
         self.filename     = filename
@@ -77,16 +83,20 @@ class XlsxResult:
 
 class XlsxSandbox:
     """
-    Builds Potomac-branded Excel workbooks from a structured spec dict.
+    Build Potomac-branded Excel workbooks from a structured spec dict.
 
-    The spec describes one or more sheets; no code generation by the LLM is
-    required.  All brand styling is applied automatically.
+    No LLM code generation is required — all brand styling is applied
+    automatically.
 
     Thread safety
     -------------
-    ``generate()`` creates its own Workbook instance per call — no shared
-    mutable state.  Multiple concurrent calls are safe.
+    ``generate()`` creates a fresh ``Workbook`` instance per call.
+    Multiple concurrent calls are safe.
     """
+
+    # ------------------------------------------------------------------
+    # Public API
+    # ------------------------------------------------------------------
 
     def generate(self, spec: Dict[str, Any]) -> XlsxResult:
         """
@@ -97,21 +107,14 @@ class XlsxSandbox:
         spec : dict
             Workbook specification.  Required keys: ``title``, ``sheets``.
             See the ``generate_xlsx`` tool schema for the full definition.
-
-        Returns
-        -------
-        XlsxResult
         """
         start = time.time()
         try:
             from openpyxl import Workbook
-            from openpyxl.styles import (
-                Alignment, Border, Font, PatternFill, Side,
-            )
             from openpyxl.utils import get_column_letter
 
             wb = Workbook()
-            # Remove the default blank sheet added by openpyxl
+            # Remove the default blank sheet openpyxl always adds
             if wb.active and wb.active.title == "Sheet":
                 del wb[wb.active.title]
 
@@ -131,18 +134,18 @@ class XlsxSandbox:
                 name = str(sheet_spec.get("name", f"SHEET{idx + 1}")).upper()[:31]
                 ws   = wb.create_sheet(name)
 
-                # ── Tab color ──────────────────────────────────────────────
+                # Tab colour
                 tab_color = sheet_spec.get("tab_color") or _TAB_COLORS.get(idx, _DARK_GRAY)
                 ws.sheet_properties.tabColor = tab_color
 
-                columns    = [str(c) for c in sheet_spec.get("columns", [])]
-                col_count  = len(columns) or 1
-                rows_data  = sheet_spec.get("rows", [])
+                columns   = [str(c) for c in sheet_spec.get("columns", [])]
+                col_count = len(columns) or 1
+                rows_data = sheet_spec.get("rows", [])
 
-                # ── Title block (rows 1-2) ─────────────────────────────────
+                # ── Title block (rows 1-2; row 3 is spacer) ───────────
                 self._write_title_block(ws, doc_title, doc_subtitle, col_count)
 
-                # ── Column headers (row 4; row 3 is a spacer) ─────────────
+                # ── Column headers (row 4) ─────────────────────────────
                 header_row = 4
                 for ci, header in enumerate(columns, start=1):
                     cell       = ws.cell(row=header_row, column=ci)
@@ -150,7 +153,7 @@ class XlsxSandbox:
                     self._style_header_cell(cell)
                 ws.row_dimensions[header_row].height = 20
 
-                # ── Data rows ─────────────────────────────────────────────
+                # ── Data rows ──────────────────────────────────────────
                 num_formats = sheet_spec.get("number_formats", {})
                 data_start  = 5
                 for ri, row_vals in enumerate(rows_data):
@@ -164,7 +167,7 @@ class XlsxSandbox:
                         if fmt_key in num_formats:
                             cell.number_format = num_formats[fmt_key]
 
-                # ── Formula overrides ──────────────────────────────────────
+                # ── Formula overrides ──────────────────────────────────
                 for formula_spec in sheet_spec.get("formulas", []):
                     addr    = formula_spec.get("cell", "")
                     formula = formula_spec.get("formula", "")
@@ -172,23 +175,23 @@ class XlsxSandbox:
                         ws[addr] = formula
                         self._style_data_cell(ws[addr], alt=False)
 
-                # ── Footer row ─────────────────────────────────────────────
+                # ── Footer row ─────────────────────────────────────────
                 if sheet_spec.get("include_footer", True):
                     footer_row  = data_start + len(rows_data) + 1
                     footer_text = sheet_spec.get("footer_text") or (
-                        "Potomac  |  Built to Conquer Risk\u00ae  |  For Advisor Use Only"
+                        "Potomac  |  Built to Conquer Risk\u00ae"
+                        "  |  For Advisor Use Only"
                     )
                     self._write_footer(ws, footer_row, col_count, footer_text)
 
-                # ── Column widths ──────────────────────────────────────────
+                # ── Column widths ──────────────────────────────────────
                 col_widths = sheet_spec.get("col_widths", [])
                 for ci, width in enumerate(col_widths, start=1):
                     ws.column_dimensions[get_column_letter(ci)].width = width
-                # Auto-width for columns not covered by col_widths
                 for ci in range(len(col_widths) + 1, col_count + 1):
                     ws.column_dimensions[get_column_letter(ci)].width = 16
 
-                # ── Merge title / subtitle across all used columns ─────────
+                # ── Merge title / subtitle ─────────────────────────────
                 if col_count > 1:
                     ws.merge_cells(
                         start_row=1, start_column=1,
@@ -200,156 +203,48 @@ class XlsxSandbox:
                             end_row=2,   end_column=col_count,
                         )
 
-                # ── Freeze panes ───────────────────────────────────────────
+                # ── Freeze panes ───────────────────────────────────────
                 freeze = sheet_spec.get("freeze_panes", "")
                 if freeze:
                     ws.freeze_panes = freeze
                 elif columns:
                     ws.freeze_panes = f"A{header_row + 1}"
 
-                # ── Charts ─────────────────────────────────────────────────
-                from openpyxl.chart import (
-                    BarChart, LineChart, PieChart, AreaChart, ScatterChart,
-                    Reference,
-                )
+                # ── Charts ─────────────────────────────────────────────
+                self._add_charts(ws, sheet_spec, columns, header_row, data_start, rows_data)
 
-                for chart_spec in sheet_spec.get("charts", []):
-                    chart_type = chart_spec.get("type", "bar_chart")
-                    title = chart_spec.get("title", "")
-                    x_col = chart_spec.get("x_col", 1)
-                    y_cols = chart_spec.get("y_cols", [])
-                    series_labels = chart_spec.get("series_labels", [])
-                    anchor = chart_spec.get("anchor", "G5")
-                    width = chart_spec.get("width", 15)
-                    height = chart_spec.get("height", 10)
+                # ── Conditional formatting ─────────────────────────────
+                self._add_conditional_formats(ws, sheet_spec)
 
-                    chart = None
-                    if chart_type == "bar_chart":
-                        chart = BarChart()
-                    elif chart_type == "line_chart":
-                        chart = LineChart()
-                    elif chart_type == "pie_chart":
-                        chart = PieChart()
-                    elif chart_type == "area_chart":
-                        chart = AreaChart()
-                    elif chart_type == "scatter_chart":
-                        chart = ScatterChart()
-
-                    if chart:
-                        chart.title = title
-                        chart.style = 10
-                        chart.y_axis.title = series_labels[0] if series_labels else ""
-                        chart.x_axis.title = columns[x_col - 1] if x_col <= len(columns) else ""
-
-                        data_end = data_start + len(rows_data) - 1
-
-                        # X axis labels
-                        if x_col >= 1:
-                            chart.set_categories(
-                                Reference(ws, min_col=x_col, min_row=data_start, max_row=data_end)
-                            )
-
-                        # Y series
-                        for series_idx, y_col in enumerate(y_cols):
-                            series = Reference(ws, min_col=y_col, min_row=header_row, max_row=data_end)
-                            chart.append(series)
-                            if series_idx < len(series_labels):
-                                chart.series[series_idx].title = series_labels[series_idx]
-
-                        ws.add_chart(chart, anchor)
-                        chart.width = width
-                        chart.height = height
-
-                # ── Conditional Formatting ─────────────────────────────────
-                from openpyxl.formatting.rule import (
-                    ColorScaleRule, DataBarRule, CellIsRule
-                )
-                from openpyxl.styles import Font, PatternFill
-
-                for cf_spec in sheet_spec.get("conditional_formats", []):
-                    cf_type = cf_spec.get("type")
-                    range_str = cf_spec.get("range", "")
-
-                    if cf_type == "color_scale" and range_str:
-                        colors = cf_spec.get("colors", ["EB2F5C", "FFEB84", "63BE7B"])
-                        ws.conditional_formatting.add(range_str,
-                            ColorScaleRule(
-                                start_type="min", start_color=colors[0],
-                                mid_type="num", mid_value=0, mid_color=colors[1],
-                                end_type="max", end_color=colors[2]
-                            )
-                        )
-
-                    elif cf_type == "data_bars" and range_str:
-                        color = cf_spec.get("color", "FEC00F")
-                        ws.conditional_formatting.add(range_str,
-                            DataBarRule(start_type="min", end_type="max", color=color)
-                        )
-
-                    elif cf_type == "highlight_negatives" and range_str:
-                        ws.conditional_formatting.add(range_str,
-                            CellIsRule(
-                                operator="lessThan", formula=["0"],
-                                font=Font(color="EB2F5C")
-                            )
-                        )
-
-                    elif cf_type == "highlight_positives" and range_str:
-                        ws.conditional_formatting.add(range_str,
-                            CellIsRule(
-                                operator="greaterThan", formula=["0"],
-                                font=Font(color="276221")
-                            )
-                        )
-
-                # ── Excel Table ────────────────────────────────────────────
+                # ── Excel Table ────────────────────────────────────────
                 if sheet_spec.get("as_table", False):
-                    from openpyxl.worksheet.table import Table, TableStyleInfo
-
-                    table_name = sheet_spec.get("table_name", "DataTable")
-                    table = Table(displayName=table_name, ref=f"A{header_row}:{get_column_letter(col_count)}{data_start + len(rows_data) - 1}")
-
-                    style = TableStyleInfo(
-                        name="TableStyleMedium9",
-                        showFirstColumn=False,
-                        showLastColumn=False,
-                        showRowStripes=True,
-                        showColumnStripes=False
+                    self._add_excel_table(
+                        ws, sheet_spec, columns, col_count,
+                        header_row, data_start, rows_data,
+                        get_column_letter,
                     )
-                    table.tableStyleInfo = style
 
-                    # Totals row
-                    totals = sheet_spec.get("totals_row", {})
-                    if totals:
-                        table.showTotals = True
-                        for col_idx, func in totals.items():
-                            col_letter = get_column_letter(int(col_idx))
-                            for tc in table.tableColumns:
-                                if tc.name == columns[int(col_idx) - 1]:
-                                    tc.totalsRowFunction = func
-
-                    ws.add_table(table)
-
-                # ── Page setup for printing ────────────────────────────────
+                # ── Page setup ─────────────────────────────────────────
                 ws.page_setup.orientation = "landscape"
                 ws.page_setup.fitToWidth  = 1
                 ws.page_setup.fitToHeight = 0
-                ws.print_title_rows        = f"1:{header_row}"
+                ws.print_title_rows       = f"1:{header_row}"
 
-            # ── Disclosures sheet ──────────────────────────────────────────
+            # ── Disclosures sheet ──────────────────────────────────────
             if spec.get("include_disclosures", True):
                 disc_text = spec.get("disclosure_text") or (
-                    "IMPORTANT DISCLOSURES: Past performance is not indicative of future results. "
-                    "This material is for informational purposes only and does not constitute "
-                    "investment advice. Potomac | potomac.com | Built to Conquer Risk\u00ae"
+                    "IMPORTANT DISCLOSURES: Past performance is not indicative "
+                    "of future results. This material is for informational purposes "
+                    "only and does not constitute investment advice. "
+                    "Potomac | potomac.com | Built to Conquer Risk\u00ae"
                 )
                 self._add_disclosures_sheet(wb, disc_text)
 
-            # ── Serialize to bytes ─────────────────────────────────────────
+            # ── Serialize ─────────────────────────────────────────────
             buf = io.BytesIO()
             wb.save(buf)
-            data    = buf.getvalue()
-            elapsed = round((time.time() - start) * 1000, 2)
+            data     = buf.getvalue()
+            elapsed  = round((time.time() - start) * 1000, 2)
             filename = spec.get("filename") or f"{doc_title.replace(' ', '_')}.xlsx"
             logger.info(
                 "XlsxSandbox ✓  %s  (%.1f KB, %.0f ms)",
@@ -365,9 +260,9 @@ class XlsxSandbox:
                 exec_time_ms=round((time.time() - start) * 1000, 2),
             )
 
-    # =========================================================================
+    # ------------------------------------------------------------------
     # Styling helpers
-    # =========================================================================
+    # ------------------------------------------------------------------
 
     @staticmethod
     def _yellow_fill() -> "PatternFill":
@@ -397,13 +292,13 @@ class XlsxSandbox:
 
     @staticmethod
     def _header_font(size: int = 11) -> "Font":
-        """Rajdhani Bold — Potomac headline font for column headers and titles."""
+        """Rajdhani Bold — Potomac headline font."""
         from openpyxl.styles import Font
         return Font(name="Rajdhani", bold=True, color=_DARK_GRAY, size=size)
 
     @staticmethod
     def _body_font(size: int = 10) -> "Font":
-        """Quicksand — Potomac body font for data rows and body text."""
+        """Quicksand — Potomac body font."""
         from openpyxl.styles import Font
         return Font(name="Quicksand", color=_DARK_GRAY, size=size)
 
@@ -415,20 +310,18 @@ class XlsxSandbox:
         col_count: int,
     ) -> None:
         """Write the Potomac title block in rows 1-2 (row 3 is spacer)."""
-        from openpyxl.styles import Alignment, Font, PatternFill
+        from openpyxl.styles import Alignment, Font
 
         ws.row_dimensions[1].height = 30
         ws.row_dimensions[2].height = 18
         ws.row_dimensions[3].height = 6   # spacer
 
-        # Row 1: main title — Rajdhani Bold (Potomac headline font, ALL CAPS)
         cell       = ws.cell(row=1, column=1)
         cell.value = title.upper()
         cell.font  = Font(name="Rajdhani", bold=True, size=16, color=_DARK_GRAY)
         cell.fill  = self._yellow_fill()
         cell.alignment = Alignment(horizontal="left", vertical="center", indent=1)
 
-        # Row 2: subtitle (if any) — Quicksand (Potomac body font)
         if subtitle:
             cell2       = ws.cell(row=2, column=1)
             cell2.value = subtitle
@@ -471,21 +364,182 @@ class XlsxSandbox:
         cell.alignment = Alignment(horizontal="left", vertical="center", indent=1)
         ws.row_dimensions[footer_row].height = 14
 
+    # ------------------------------------------------------------------
+    # Chart helper
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _add_charts(
+        ws: Any,
+        sheet_spec: Dict[str, Any],
+        columns: List[str],
+        header_row: int,
+        data_start: int,
+        rows_data: List[Any],
+    ) -> None:
+        from openpyxl.chart import (
+            AreaChart, BarChart, LineChart, PieChart, ScatterChart, Reference,
+        )
+
+        chart_type_map = {
+            "bar_chart":     BarChart,
+            "line_chart":    LineChart,
+            "pie_chart":     PieChart,
+            "area_chart":    AreaChart,
+            "scatter_chart": ScatterChart,
+        }
+
+        for chart_spec in sheet_spec.get("charts", []):
+            ChartClass = chart_type_map.get(chart_spec.get("type", "bar_chart"))
+            if ChartClass is None:
+                continue
+
+            chart = ChartClass()
+            chart.title   = chart_spec.get("title", "")
+            chart.style   = 10
+            series_labels = chart_spec.get("series_labels", [])
+            x_col         = chart_spec.get("x_col", 1)
+            y_cols        = chart_spec.get("y_cols", [])
+            data_end      = data_start + len(rows_data) - 1
+
+            chart.x_axis.title = columns[x_col - 1] if x_col <= len(columns) else ""
+            chart.y_axis.title = series_labels[0] if series_labels else ""
+
+            if x_col >= 1:
+                chart.set_categories(
+                    Reference(ws, min_col=x_col, min_row=data_start, max_row=data_end)
+                )
+
+            for si, y_col in enumerate(y_cols):
+                series = Reference(
+                    ws, min_col=y_col, min_row=header_row, max_row=data_end
+                )
+                chart.append(series)
+                if si < len(series_labels):
+                    chart.series[si].title = series_labels[si]
+
+            anchor = chart_spec.get("anchor", "G5")
+            ws.add_chart(chart, anchor)
+            chart.width  = chart_spec.get("width", 15)
+            chart.height = chart_spec.get("height", 10)
+
+    # ------------------------------------------------------------------
+    # Conditional formatting helper
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _add_conditional_formats(ws: Any, sheet_spec: Dict[str, Any]) -> None:
+        from openpyxl.formatting.rule import CellIsRule, ColorScaleRule, DataBarRule
+        from openpyxl.styles import Font
+
+        for cf in sheet_spec.get("conditional_formats", []):
+            cf_type   = cf.get("type")
+            range_str = cf.get("range", "")
+            if not range_str:
+                continue
+
+            if cf_type == "color_scale":
+                colors = cf.get("colors", ["EB2F5C", "FFEB84", "63BE7B"])
+                ws.conditional_formatting.add(
+                    range_str,
+                    ColorScaleRule(
+                        start_type="min",  start_color=colors[0],
+                        mid_type="num",    mid_value=0, mid_color=colors[1],
+                        end_type="max",    end_color=colors[2],
+                    ),
+                )
+
+            elif cf_type == "data_bars":
+                color = cf.get("color", _YELLOW)
+                ws.conditional_formatting.add(
+                    range_str,
+                    DataBarRule(start_type="min", end_type="max", color=color),
+                )
+
+            elif cf_type == "highlight_negatives":
+                ws.conditional_formatting.add(
+                    range_str,
+                    CellIsRule(
+                        operator="lessThan", formula=["0"],
+                        font=Font(color=_PINK),
+                    ),
+                )
+
+            elif cf_type == "highlight_positives":
+                ws.conditional_formatting.add(
+                    range_str,
+                    CellIsRule(
+                        operator="greaterThan", formula=["0"],
+                        font=Font(color="276221"),
+                    ),
+                )
+
+    # ------------------------------------------------------------------
+    # Excel Table helper
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _add_excel_table(
+        ws: Any,
+        sheet_spec: Dict[str, Any],
+        columns: List[str],
+        col_count: int,
+        header_row: int,
+        data_start: int,
+        rows_data: List[Any],
+        get_column_letter: Any,
+    ) -> None:
+        from openpyxl.worksheet.table import Table, TableStyleInfo
+
+        table_name = sheet_spec.get("table_name", "DataTable")
+        last_col   = get_column_letter(col_count)
+        last_row   = data_start + len(rows_data) - 1
+
+        table = Table(
+            displayName=table_name,
+            ref=f"A{header_row}:{last_col}{last_row}",
+        )
+        table.tableStyleInfo = TableStyleInfo(
+            name="TableStyleMedium9",
+            showFirstColumn=False,
+            showLastColumn=False,
+            showRowStripes=True,
+            showColumnStripes=False,
+        )
+
+        totals = sheet_spec.get("totals_row", {})
+        if totals:
+            table.showTotals = True
+            for col_idx, func in totals.items():
+                target_name = columns[int(col_idx) - 1]
+                for tc in table.tableColumns:
+                    if tc.name == target_name:
+                        tc.totalsRowFunction = func
+
+        ws.add_table(table)
+
+    # ------------------------------------------------------------------
+    # Disclosures sheet
+    # ------------------------------------------------------------------
+
     @staticmethod
     def _add_disclosures_sheet(wb: Any, text: str) -> None:
         from openpyxl.styles import Alignment, Font, PatternFill
+
         ws = wb.create_sheet("DISCLOSURES")
         ws.sheet_properties.tabColor = _DARK_GRAY
 
-        ws.row_dimensions[1].height = 24
-        ws.row_dimensions[2].height = 60
+        ws.row_dimensions[1].height  = 24
+        ws.row_dimensions[2].height  = 60
         ws.column_dimensions["A"].width = 120
 
         title_cell       = ws.cell(row=1, column=1)
         title_cell.value = "DISCLOSURES"
         title_cell.font  = Font(name="Rajdhani", bold=True, size=14, color=_DARK_GRAY)
         title_cell.fill  = PatternFill("solid", fgColor=_YELLOW)
-        title_cell.alignment = Alignment(horizontal="left", vertical="center", indent=1)
+        title_cell.alignment = Alignment(
+            horizontal="left", vertical="center", indent=1
+        )
 
         body_cell       = ws.cell(row=2, column=1)
         body_cell.value = text
