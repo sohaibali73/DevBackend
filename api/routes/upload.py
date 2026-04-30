@@ -186,6 +186,18 @@ def _background_extract_and_update(file_id: str, storage_path: str) -> None:
                 "processed_at": datetime.now(timezone.utc).isoformat(),
             }).eq("id", file_id).execute()
             logger.info(f"Background extraction done for file {file_id}: {len(text)} chars")
+
+            # ── Index into file_chunks for "Chat with Documents" RAG ────────
+            try:
+                from core.file_rag import index_file_chunks
+                stats = index_file_chunks(db, file_id, text)
+                logger.info(
+                    f"RAG-indexed file {file_id}: "
+                    f"{stats.get('chunks_created', 0)} chunks, "
+                    f"{stats.get('embeddings_generated', 0)} embeddings"
+                )
+            except Exception as rag_err:
+                logger.warning(f"file_chunks indexing failed for {file_id}: {rag_err}")
         else:
             logger.warning(f"Background extraction yielded no text for file {file_id}")
     except Exception as e:
@@ -644,6 +656,80 @@ async def link_file_to_conversation(
         if "unique" in str(e).lower() or "duplicate" in str(e).lower():
             return {"status": "already_linked", "file_id": file_id, "conversation_id": conversation_id}
         raise HTTPException(status_code=500, detail=f"Failed to link file: {e}")
+
+
+# ============================================================================
+# CHAT-WITH-DOCUMENTS — Debug RAG retrieval
+# ============================================================================
+
+@router.get("/files/{file_id}/chunks")
+async def list_file_chunks(
+    file_id: str,
+    limit: int = 50,
+    user_id: str = Depends(get_current_user_id),
+):
+    """Inspect indexed chunks for a file (debugging RAG quality)."""
+    db = get_supabase()
+    fu = db.table("file_uploads").select("id").eq("id", file_id).eq(
+        "user_id", user_id
+    ).limit(1).execute()
+    if not fu.data:
+        raise HTTPException(status_code=404, detail="File not found.")
+    try:
+        res = db.table("file_chunks").select(
+            "id, chunk_index, content, created_at"
+        ).eq("file_id", file_id).order("chunk_index").limit(limit).execute()
+        return {
+            "file_id": file_id,
+            "total": len(res.data or []),
+            "chunks": [
+                {
+                    "id": c["id"],
+                    "chunk_index": c["chunk_index"],
+                    "content_preview": (c["content"] or "")[:300],
+                    "content_length": len(c["content"] or ""),
+                }
+                for c in (res.data or [])
+            ],
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Could not list chunks: {e}")
+
+
+@router.post("/files/{file_id}/reindex")
+async def reindex_file(
+    file_id: str,
+    user_id: str = Depends(get_current_user_id),
+):
+    """
+    Re-index a previously uploaded file into the file_chunks table.
+    Useful for files uploaded before "Chat with Documents" was deployed.
+    """
+    db = get_supabase()
+    fu = db.table("file_uploads").select("*").eq("id", file_id).eq(
+        "user_id", user_id
+    ).limit(1).execute()
+    if not fu.data:
+        raise HTTPException(status_code=404, detail="File not found.")
+    row = fu.data[0]
+
+    text = row.get("extracted_text") or _extract_text(row["storage_path"])
+    if not text or not text.strip():
+        raise HTTPException(status_code=400, detail="No extractable text for this file.")
+
+    if not row.get("extracted_text"):
+        db.table("file_uploads").update({
+            "extracted_text": text,
+            "status": "ready",
+            "processed_at": datetime.now(timezone.utc).isoformat(),
+        }).eq("id", file_id).execute()
+
+    try:
+        from core.file_rag import index_file_chunks
+        stats = index_file_chunks(db, file_id, text)
+        return {"file_id": file_id, **stats}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Indexing failed: {e}")
 
 
 # ============================================================================

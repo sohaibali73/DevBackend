@@ -711,6 +711,22 @@ async def _fetch_kb_context(db, user_content: str) -> str:
     return ""
 
 
+async def _fetch_doc_rag_context(db, conversation_id: Optional[str], user_content: str) -> str:
+    """
+    "Chat with Documents" — retrieve top-k semantically similar chunks from
+    files attached to this conversation and return a system-prompt block.
+    Safe no-op if the file_chunks table or RPC is missing.
+    """
+    if not conversation_id or not user_content:
+        return ""
+    try:
+        from core.file_rag import fetch_retrieved_doc_context
+        return fetch_retrieved_doc_context(db, conversation_id, user_content, top_k=8)
+    except Exception as e:
+        logger.debug(f"_fetch_doc_rag_context failed (non-fatal): {e}")
+        return ""
+
+
 async def _fetch_kb_doc_refs(db, user_content: str) -> str:
     """Extract [kb-doc: filename] refs and inject full content from brain_documents."""
     try:
@@ -1091,6 +1107,7 @@ async def chat_agent(
     file_context = await _fetch_file_context(db, conversation_id)
     kb_context = await _fetch_kb_context(db, data.content)
     kb_doc_context = await _fetch_kb_doc_refs(db, data.content)
+    doc_rag_context = await _fetch_doc_rag_context(db, conversation_id, data.content)
 
     # Collect conversation file_ids so execute_python can inject them into
     # the sandbox as `_files["name.ext"]` / `_images["name.png"]`. Prevents
@@ -1161,7 +1178,7 @@ async def chat_agent(
             # Build system prompt with optional caching markers
             system_prompt_base = (
                 f"{get_base_prompt()}\n\n{get_chat_prompt()}"
-                f"{file_context}{kb_context}{kb_doc_context}"
+                f"{file_context}{kb_context}{kb_doc_context}{doc_rag_context}"
             )
 
             # Force-invoke a specific skill if the user pinned one from the UI
@@ -2269,12 +2286,13 @@ async def _chat_generic_endpoint(
 
     file_context = await _fetch_file_context(db, conversation_id)
     kb_context = await _fetch_kb_context(db, data.content)
+    doc_rag_context = await _fetch_doc_rag_context(db, conversation_id, data.content)
 
     # Build system prompt
     system_prompt = (
         f"You are an expert AI assistant for financial analysis and trading. "
         f"Provide accurate, helpful responses. Use tools when appropriate."
-        f"{file_context}{kb_context}"
+        f"{file_context}{kb_context}{doc_rag_context}"
     )
 
     # Get tools for this provider
