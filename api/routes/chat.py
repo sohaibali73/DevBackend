@@ -2270,6 +2270,7 @@ async def _chat_generic_endpoint(
                             args=tool_args,
                             supabase_client=db,
                             api_key=api_keys.get("claude", ""),
+                            conversation_id=conversation_id,
                         )
                     except Exception as tool_error:
                         result = json.dumps({"error": str(tool_error)})

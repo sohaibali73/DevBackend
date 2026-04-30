@@ -162,6 +162,7 @@ class ToolRegistry:
         args: Dict[str, Any],
         supabase_client=None,
         api_key: str = None,
+        conversation_id: Optional[str] = None,
     ) -> str:
         """
         Dispatch a tool call and return a JSON string.
@@ -170,6 +171,12 @@ class ToolRegistry:
           1. Custom handlers registered via register_tool() — checked first.
              Supports both sync and async callables.
           2. Fallback to core/tools.py handle_tool_call for built-in tools.
+
+        ``conversation_id`` is forwarded to the legacy dispatcher so tools
+        like ``execute_python`` can persist their session namespace across
+        successive calls within the same conversation (otherwise the model
+        sees a NameError on functions/imports defined in a previous turn
+        and reports "Sandbox state was reset").
         """
         import inspect as _inspect
         self._ensure_initialized()
@@ -188,6 +195,7 @@ class ToolRegistry:
                 tool_input=args,
                 supabase_client=supabase_client,
                 api_key=api_key,
+                conversation_id=conversation_id,
             )
 
         return json.dumps({"error": f"Unknown tool: {name}"})

@@ -1026,9 +1026,43 @@ class PythonSandbox(BaseSandbox):
         #
         # We still seed it with exec_globals (math, np, pd, HTML, _files, etc.)
         # and merge the persisted/context/injected locals on top.
-        run_ns: Dict[str, Any] = dict(exec_globals)
-        for _k, _v in local_vars.items():
-            run_ns[_k] = _v
+        #
+        # IN-PROC NAMESPACE PRESERVATION (fix for "Sandbox state was reset"):
+        # When the caller passes an in-process persisted_namespace tagged with
+        # the "__inproc__" sentinel, we keep the EXACT same `run_ns` dict alive
+        # across successive execute_python() calls in the same conversation.
+        # That means user-defined functions, classes, and imported modules
+        # survive between turns — their __globals__ continue to resolve names
+        # because they reference the same dict object we'll reuse next call.
+        # Without this, every `def shift(...)` or `import yfinance` from the
+        # previous turn vanishes and the model sees a NameError ("Sandbox
+        # state was reset"), prompting it to bundle everything into one cell.
+        _inproc = (
+            isinstance(persisted_namespace, dict)
+            and persisted_namespace.get("__inproc__")
+        )
+        _stashed_run_ns = (
+            persisted_namespace.get("__run_ns__") if _inproc else None
+        )
+        if _inproc and isinstance(_stashed_run_ns, dict):
+            # Reuse prior run_ns; refresh per-execution helpers (print, open,
+            # __import__, plt wrapper, sandbox dir, _files/_images, display).
+            run_ns = _stashed_run_ns
+            run_ns["__builtins__"] = exec_globals["__builtins__"]
+            run_ns["__sandbox_dir__"] = str(sandbox_dir)
+            run_ns["display"] = display
+            run_ns["HTML"] = HTML
+            run_ns["SVG"] = SVG
+            run_ns["JSON"] = JSON
+            if plt_wrapper is not None:
+                run_ns["plt"] = plt_wrapper
+            # Inject any new context vars / files for this turn
+            for _k, _v in local_vars.items():
+                run_ns[_k] = _v
+        else:
+            run_ns = dict(exec_globals)
+            for _k, _v in local_vars.items():
+                run_ns[_k] = _v
         try:
             exec(code, run_ns)  # noqa: S102
             # After execution, mirror any newly-created top-level names back
@@ -1105,19 +1139,14 @@ class PythonSandbox(BaseSandbox):
             # caller's dict directly and return an empty serialized blob
             # (the caller already has everything it needs in-memory).
             if isinstance(persisted_namespace, dict) and persisted_namespace.get("__inproc__"):
-                # Reuse the same dict object the caller passed in.
+                # Stash a reference to the EXACT run_ns dict that exec() used
+                # so the next call in this conversation can reuse it. Keeping
+                # the same dict alive means user-defined functions / classes
+                # / imported modules from this turn continue to work next
+                # turn (their __globals__ point at this same dict).
                 persisted_namespace.clear()
                 persisted_namespace["__inproc__"] = True
-                for _k, _v in local_vars.items():
-                    if _k.startswith("_"):
-                        continue
-                    if callable(_v):
-                        continue
-                    # Skip modules — they'll be re-imported next call anyway
-                    import types as _types
-                    if isinstance(_v, _types.ModuleType):
-                        continue
-                    persisted_namespace[_k] = _v
+                persisted_namespace["__run_ns__"] = run_ns
                 new_namespace = {}  # nothing to persist via DB path
             else:
                 new_namespace = _serialize_namespace(local_vars)
