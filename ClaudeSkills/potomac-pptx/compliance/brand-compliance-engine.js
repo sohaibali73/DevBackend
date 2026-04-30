@@ -234,8 +234,8 @@ class PotomacBrandComplianceEngine {
     });
     
     // Validate tagline usage
-    const taglineRegex = /built to conquer risk/gi;
-    const taglineMatches = allText.match(taglineRegex);
+    const taglineRegex = /__disabled_tagline__/gi;
+    const taglineMatches = null;
     if (taglineMatches) {
       taglineMatches.forEach(match => {
         if (!match.includes('®')) {
@@ -396,10 +396,9 @@ class PotomacBrandComplianceEngine {
   }
 
   validateTaglineUsage(tagline) {
-    if (tagline.toLowerCase().includes('built to conquer risk') && !tagline.includes('®')) {
-      this.addViolation('TAGLINE_VIOLATION', 
-        'Tagline "Built to Conquer Risk" missing registered trademark symbol (®)', 
-        'Presentation Structure');
+    // Tagline validation disabled — no enforced tagline.
+    if (false) {
+      this.addViolation('TAGLINE_VIOLATION', '', 'Presentation Structure');
     }
   }
 

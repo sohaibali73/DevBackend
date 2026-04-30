@@ -1,4 +1,4 @@
-/**
+﻿/**
  * Potomac Document Helpers — shared utilities for all 17 templates
  * Use these in every document generation script.
  *
@@ -76,7 +76,7 @@ function stdHeader(logoBuffer, lineColor = YELLOW) {
 }
 
 // ── Footer with page numbers ──────────────────────────────────────────────────
-function stdFooter(leftText = 'Potomac  |  Built to Conquer Risk\u00AE') {
+function stdFooter(leftText = 'Potomac  |  \u00AE') {
   return new Footer({ children:[
     new Paragraph({
       border:{ top:{ style:BorderStyle.SINGLE, size:3, color:MID_GRAY, space:4 } },

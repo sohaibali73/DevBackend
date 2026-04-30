@@ -1,4 +1,4 @@
-/**
+﻿/**
  * Potomac Integrated Asset System - Phase 3 Complete
  * Combines dynamic tables, visual elements, and templates into unified system
  * 
@@ -300,7 +300,7 @@ class PotomacIntegratedAssets {
       return this.templates.createTwoColumnSlide(
         slideData.title,
         slideData.leftContent || slideData.content,
-        slideData.rightContent || 'Strategy Benefits:\n\n• Risk-adjusted returns\n• Systematic approach\n• Proven methodology\n• Built to Conquer Risk®'
+        slideData.rightContent || 'Strategy Benefits:\n\n• Risk-adjusted returns\n• Systematic approach\n• Proven methodology\n• '
       );
     }
     
@@ -395,7 +395,7 @@ class PotomacAssetIntegratedBuilder {
     this.pres = new pptxgen();
     this.options = {
       title: options.title || 'POTOMAC PRESENTATION',
-      subtitle: options.subtitle || 'Built to Conquer Risk®',
+      subtitle: options.subtitle || '',
       author: 'Potomac',
       company: 'Potomac',
       palette: options.palette || 'STANDARD',

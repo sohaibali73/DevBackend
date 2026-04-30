@@ -1,4 +1,4 @@
-#!/usr/bin/env node
+﻿#!/usr/bin/env node
 
 /**
  * Phase 3 Asset Integration Test
@@ -144,7 +144,7 @@ async function testPhase3Assets() {
       role: 'cta',
       isClosing: true,
       actionText: 'All Adobe Illustrator assets successfully converted to native PowerPoint elements with dynamic data binding capability.',
-      contactInfo: 'potomac.com | Built to Conquer Risk®'
+      contactInfo: 'potomac.com | '
     });
     
     // Save test presentation

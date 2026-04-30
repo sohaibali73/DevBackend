@@ -1,4 +1,4 @@
-/**
+﻿/**
  * Potomac Presentation Builder
  *
  * All slide geometry is derived from SLIDE_W and SLIDE_H at runtime —
@@ -147,7 +147,7 @@ class SlideRenderer {
 
   // ── Shared footer ─────────────────────────────────────────────────────────
 
-  _footer(slide, text = "potomac.com  |  Built to Conquer Risk®", dark = false) {
+  _footer(slide, text = "potomac.com", dark = false) {
     const fh   = this.H * 0.048;
     const fy   = this.H - fh - this.H * 0.018;
     const col  = dark ? "AAAAAA" : PALETTE.midGray;
@@ -259,7 +259,7 @@ class SlideRenderer {
       });
     }
 
-    this._footer(slide, "potomac.com  |  Built to Conquer Risk®", true);
+    this._footer(slide, "potomac.com  ", true);
     return slide;
   }
 
@@ -313,7 +313,7 @@ class SlideRenderer {
       });
     }
 
-    this._footer(slide, "potomac.com  |  Built to Conquer Risk®", true);
+    this._footer(slide, "potomac.com  ", true);
     return slide;
   }
 
@@ -771,7 +771,7 @@ class SlideRenderer {
       });
     }
 
-    this._footer(slide, "potomac.com  |  Built to Conquer Risk®", true);
+    this._footer(slide, "potomac.com  ", true);
     return slide;
   }
 
@@ -1288,7 +1288,7 @@ class PotomacPresentationBuilder {
     this.pres    = new pptxgen();
     this.options = {
       title:     options.title     || "POTOMAC PRESENTATION",
-      subtitle:  options.subtitle  || "Built to Conquer Risk\u00ae",
+      subtitle:  options.subtitle  || "",
       author:    options.author    || "Potomac",
       company:   options.company   || "Potomac",
       layout:    options.layout    || "LAYOUT_WIDE",
@@ -1408,7 +1408,7 @@ class PotomacPresentationBuilder {
   generateClientPitch(data = {}) {
     this.addSlide({ role: "title", isFirst: true,
       title:    data.title    || "Potomac Investment Solutions",
-      subtitle: data.subtitle || "Your Partner in Conquering Risk",
+      subtitle: data.subtitle || "Your Investment Partner",
     });
 
     this.addSlide({ title: "Our Proven Approach", type: "process",
@@ -1478,7 +1478,7 @@ class PotomacPresentationBuilder {
       ] });
 
     this.addSlide({ role: "cta", isClosing: true,
-      title:       "Built to Conquer Risk\u00ae",
+      title:       "Get In Touch",
       actionText:  data.ctaText    || "Contact us to learn how our strategies can help navigate these markets.",
       contactInfo: data.contactInfo || "potomac.com  |  (305) 824-2702  |  info@potomac.com",
     });

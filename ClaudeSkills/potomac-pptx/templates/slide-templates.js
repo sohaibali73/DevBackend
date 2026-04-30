@@ -355,7 +355,7 @@ class PotomacSlideTemplates {
   /**
    * Executive Title Slide — dark background, white title, yellow tagline.
    */
-  createExecutiveTitleSlide(title, subtitle = null, tagline = 'Built to Conquer Risk\u00AE') {
+  createExecutiveTitleSlide(title, subtitle = null, tagline = null) {
     const { cv } = this;
     const slide  = this.pptx.addSlide();
     slide.background = { color: _c(C.PRIMARY.DARK_GRAY) };
@@ -391,11 +391,13 @@ class PotomacSlideTemplates {
       line: { color: _c(C.PRIMARY.YELLOW), width: 0 },
     });
 
-    slide.addText(tagline, {
-      x: cv.CX, y: accentY + accentH + cv.H * 0.013, w: cv.CW, h: cv.H * 0.08,
-      fontFace: F.BODY.family, fontSize: Math.round(cv.W * 1.35),
-      color: _c(C.PRIMARY.YELLOW), align: 'center', valign: 'middle', italic: true,
-    });
+    if (tagline) {
+      slide.addText(tagline, {
+        x: cv.CX, y: accentY + accentH + cv.H * 0.013, w: cv.CW, h: cv.H * 0.08,
+        fontFace: F.BODY.family, fontSize: Math.round(cv.W * 1.35),
+        color: _c(C.PRIMARY.YELLOW), align: 'center', valign: 'middle', italic: true,
+      });
+    }
 
     return slide;
   }
@@ -849,12 +851,6 @@ class PotomacSlideTemplates {
       x: cv.CX, y: cv.H * 0.373, w: cv.CW, h: cv.H * 0.133,
       fontFace: F.HEADERS.family, fontSize: Math.round(cv.W * 3.0),
       bold: true, color: _c(C.PRIMARY.DARK_GRAY), align: 'center',
-    });
-
-    slide.addText('Built to Conquer Risk\u00AE', {
-      x: cv.CX, y: cv.H * 0.533, w: cv.CW, h: cv.H * 0.08,
-      fontFace: F.BODY.family, fontSize: Math.round(cv.W * 1.35),
-      color: _c(this.palette.accent), align: 'center', italic: true,
     });
 
     slide.addText(contactInfo || DEFAULT_CONTACT_INFO, {

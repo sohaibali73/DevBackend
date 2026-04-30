@@ -1,4 +1,4 @@
-"""
+﻿"""
 PPTX Sandbox v2 — Mega Showcase
 ================================
 Builds a single huge .pptx that exercises:
@@ -44,7 +44,7 @@ def theme_showcase(theme: str) -> list:
     return [
         {"mode": "template", "template": "title",
          "data": {"title": f"THEME — {theme.upper()}", "subtitle": "Showcase deck",
-                  "tagline": "Built to Conquer Risk", "style": "executive",
+                  "style": "executive",
                   "theme": theme}},
         {"mode": "template", "template": "title_card",
          "data": {"title": "INVESTMENT STRATEGIES", "title_accent": "AND SOLUTIONS",
@@ -456,7 +456,7 @@ def main() -> int:
         "mode": "template", "template": "title",
         "data": {"title": "POTOMAC MEGA SHOWCASE",
                  "subtitle": "Every template × every theme, in one deck",
-                 "tagline": "Built to Conquer Risk", "style": "executive"},
+                 "style": "executive"},
     })
 
     # 10 themes × ~40 templates ≈ 400 slides

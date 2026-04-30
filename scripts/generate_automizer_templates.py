@@ -1,4 +1,4 @@
-"""
+﻿"""
 generate_automizer_templates.py
 ================================
 Generates Potomac-branded .pptx template files for the generate_pptx_template
@@ -274,7 +274,7 @@ def build_content_slides():
 
     txbox(slide, "TaglineText",
           Inches(0.5), Inches(6.0), Inches(9), Inches(0.5),
-          text="Built to Conquer Risk\u00AE",
+          text="",
           font=FONT_B, size=15, color=YELLOW, align=PP_ALIGN.CENTER)
 
     # ── Slide 2: Content ──────────────────────────────────────────────────────
@@ -676,7 +676,7 @@ def build_fund_fact_sheet():
          Inches(0.35), Inches(7.1), Inches(9.5), Inches(0.05), fill=YELLOW)
     txbox(slide, "FooterText",
           Inches(0.35), Inches(7.18), Inches(9.5), Inches(0.3),
-          text="Potomac Fund Management | Built to Conquer Risk\u00AE | For Advisor Use Only | "
+          text="Potomac Fund Management |  | For Advisor Use Only | "
                "Past performance is not indicative of future results.",
           font=FONT_B, size=7, color=GRAY_60, align=PP_ALIGN.CENTER)
 

@@ -111,7 +111,7 @@ function makeHeader() {
 
 // ── Footer with page numbers ───────────────────────────────────────────────
 function makeFooter() {
-  const leftText = spec.footer_text || 'Potomac  |  Built to Conquer Risk\u00AE';
+  const leftText = spec.footer_text || 'Potomac';
   return new Footer({ children: [
     new Paragraph({
       border   : { top: { style: BorderStyle.SINGLE, size: 3, color: MID_GRAY, space: 4 } },
@@ -128,14 +128,9 @@ function makeFooter() {
 // ── Title page block ──────────────────────────────────────────────────────
 function buildTitlePage() {
   const items = [];
-  const logo  = getLogo();
-  if (logo) {
-    items.push(new Paragraph({
-      alignment : AlignmentType.LEFT,
-      children  : [new ImageRun({ data: logo, transformation: { width: 200, height: 41 }, type: 'png' })],
-      spacing   : { after: 480 }
-    }));
-  }
+  // Note: page header already renders the Potomac logo on every page,
+  // so we deliberately do NOT add another logo here (avoids duplicate logos
+  // appearing at the top of the first page).
   if (spec.title) {
     items.push(new Paragraph({ heading: HeadingLevel.HEADING_1, children: [new TextRun(spec.title)] }));
   }

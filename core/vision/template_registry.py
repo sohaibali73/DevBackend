@@ -104,7 +104,6 @@ _BUILTIN_TEMPLATES: List[Dict[str, Any]] = [
             "type": "title",
             "title": "PRESENTATION TITLE",
             "subtitle": "Subtitle or Presenter Name",
-            "tagline": "Built to Conquer Risk®",
             "style": "executive",
         },
     },

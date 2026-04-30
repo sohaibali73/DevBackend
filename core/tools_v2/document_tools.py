@@ -797,7 +797,7 @@ GENERATE_XLSX_TOOL_DEF: Dict[str, Any] = {
                         },
                         "footer_text": {
                             "type": "string",
-                            "description": "Custom footer text. Default: 'Potomac | Built to Conquer Risk® | For Advisor Use Only'.",
+                            "description": "Custom footer text. Default: 'Potomac | For Advisor Use Only'.",
                         },
                         "freeze_panes": {
                             "type": "string",

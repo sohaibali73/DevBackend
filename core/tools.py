@@ -1364,7 +1364,7 @@ TOOL_DEFINITIONS = [
                 },
                 "footer_text": {
                     "type": "string",
-                    "description": "Custom footer left text. Default: 'Potomac  |  Built to Conquer Risk®'.",
+                    "description": "Custom footer left text. Default: 'Potomac'.",
                 },
                 "sections": {
                     "type": "array",
@@ -1790,7 +1790,7 @@ TOOL_DEFINITIONS = [
                                 "items": {"type": "object"},
                             },
                             "include_footer": {"type": "boolean", "default": True, "description": "Add Potomac footer row below data."},
-                            "footer_text":    {"type": "string", "description": "Custom footer. Default: 'Potomac | Built to Conquer Risk®'."},
+                            "footer_text":    {"type": "string", "description": "Custom footer. Default: 'Potomac'."},
                             "freeze_panes":   {"type": "string", "description": "Cell to freeze at e.g. 'A5'. Defaults to row below headers."},
                         },
                         "required": ["name", "columns", "rows"],

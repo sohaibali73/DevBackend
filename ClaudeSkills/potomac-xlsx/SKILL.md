@@ -1,4 +1,4 @@
----
+﻿---
 name: potomac-xlsx
 description: >
   Create, read, edit, and modify Potomac-branded Excel spreadsheets (.xlsx files) for any
@@ -12,7 +12,7 @@ description: >
 
 # Potomac Excel Skill
 
-Create, read, edit, and format Potomac-branded Excel files. Potomac is a **tactical fund manager** — "Built to Conquer Risk®".
+Create, read, edit, and format Potomac-branded Excel files. Potomac is a **tactical fund manager** — "".
 
 ---
 
@@ -163,7 +163,7 @@ def style_data_rows(sheet, start_row, end_row, col_count):
 ```python
 def write_footer(sheet, footer_row, col_count, text=None):
     if text is None:
-        text = "Potomac | Built to Conquer Risk® | For Advisor Use Only"
+        text = "Potomac |  | For Advisor Use Only"
     sheet.merge_cells(
         start_row=footer_row, start_column=1,
         end_row=footer_row, end_column=col_count
@@ -447,7 +447,7 @@ Every Potomac spreadsheet distributed externally must include a disclosure tab o
 DISCLOSURE_TEXT = (
     "IMPORTANT DISCLOSURES: Past performance is not indicative of future results. "
     "This material is for informational purposes only and does not constitute investment advice. "
-    "Potomac | potomac.com | Built to Conquer Risk®"
+    "Potomac | potomac.com | "
 )
 ```
 
@@ -487,7 +487,7 @@ sheet.page_margins = PageMargins(
 
 # Header/Footer text (printed)
 sheet.oddHeader.center.text = "POTOMAC | &[Tab]"
-sheet.oddFooter.left.text = "Built to Conquer Risk®"
+sheet.oddFooter.left.text = ""
 sheet.oddFooter.right.text = "Page &[Page] of &[Pages]"
 sheet.oddFooter.center.text = "CONFIDENTIAL"
 ```

@@ -179,7 +179,7 @@ class XlsxSandbox:
                 if sheet_spec.get("include_footer", True):
                     footer_row  = data_start + len(rows_data) + 1
                     footer_text = sheet_spec.get("footer_text") or (
-                        "Potomac  |  Built to Conquer Risk\u00ae"
+                        "Potomac"
                         "  |  For Advisor Use Only"
                     )
                     self._write_footer(ws, footer_row, col_count, footer_text)
@@ -236,7 +236,7 @@ class XlsxSandbox:
                     "IMPORTANT DISCLOSURES: Past performance is not indicative "
                     "of future results. This material is for informational purposes "
                     "only and does not constitute investment advice. "
-                    "Potomac | potomac.com | Built to Conquer Risk\u00ae"
+                    "Potomac | potomac.com"
                 )
                 self._add_disclosures_sheet(wb, disc_text)
 

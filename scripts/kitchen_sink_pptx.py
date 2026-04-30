@@ -1,4 +1,4 @@
-"""
+﻿"""
 PPTX Sandbox v2 — Kitchen Sink
 ==============================
 Generates a comprehensive test deck exercising every template, every slide
@@ -33,7 +33,6 @@ SLIDES = [
         "data": {
             "title":    "POTOMAC KITCHEN SINK",
             "subtitle": "Every template, theme & mode in one deck",
-            "tagline":  "Built to Conquer Risk",
             "style":    "executive",
         },
     },

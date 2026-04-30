@@ -1,4 +1,4 @@
-#!/usr/bin/env node
+﻿#!/usr/bin/env node
 
 /**
  * Potomac Presentation Generator - Phase 1
@@ -19,7 +19,7 @@ class PotomacPresentationGenerator {
     this.pres = new pptxgen();
     this.options = {
       title: options.title || 'POTOMAC PRESENTATION',
-      subtitle: options.subtitle || 'Built to Conquer Risk®',
+      subtitle: options.subtitle || '',
       author: 'Potomac',
       company: 'Potomac',
       palette: options.palette || 'STANDARD',
@@ -293,7 +293,7 @@ class PotomacPresentationGenerator {
     });
     
     // Add tagline
-    slide.addText('Built to Conquer Risk®', {
+    slide.addText('', {
       x: 0.6667,
       y: 5.3333,
       w: 12.0,
@@ -393,7 +393,7 @@ class PotomacPresentationGenerator {
     this.createTwoColumnSlide(
       'MARKET OUTLOOK',
       'Current Environment:\n\n• Elevated volatility persists\n• Interest rate uncertainty\n• Geopolitical tensions\n• Inflation concerns remain',
-      'Our Response:\n\n• Dynamic asset allocation\n• Risk-managed strategies\n• Diversified approach\n• Built to Conquer Risk®'
+      'Our Response:\n\n• Dynamic asset allocation\n• Risk-managed strategies\n• Diversified approach\n• '
     );
     
     this.createContentSlide('POTOMAC ADVANTAGE', [
@@ -475,7 +475,7 @@ function parseArgs() {
   const args = process.argv.slice(2);
   const options = {
     title: 'POTOMAC PRESENTATION',
-    subtitle: 'Built to Conquer Risk®',
+    subtitle: '',
     slides: 5,
     output: 'potomac-sample-presentation.pptx',
     palette: 'STANDARD'
@@ -509,7 +509,7 @@ Usage: node generate-potomac-presentation.js [options]
 
 Options:
   --title <title>     Presentation title (default: "POTOMAC PRESENTATION")
-  --subtitle <sub>    Presentation subtitle (default: "Built to Conquer Risk®")
+  --subtitle <sub>    Presentation subtitle (default: "")
   --slides <number>   Number of slides (default: 5)
   --output <filename> Output filename (default: "potomac-sample-presentation.pptx")
   --palette <palette> Color palette: STANDARD, DARK, INVESTMENT, FUNDS (default: STANDARD)

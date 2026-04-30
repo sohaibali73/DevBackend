@@ -89,7 +89,7 @@ function buildTemplates(ctx) {
     });
 
     // Tagline
-    const tagline = d.tagline || (d.style === 'executive' ? 'Built to Conquer Risk' : null);
+    const tagline = d.tagline || null;
     if (tagline) {
       const tagBox = s.place(engine.H * 0.06);
       prim.text(slide, tagline, tagBox, {
@@ -612,7 +612,7 @@ function buildTemplates(ctx) {
 
     // Title line 1 (dark / white)
     const title1Box = s.place(inner.h * 0.15);
-    prim.text(slide, String(d.title_top || 'BUILT TO').toUpperCase(), title1Box, {
+    prim.text(slide, String(d.title_top || 'READY TO').toUpperCase(), title1Box, {
       fontFace: FONTS.HEADLINE, bold: true,
       color: theme === 'dark' ? PALETTE.WHITE : PALETTE.DARK_GRAY,
       align: 'center', valign: 'middle', maxPt: 60, minPt: 24,
@@ -620,7 +620,7 @@ function buildTemplates(ctx) {
 
     // Title line 2 (yellow)
     const title2Box = s.place(inner.h * 0.20);
-    prim.text(slide, String(d.title_bottom || 'CONQUER RISK').toUpperCase(), title2Box, {
+    prim.text(slide, String(d.title_bottom || 'GET STARTED').toUpperCase(), title2Box, {
       fontFace: FONTS.HEADLINE, bold: true, color: PALETTE.YELLOW,
       align: 'center', valign: 'middle', maxPt: 72, minPt: 30,
     });
