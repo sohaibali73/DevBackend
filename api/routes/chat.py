@@ -227,6 +227,84 @@ def sanitize_message_history(messages: list) -> list:
     return sanitized
 
 
+# ---------------------------------------------------------------------------
+# Tool-result slimming for context preservation
+# ---------------------------------------------------------------------------
+# execute_python returns full base64 PNG/file blobs in artifacts[].data.
+# Re-feeding those blobs to Claude on every subsequent turn explodes the
+# context window (real-world: 1.08M tokens > 1.0M limit after ~10 charts).
+# The frontend already gets the full payload via encode_file_download /
+# tool-result events, so Claude only needs metadata to reason about it.
+_HEAVY_ARTIFACT_DISPLAY_TYPES = {"image", "plotly", "html", "react", "file"}
+_MAX_INLINE_TEXT_BYTES = 8_000   # truncate huge stdout / text payloads
+
+
+def _slim_tool_result_for_claude(raw_content: str) -> str:
+    """
+    Take a tool-result JSON string and return a slimmer version safe to
+    feed back into Claude's context.
+
+    - Strips ``data`` fields from heavy artifacts (image/plotly/html/file)
+      and replaces them with a tiny placeholder describing the artifact.
+    - Truncates very long ``output`` / ``stdout`` blobs.
+    - Leaves small text artifacts alone.
+    - Best-effort: any error returns the original content unchanged.
+    """
+    try:
+        parsed = json.loads(raw_content) if isinstance(raw_content, str) else raw_content
+    except Exception:
+        return raw_content
+    if not isinstance(parsed, dict):
+        return raw_content
+
+    artifacts = parsed.get("artifacts")
+    if isinstance(artifacts, list):
+        new_artifacts = []
+        for a in artifacts:
+            if not isinstance(a, dict):
+                new_artifacts.append(a)
+                continue
+            d_type = a.get("display_type") or ""
+            data = a.get("data")
+            # Drop heavy data payloads
+            if d_type in _HEAVY_ARTIFACT_DISPLAY_TYPES and isinstance(data, str) and len(data) > 500:
+                meta = a.get("metadata") or {}
+                slim: Dict = {
+                    "artifact_id":  a.get("artifact_id"),
+                    "display_type": d_type,
+                    "type":         a.get("type"),
+                    "summary": (
+                        f"[{d_type} artifact omitted from context to save tokens — "
+                        f"already streamed to UI]"
+                    ),
+                }
+                if isinstance(meta, dict):
+                    # Keep tiny metadata fields useful for reasoning (filename, size, etc.)
+                    slim["metadata"] = {
+                        k: v for k, v in meta.items()
+                        if k in ("filename", "size_bytes", "extension",
+                                 "format", "source", "downloadable",
+                                 "file_id", "download_url")
+                    }
+                new_artifacts.append(slim)
+            else:
+                new_artifacts.append(a)
+        parsed["artifacts"] = new_artifacts
+
+    # Truncate very long stdout / output strings
+    for fld in ("output", "stdout", "traceback"):
+        v = parsed.get(fld)
+        if isinstance(v, str) and len(v) > _MAX_INLINE_TEXT_BYTES:
+            parsed[fld] = v[:_MAX_INLINE_TEXT_BYTES] + (
+                f"\n... [truncated {len(v) - _MAX_INLINE_TEXT_BYTES} bytes]"
+            )
+
+    try:
+        return json.dumps(parsed)
+    except Exception:
+        return raw_content
+
+
 def ensure_tool_results_first(content: list) -> list:
     """
     CRITICAL FIX: Ensure tool_result blocks come FIRST in user message content,
@@ -1615,6 +1693,14 @@ async def chat_agent(
                                     )
                                     claude_result = json.dumps(clean_for_claude)
 
+                                # Slim heavy artifacts (chart PNGs, plotly HTML,
+                                # downloadable files) out of what Claude sees
+                                # next turn. The frontend already received the
+                                # full payload via encode_tool_result above.
+                                # This is what prevents "prompt is too long"
+                                # errors after a few execute_python chart calls.
+                                claude_result = _slim_tool_result_for_claude(claude_result)
+
                                 tool_results_for_next_call.append({
                                     "type": "tool_result",
                                     "tool_use_id": tool_call_id,
@@ -1762,6 +1848,10 @@ async def chat_agent(
                                 "any download URL or file path in your response."
                             )
                             _pclaude = json.dumps(_pclean)
+
+                        # Slim heavy artifacts before re-feeding to Claude
+                        # to keep the context window from exploding.
+                        _pclaude = _slim_tool_result_for_claude(_pclaude)
 
                         tool_results_for_next_call.append({
                             "type":        "tool_result",
