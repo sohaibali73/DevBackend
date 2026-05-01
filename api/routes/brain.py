@@ -634,6 +634,164 @@ async def get_brain_stats(user_id: str = Depends(get_current_user_id)):
 
 
 # ============================================================================
+# REINDEX DOCUMENT  (re-chunk + re-embed without re-uploading)
+# ============================================================================
+
+@router.post("/documents/{document_id}/reindex")
+async def reindex_document(
+    document_id: str,
+    background_tasks: BackgroundTasks = BackgroundTasks(),
+    user_id: str = Depends(get_current_user_id),
+):
+    """
+    Re-chunk and re-embed an existing brain_document without re-uploading.
+
+    Use this after schema changes (e.g. embedding dimension fix in migration 026)
+    or when chunks are missing for any reason. Reads `raw_content` if present;
+    otherwise falls back to re-extracting text from the file on the volume.
+    """
+    db = get_supabase()
+
+    row = db.table("brain_documents").select(
+        "id, uploaded_by, filename, file_type, storage_path, raw_content, category"
+    ).eq("id", document_id).limit(1).execute()
+
+    if not row.data:
+        raise HTTPException(status_code=404, detail="Document not found")
+
+    doc = row.data[0]
+    if doc.get("uploaded_by") and doc["uploaded_by"] != user_id:
+        raise HTTPException(status_code=403, detail="Access denied")
+
+    content: str = doc.get("raw_content") or ""
+    if not content.strip():
+        # Fall back to re-extracting from the file on the volume
+        sp = doc.get("storage_path") or ""
+        if not sp or not os.path.exists(sp):
+            raise HTTPException(
+                status_code=400,
+                detail="No raw_content stored and original file not on volume — cannot reindex.",
+            )
+        try:
+            content = _extract_text(sp)
+            content = content.replace("\x00", "")
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"Re-extraction failed: {e}")
+
+    if not content.strip():
+        raise HTTPException(status_code=400, detail="Document text is empty.")
+
+    def _do_reindex():
+        try:
+            # Wipe stale chunks (FK CASCADE makes this clean)
+            db.table("brain_chunks").delete().eq("document_id", document_id).execute()
+
+            # Persist any newly-extracted text
+            try:
+                db.table("brain_documents").update({"raw_content": content}).eq(
+                    "id", document_id
+                ).execute()
+            except Exception:
+                pass
+
+            res = chunk_and_index(
+                db=db,
+                document_id=document_id,
+                text=content,
+                chunk_size=1500,
+                overlap=150,
+                max_chunks=0,
+                generate_embeddings=True,
+            )
+            db.table("brain_documents").update({
+                "is_processed": True,
+                "chunk_count": res["chunks_created"],
+                "processed_at": datetime.now(timezone.utc).isoformat(),
+            }).eq("id", document_id).execute()
+            logger.info(
+                f"Reindexed {document_id}: {res['chunks_created']} chunks, "
+                f"{res['embeddings_generated']} embeddings"
+            )
+        except Exception as e:
+            logger.error(f"Reindex failed for {document_id}: {e}", exc_info=True)
+
+    background_tasks.add_task(_do_reindex)
+
+    return JSONResponse(
+        status_code=202,
+        content={
+            "status": "reindexing",
+            "document_id": document_id,
+            "message": "Reindex started in background. Poll /brain/documents/{id}/status for completion.",
+        },
+    )
+
+
+@router.post("/reindex-all")
+async def reindex_all_documents(
+    background_tasks: BackgroundTasks = BackgroundTasks(),
+    user_id: str = Depends(get_current_user_id),
+):
+    """
+    Reindex every document owned by the current user. Useful after running
+    migration 026 (which wipes brain_chunks to fix the embedding dimension).
+    """
+    db = get_supabase()
+    docs = db.table("brain_documents").select("id, raw_content, storage_path").eq(
+        "uploaded_by", user_id
+    ).execute()
+
+    candidates = docs.data or []
+    queued = 0
+
+    def _process_one(doc_id: str, raw: str, sp: str):
+        try:
+            content = raw or ""
+            if not content.strip() and sp and os.path.exists(sp):
+                content = _extract_text(sp).replace("\x00", "")
+            if not content.strip():
+                logger.warning(f"reindex-all: skipping {doc_id} — no text available")
+                return
+
+            db.table("brain_chunks").delete().eq("document_id", doc_id).execute()
+            res = chunk_and_index(
+                db=db,
+                document_id=doc_id,
+                text=content,
+                chunk_size=1500,
+                overlap=150,
+                max_chunks=0,
+                generate_embeddings=True,
+            )
+            db.table("brain_documents").update({
+                "is_processed": True,
+                "chunk_count": res["chunks_created"],
+                "processed_at": datetime.now(timezone.utc).isoformat(),
+            }).eq("id", doc_id).execute()
+            logger.info(
+                f"reindex-all: {doc_id} → {res['chunks_created']} chunks, "
+                f"{res['embeddings_generated']} embeddings"
+            )
+        except Exception as e:
+            logger.error(f"reindex-all failed for {doc_id}: {e}")
+
+    for d in candidates:
+        background_tasks.add_task(
+            _process_one,
+            d["id"],
+            d.get("raw_content") or "",
+            d.get("storage_path") or "",
+        )
+        queued += 1
+
+    return {
+        "status": "queued",
+        "documents_queued": queued,
+        "message": "Reindex jobs scheduled. They will run in the background.",
+    }
+
+
+# ============================================================================
 # DELETE DOCUMENT
 # ============================================================================
 

@@ -705,10 +705,75 @@ async def _get_pptx_vision_blocks(db, conversation_id: str) -> list:
     return vision_blocks
 
 
-async def _fetch_kb_context(db, user_content: str) -> str:
-    """Search KB for relevant context based on user message."""
-    # Placeholder: implement semantic search if available
-    return ""
+async def _fetch_kb_context(db, user_content: str, user_id: Optional[str] = None) -> str:
+    """
+    Knowledge-Base RAG: embed the user message, vector-search brain_chunks
+    (scoped to this user via match_brain_chunks RPC), and return a system
+    prompt block with the top-k passages.
+
+    Safe no-op if:
+      * VOYAGE_API_KEY is unset (no embedding can be generated)
+      * The match_brain_chunks RPC is missing or the table is empty
+      * The user has no KB documents
+    """
+    if not user_content or not user_content.strip():
+        return ""
+
+    try:
+        from core.rag_chunker import generate_embeddings_batch
+        from core.file_rag import format_chunks_for_prompt
+
+        embeddings = generate_embeddings_batch([user_content], model="voyage-2")
+        if not embeddings or embeddings[0] is None:
+            return ""
+        query_vec = embeddings[0]
+
+        try:
+            result = db.rpc(
+                "match_brain_chunks",
+                {
+                    "query_embedding": query_vec,
+                    "match_threshold": 0.4,
+                    "match_count":     8,
+                    "p_user_id":       user_id,
+                    "p_category":      None,
+                },
+            ).execute()
+            rows = result.data or []
+        except Exception as rpc_err:
+            logger.debug(f"_fetch_kb_context RPC failed (non-fatal): {rpc_err}")
+            return ""
+
+        if not rows:
+            return ""
+
+        # Reuse the formatter from file_rag, mapping fields to its expected schema
+        chunks = [
+            {
+                "filename":    r.get("title") or r.get("filename") or "knowledge base",
+                "chunk_index": r.get("chunk_index", 0),
+                "content":     r.get("content", ""),
+                "similarity":  r.get("similarity"),
+            }
+            for r in rows
+        ]
+        block = format_chunks_for_prompt(chunks)
+        if not block:
+            return ""
+        # Re-tag the block so the model knows it came from the persistent KB
+        return block.replace(
+            "<retrieved_document_context>",
+            "<retrieved_knowledge_base_context>",
+        ).replace(
+            "</retrieved_document_context>",
+            "</retrieved_knowledge_base_context>",
+        ).replace(
+            "documents the user has attached to this conversation",
+            "documents in the user's knowledge base",
+        )
+    except Exception as e:
+        logger.debug(f"_fetch_kb_context failed (non-fatal): {e}")
+        return ""
 
 
 async def _fetch_doc_rag_context(db, conversation_id: Optional[str], user_content: str) -> str:
@@ -1105,7 +1170,7 @@ async def chat_agent(
     ]
 
     file_context = await _fetch_file_context(db, conversation_id)
-    kb_context = await _fetch_kb_context(db, data.content)
+    kb_context = await _fetch_kb_context(db, data.content, user_id=user_id)
     kb_doc_context = await _fetch_kb_doc_refs(db, data.content)
     doc_rag_context = await _fetch_doc_rag_context(db, conversation_id, data.content)
 
@@ -2285,7 +2350,7 @@ async def _chat_generic_endpoint(
     ]
 
     file_context = await _fetch_file_context(db, conversation_id)
-    kb_context = await _fetch_kb_context(db, data.content)
+    kb_context = await _fetch_kb_context(db, data.content, user_id=user_id)
     doc_rag_context = await _fetch_doc_rag_context(db, conversation_id, data.content)
 
     # Build system prompt
