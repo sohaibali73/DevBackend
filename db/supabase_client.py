@@ -55,3 +55,32 @@ def get_supabase_with_token(token: str) -> Client:
     client = create_client(settings.supabase_url, settings.supabase_key)
     client.auth.set_session(token, "")  # Set the access token
     return client
+
+
+def get_auth_client() -> Client:
+    """
+    Return a FRESH (uncached) Supabase client for auth operations.
+
+    Why this exists:
+        supabase-py v2's GoTrue client stores session state on the instance
+        (current access_token / refresh_token / user). When we share the
+        cached service-role singleton across requests, calls like
+        ``sign_in_with_password``, ``refresh_session``, ``update_user``, and
+        even ``get_user(token)`` mutate that shared state. Under concurrency
+        this causes:
+          - random "Invalid or expired token" 401s on unrelated requests,
+          - the PostgREST Authorization header silently flipping away from
+            the service key,
+          - users appearing to be "logged out every few minutes".
+
+    A new client is cheap (it's just an HTTP wrapper), and using a fresh one
+    per auth call guarantees no cross-request session bleed. Use this for
+    EVERY ``client.auth.*`` operation. Keep ``get_supabase()`` for table
+    CRUD where we want the pinned service-role header.
+    """
+    settings = get_settings()
+    # Prefer the anon/public key for auth flows — auth endpoints don't need
+    # service_role, and using anon avoids any chance of accidentally leaking
+    # service-role privileges into a per-request client.
+    api_key = settings.supabase_key or settings.supabase_service_key
+    return create_client(settings.supabase_url, api_key)

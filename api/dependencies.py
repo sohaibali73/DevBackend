@@ -5,7 +5,7 @@ from fastapi import Header, HTTPException, Depends
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 import logging
 
-from db.supabase_client import get_supabase
+from db.supabase_client import get_supabase, get_auth_client
 from core.encryption import decrypt_value
 
 logger = logging.getLogger(__name__)
@@ -25,10 +25,14 @@ async def get_current_user_id(
     a hard "not authenticated" error to the user.
     """
     token = credentials.credentials
-    db = get_supabase()
+    # Use a FRESH auth client per-request — supabase-py's GoTrue client
+    # mutates session state on the instance, and sharing the cached singleton
+    # across concurrent requests causes random 401s ("logged out every few
+    # minutes"). The actual JWT validation only needs a stateless verify call.
+    auth_db = get_auth_client()
 
     try:
-        user = db.auth.get_user(token)
+        user = auth_db.auth.get_user(token)
         if not user or not user.user:
             raise HTTPException(status_code=401, detail="Invalid or expired token")
         return user.user.id
@@ -54,10 +58,14 @@ async def get_current_user(
     Enforces is_active check.
     """
     token = credentials.credentials
+    # Validate the JWT against a fresh auth client to avoid mutating the
+    # shared singleton's session state under concurrency. DB reads/writes
+    # below still go through the pinned service-role singleton.
+    auth_db = get_auth_client()
     db = get_supabase()
 
     try:
-        auth_user = db.auth.get_user(token)
+        auth_user = auth_db.auth.get_user(token)
         if not auth_user or not auth_user.user:
             raise HTTPException(status_code=401, detail="Invalid or expired token")
 

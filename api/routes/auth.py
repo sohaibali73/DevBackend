@@ -13,7 +13,7 @@ from pydantic import BaseModel, EmailStr, Field
 import logging
 
 from config import get_settings
-from db.supabase_client import get_supabase
+from db.supabase_client import get_supabase, get_auth_client
 from api.dependencies import get_current_user
 from core.encryption import encrypt_value
 
@@ -93,11 +93,14 @@ async def register(data: UserRegister):
     Supabase sends a confirmation email (if enabled in Supabase dashboard).
     User must confirm email before they can login.
     """
+    # Use a fresh auth client — sign_up mutates GoTrue session state and would
+    # corrupt the shared singleton under concurrency.
+    auth_db = get_auth_client()
     db = get_supabase()
     settings = get_settings()
 
     try:
-        auth_response = db.auth.sign_up({
+        auth_response = auth_db.auth.sign_up({
             "email": data.email,
             "password": data.password,
             "options": {
@@ -157,10 +160,12 @@ async def login(data: UserLogin):
     
     Returns JWT token that should be used in Authorization header.
     """
+    # Use a fresh auth client — sign_in mutates GoTrue session state.
+    auth_db = get_auth_client()
     db = get_supabase()
 
     try:
-        auth_response = db.auth.sign_in_with_password({
+        auth_response = auth_db.auth.sign_in_with_password({
             "email": data.email,
             "password": data.password
         })
@@ -322,12 +327,16 @@ async def refresh_token(data: RefreshTokenRequest):
     The client must send the refresh_token received at login.
     Returns a fresh access_token and a rotated refresh_token.
     """
-    db = get_supabase()
+    # Refresh MUST use a fresh client — refresh_session mutates the GoTrue
+    # session, which under concurrency was the primary cause of users being
+    # "logged out every few minutes" (the singleton's session would flip to
+    # a different user mid-request, invalidating subsequent get_user calls).
+    auth_db = get_auth_client()
 
     try:
         # Use Supabase's refresh_session — this is the only correct way to get
         # a new access token from a refresh token on a stateless backend client.
-        response = db.auth.refresh_session(data.refresh_token)
+        response = auth_db.auth.refresh_session(data.refresh_token)
 
         if not response or not response.session or not response.user:
             raise HTTPException(status_code=401, detail="Invalid or expired refresh token")
@@ -354,11 +363,11 @@ async def forgot_password(
     background_tasks: BackgroundTasks
 ):
     """Request password reset via Supabase Auth."""
-    db = get_supabase()
+    auth_db = get_auth_client()
     settings = get_settings()
 
     try:
-        db.auth.reset_password_email(
+        auth_db.auth.reset_password_email(
             data.email,
             {"redirect_to": f"{settings.frontend_url}/reset-password"}
         )
@@ -375,15 +384,23 @@ async def reset_password(
     credentials: HTTPAuthorizationCredentials = Depends(security)
 ):
     """Reset password using token from reset email."""
-    db = get_supabase()
+    # Fresh client — we both validate the token and call update_user, both of
+    # which mutate GoTrue session state. Doing this on the singleton would
+    # log out other users.
+    auth_db = get_auth_client()
     token = credentials.credentials
 
     try:
-        user = db.auth.get_user(token)
+        user = auth_db.auth.get_user(token)
         if not user or not user.user:
             raise HTTPException(status_code=401, detail="Invalid reset token")
 
-        db.auth.update_user({"password": data.new_password})
+        # Set the session on the fresh client so update_user has auth context.
+        try:
+            auth_db.auth.set_session(token, "")
+        except Exception:
+            pass
+        auth_db.auth.update_user({"password": data.new_password})
         return {"message": "Password reset successfully"}
 
     except HTTPException:
@@ -396,13 +413,21 @@ async def reset_password(
 @router.put("/change-password")
 async def change_password(
     data: PasswordUpdate,
-    user: dict = Depends(get_current_user)
+    user: dict = Depends(get_current_user),
+    credentials: HTTPAuthorizationCredentials = Depends(security),
 ):
     """Change password for logged-in user."""
-    db = get_supabase()
+    # Use a fresh auth client and set the user's session on it so update_user
+    # is scoped to this request and cannot mutate the shared singleton's
+    # session (which would log out other users).
+    auth_db = get_auth_client()
+    try:
+        auth_db.auth.set_session(credentials.credentials, "")
+    except Exception:
+        pass
 
     try:
-        db.auth.update_user({"password": data.new_password})
+        auth_db.auth.update_user({"password": data.new_password})
         return {"message": "Password changed successfully"}
     except Exception as e:
         logger.error(f"Password change failed: {e}")
