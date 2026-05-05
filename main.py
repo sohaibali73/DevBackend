@@ -482,6 +482,38 @@ except Exception as e:
     logger.error(f"✗ Failed to load debug router: {e}")
     logger.debug(traceback.format_exc())
 
+# ── Content Studio routers (projects, voice cloning, humanizer) ───────────────
+
+try:
+    from api.routes import studio_projects
+    app.include_router(studio_projects.router)
+    routers_loaded.append("studio_projects")
+    logger.info("✓ Loaded studio_projects router (Content Studio: projects + artifacts on Railway volume)")
+except Exception as e:
+    routers_failed.append(("studio_projects", str(e)))
+    logger.error(f"✗ Failed to load studio_projects router: {e}")
+    logger.debug(traceback.format_exc())
+
+try:
+    from api.routes import studio_styles
+    app.include_router(studio_styles.router)
+    routers_loaded.append("studio_styles")
+    logger.info("✓ Loaded studio_styles router (Voice cloning / writing-style training)")
+except Exception as e:
+    routers_failed.append(("studio_styles", str(e)))
+    logger.error(f"✗ Failed to load studio_styles router: {e}")
+    logger.debug(traceback.format_exc())
+
+try:
+    from api.routes import studio_humanize
+    app.include_router(studio_humanize.router)
+    routers_loaded.append("studio_humanize")
+    logger.info("✓ Loaded studio_humanize router (Advanced humanizer + LinkedIn SEO + AI-detector ensemble)")
+except Exception as e:
+    routers_failed.append(("studio_humanize", str(e)))
+    logger.error(f"✗ Failed to load studio_humanize router: {e}")
+    logger.debug(traceback.format_exc())
+
 # Start background task cleanup loop on app startup
 @app.on_event("startup")
 async def startup_task_manager():

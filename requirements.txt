@@ -94,3 +94,15 @@ faker                            # fake data generation (Faker class in sandbox)
 
 llm-sandbox
 docker
+
+# =============================================================================
+# CONTENT STUDIO — humanizer detector ensemble (heavy)
+# =============================================================================
+# Optional heavy stack for the AI-detection ensemble (Binoculars + GLTR + Roberta).
+# Models lazy-load to $STORAGE_ROOT/models/hf_cache and are cached on the Railway volume.
+# If torch+transformers are unavailable, the humanizer falls back to the lightweight
+# stylometric detector (no functional break — just less accurate).
+
+torch>=2.0,<3.0
+transformers>=4.40,<5.0
+

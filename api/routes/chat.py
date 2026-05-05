@@ -1246,6 +1246,26 @@ async def chat_agent(
                 f"{file_context}{kb_context}{kb_doc_context}{doc_rag_context}"
             )
 
+            # ── Content Studio: inject cloned voice if this conversation is
+            #    bound to a Studio project that has a style_profile_id.
+            try:
+                _proj_lookup = (
+                    db.table("studio_projects")
+                    .select("style_profile_id")
+                    .eq("conversation_id", conversation_id)
+                    .eq("user_id", user_id)
+                    .limit(1)
+                    .execute()
+                )
+                _spid = (_proj_lookup.data or [{}])[0].get("style_profile_id") if _proj_lookup.data else None
+                if _spid:
+                    from core.styles.injector import fetch_style_prompt as _fsp
+                    _voice_block = _fsp(_spid, user_id)
+                    if _voice_block:
+                        system_prompt_base += "\n\n" + _voice_block
+            except Exception as _voice_err:
+                logger.debug("studio voice injection skipped: %s", _voice_err)
+
             # Force-invoke a specific skill if the user pinned one from the UI
             if data.skill_slug:
                 system_prompt_base += (
@@ -1722,6 +1742,20 @@ async def chat_agent(
                                 except Exception as _tr_err:
                                     print(f"[chat/agent] ⚠ tool_results insert failed (non-fatal): {_tr_err}")
 
+                                # ── Content Studio: capture pptx/docx into project artifact ──
+                                try:
+                                    from core.studio.chat_hook import materialize_tool_result as _studio_capture
+                                    _studio_capture(
+                                        user_id=user_id,
+                                        conversation_id=conversation_id,
+                                        message_id=None,
+                                        tool_name=tool_name,
+                                        tool_input=tool_input,
+                                        result=result_data,
+                                    )
+                                except Exception as _studio_err:
+                                    print(f"[chat/agent] ⚠ studio artifact capture failed (non-fatal): {_studio_err}")
+
                                 yield encoder.encode_tool_result(tool_call_id, result)
 
                                 # Emit a file_download event so the frontend can render
@@ -1903,6 +1937,20 @@ async def chat_agent(
                             }).execute()
                         except Exception as _pterr:
                             print(f"[chat/agent] ⚠ parallel tool_results insert failed: {_pterr}")
+
+                        # ── Content Studio: capture pptx/docx into project artifact ──
+                        try:
+                            from core.studio.chat_hook import materialize_tool_result as _studio_capture_p
+                            _studio_capture_p(
+                                user_id=user_id,
+                                conversation_id=conversation_id,
+                                message_id=None,
+                                tool_name=_pname,
+                                tool_input=_pinp,
+                                result=_pdata,
+                            )
+                        except Exception as _ps_err:
+                            print(f"[chat/agent] ⚠ studio artifact (parallel) capture failed: {_ps_err}")
 
                         yield encoder.encode_tool_result(_pid, _praw)
 

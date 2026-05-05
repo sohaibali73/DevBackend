@@ -2039,7 +2039,58 @@ TOOL_DEFINITIONS = [
             "required": ["ticker"]
         }
     },
+    # ── Content Studio: Humanizer ────────────────────────────────────────────
+    {
+        "name": "humanize_text",
+        "defer_loading": True,
+        "description": (
+            "Rewrite AI-generated or generic text to feel human and bypass AI detectors, "
+            "while preserving facts and (optionally) writing in a cloned voice. "
+            "Multi-pass pipeline: AI-fingerprint scrub → burstiness rewrite → "
+            "perplexity injection → optional voice clone → optional LinkedIn SEO → "
+            "detector ensemble (Binoculars + GLTR + Roberta) with retry loop → "
+            "fact preservation → style fidelity scoring.\n\n"
+            "Use this whenever the user asks to 'humanize', 'undetectable', "
+            "'remove AI tells', 'sound like me', 'write for LinkedIn', or wants "
+            "an SEO-tuned post. Returns the rewritten text plus detection scores."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "text": {
+                    "type": "string",
+                    "description": "The text to humanize."
+                },
+                "intensity": {
+                    "type": "string",
+                    "enum": ["light", "standard", "max"],
+                    "default": "standard",
+                    "description": "How aggressively to rewrite. 'max' uses extra retries."
+                },
+                "seo_target": {
+                    "type": "string",
+                    "enum": ["linkedin"],
+                    "description": "If set to 'linkedin', applies a LinkedIn-optimized hook + cadence + hashtags pass."
+                },
+                "style_profile_id": {
+                    "type": "string",
+                    "description": "Optional studio_writing_styles.id — when set, the rewrite is in that cloned voice."
+                },
+                "project_id": {
+                    "type": "string",
+                    "description": "Optional studio_projects.id to associate the run with."
+                },
+                "preserve_facts": {
+                    "type": "boolean",
+                    "default": True,
+                    "description": "If true, numbers, names, and quotes from the input are diffed against the output and reported."
+                }
+            },
+            "required": ["text"]
+        }
+    },
 ]
+
 
 
 # =============================================================================
@@ -5311,6 +5362,26 @@ def handle_tool_call(
             result = _create_word_document(tool_input, api_key)
         elif tool_name == "create_pptx_with_skill":
             result = _create_pptx_with_skill(tool_input, api_key)
+        elif tool_name == "humanize_text":
+            # Multi-pass advanced humanizer (AI detector bypass + LinkedIn SEO + voice clone).
+            try:
+                from core.humanize import pipeline as _hum
+                _hu_user_id = (tool_input.get("_user_id") or "") if isinstance(tool_input, dict) else ""
+                # The /chat/agent path doesn't currently pass user_id into tool_input; humanizer
+                # logs without a user_id are still valid — pipeline only requires the api_key.
+                result = _hum.run(
+                    text=tool_input.get("text", "") or "",
+                    api_key=api_key or "",
+                    user_id=_hu_user_id,
+                    project_id=tool_input.get("project_id"),
+                    conversation_id=conversation_id,
+                    style_profile_id=tool_input.get("style_profile_id"),
+                    intensity=tool_input.get("intensity", "standard"),
+                    seo_target=tool_input.get("seo_target"),
+                    preserve_facts=bool(tool_input.get("preserve_facts", True)),
+                )
+            except Exception as _hum_err:
+                result = {"error": f"humanize_text failed: {_hum_err}"}
         else:
             logger.warning("Unknown tool requested: %s", tool_name)
             result = {"error": f"Unknown tool: {tool_name}"}
