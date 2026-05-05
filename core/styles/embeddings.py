@@ -10,11 +10,12 @@ be loaded — so endpoints never fail hard in environments without disk space.
 from __future__ import annotations
 
 import hashlib
+import json
 import logging
 import math
 import os
 import threading
-from typing import List, Optional, Sequence
+from typing import Any, List, Optional, Sequence
 
 logger = logging.getLogger(__name__)
 
@@ -86,7 +87,62 @@ def embed_many(texts: Sequence[str]) -> List[List[float]]:
         return [_hash_embedding(t) for t in texts]
 
 
-def cosine(a: List[float], b: List[float]) -> float:
+# -----------------------------------------------------------------------------
+# Vector coercion + math
+# -----------------------------------------------------------------------------
+
+def coerce_vector(v: Any) -> List[float]:
+    """
+    Normalize an embedding to List[float].
+
+    Postgres pgvector via supabase-py returns vectors as JSON-formatted strings
+    like "[0.1, 0.2, ...]". Other paths may give lists, tuples, or numpy
+    arrays. Anything that can't be parsed becomes [].
+    """
+    if v is None:
+        return []
+    if isinstance(v, str):
+        s = v.strip()
+        if not s:
+            return []
+        # pgvector text format: "[0.1,0.2,...]"
+        try:
+            parsed = json.loads(s)
+        except Exception:
+            try:
+                inner = s.strip("[]() ").strip()
+                if not inner:
+                    return []
+                parsed = [p.strip() for p in inner.split(",") if p.strip()]
+            except Exception:
+                return []
+        if isinstance(parsed, list):
+            out: List[float] = []
+            for x in parsed:
+                try:
+                    out.append(float(x))
+                except (TypeError, ValueError):
+                    return []
+            return out
+        return []
+    if isinstance(v, (list, tuple)):
+        out2: List[float] = []
+        for x in v:
+            try:
+                out2.append(float(x))
+            except (TypeError, ValueError):
+                return []
+        return out2
+    # numpy / other iterables
+    try:
+        return [float(x) for x in list(v)]
+    except Exception:
+        return []
+
+
+def cosine(a: Any, b: Any) -> float:
+    a = coerce_vector(a)
+    b = coerce_vector(b)
     if not a or not b or len(a) != len(b):
         return 0.0
     num = sum(x * y for x, y in zip(a, b))
@@ -97,13 +153,23 @@ def cosine(a: List[float], b: List[float]) -> float:
     return num / (da * db)
 
 
-def centroid(vecs: List[List[float]]) -> List[float]:
-    if not vecs:
+def centroid(vecs: Sequence[Any]) -> List[float]:
+    cleaned: List[List[float]] = []
+    dim: Optional[int] = None
+    for raw in vecs or []:
+        v = coerce_vector(raw)
+        if not v:
+            continue
+        if dim is None:
+            dim = len(v)
+        if len(v) != dim:
+            continue
+        cleaned.append(v)
+    if not cleaned or dim is None:
         return []
-    dim = len(vecs[0])
     out = [0.0] * dim
-    for v in vecs:
+    for v in cleaned:
         for i in range(dim):
             out[i] += v[i]
-    n = float(len(vecs))
+    n = float(len(cleaned))
     return [x / n for x in out]
