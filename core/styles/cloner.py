@@ -409,9 +409,20 @@ def analyze_style(
         exemplars=exemplars,
     )
 
-    # 6. Centroid embedding
-    sample_vecs = [s.get("embedding") for s in samples if s.get("embedding")]
-    avg_vec = emb.centroid([list(v) for v in sample_vecs]) if sample_vecs else emb.embed(samples_block[:5000])
+    # 6. Centroid embedding (pgvector returns strings — let centroid coerce)
+    raw_vecs = [s.get("embedding") for s in samples if s.get("embedding") is not None]
+    avg_vec = emb.centroid(raw_vecs) if raw_vecs else []
+    if not avg_vec:
+        # Fallback: embed concatenated text. If that also fails (empty),
+        # use a deterministic hash-based fallback so we never UPDATE
+        # the row with an empty pgvector (pgvector requires >= 1 dim).
+        try:
+            avg_vec = emb.embed(samples_block[:5000] or "voice")
+        except Exception:
+            avg_vec = []
+    if not avg_vec:
+        from core.styles.embeddings import _hash_embedding  # type: ignore
+        avg_vec = _hash_embedding("voice")
 
     # 7. Self-test fidelity (optional, requires api_key)
     fidelity = None
@@ -469,10 +480,10 @@ def _self_test_fidelity(
     except Exception:
         return 0.0
 
-    sample_vecs = [list(s.get("embedding") or []) for s in samples if s.get("embedding")]
-    if not sample_vecs:
+    raw_vecs = [s.get("embedding") for s in samples if s.get("embedding") is not None]
+    cent = emb.centroid(raw_vecs)
+    if not cent:
         return 0.0
-    cent = emb.centroid(sample_vecs)
 
     sims: List[float] = []
     for prompt in _SELFTEST_PROMPTS:
