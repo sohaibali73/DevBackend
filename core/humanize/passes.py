@@ -6,6 +6,8 @@ Each pass is a function `(text, ctx) → text` plus a name. They are pure-ish
 
 Passes:
     fingerprint_scrub      — rule-based phrase substitution + punctuation tweaks
+    unified_rewrite        — single LLM call doing burstiness + perplexity
+                             (+ optional voice + LinkedIn) — replaces 2-4 calls
     burstiness_pass        — LLM rewrites for sentence-length variance
     perplexity_injection   — LLM rewrites with unexpected word choices
     style_transfer         — LLM rewrites in user's cloned voice
@@ -98,7 +100,95 @@ def fingerprint_scrub(text: str, ctx: Dict[str, Any]) -> str:
 
 
 # -----------------------------------------------------------------------------
-# LLM passes
+# UNIFIED REWRITE — one LLM call instead of 2-4
+# -----------------------------------------------------------------------------
+
+_UNIFIED_PROMPT_BASE = """You are a humanizer. Rewrite the text below so it reads as if a
+specific human wrote it, with the explicit goal of evading AI-text detectors
+while preserving every fact.
+
+Apply ALL of the following in a SINGLE rewrite (do not list rules — just apply them):
+
+1. BURSTINESS — vary sentence length deliberately. Mix very short sentences
+   (3–6 words) with longer multi-clause ones. Aim for sentence-length stdev ≥ 8.
+   Use occasional fragments. Like this. They feel human.
+
+2. PERPLEXITY — replace generic word choices with more specific, unexpected,
+   or idiomatic alternatives where they fit. Avoid the AI tells: no "delve",
+   no "tapestry", no "navigate", no "leverage", no "in conclusion",
+   no "it's important to note", no "ever-evolving", no "robust", no "seamless",
+   no "synergy", no "comprehensive", no "moreover/furthermore/additionally"
+   to start sentences. Use contractions where natural ("don't", "we're").
+
+3. RHYTHM — allow occasional sentence-initial conjunctions ("And", "But", "So")
+   sparingly. Use em-dashes at most once per long paragraph (not as a tic).
+   Vary punctuation — colons, parentheticals, the occasional ellipsis are fine.
+
+4. STRUCTURE — keep the same overall structure (paragraphs, bullets if present,
+   headings if present). Length within ±15% of original.
+
+HARD CONSTRAINTS — non-negotiable:
+   • Do NOT change facts, names, numbers, dates, percentages, or quotes.
+   • Do NOT add new claims. Do NOT remove material claims.
+   • Do NOT add filler or "throat-clearing" lines.
+   • Return ONLY the rewritten text — no preamble, no notes, no quotes,
+     no markdown fences.
+{EXTRA_RULES}
+TEXT:
+{TEXT}
+"""
+
+_LINKEDIN_RULES = """
+LINKEDIN OVERLAY — apply on top of all rules above:
+   • First line MUST be a hook ≤ 210 chars that delivers the punchline before
+     LinkedIn truncates.
+   • Short paragraphs (1–2 sentences). White space matters.
+   • End with one CTA line: a sharp question or soft ask.
+   • Add 3–5 hashtags on a single line at the end. Lowercase or PascalCase.
+   • At most ONE emoji, only if it adds meaning. Often zero.
+   • No buzzwords. No "thrilled to announce".
+"""
+
+_VOICE_RULES = """
+VOICE — write in the voice described in the system message (do/dont rules,
+exemplars). Match cadence, signature phrases, perspective, and register.
+"""
+
+
+def unified_rewrite(text: str, ctx: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    One LLM call that combines burstiness + perplexity + (optional voice) +
+    (optional LinkedIn). Replaces 2-4 sequential calls — major speedup.
+
+    Returns {"text": str, "model_calls": 1}.
+    """
+    api_key = ctx.get("api_key") or ""
+    if not api_key:
+        return {"text": text, "model_calls": 0}
+
+    extras: List[str] = []
+    if ctx.get("seo_target") == "linkedin":
+        extras.append(_LINKEDIN_RULES)
+    voice_prompt = ctx.get("voice_system_prompt") or ""
+    if voice_prompt:
+        extras.append(_VOICE_RULES)
+
+    prompt = _UNIFIED_PROMPT_BASE.replace(
+        "{EXTRA_RULES}", ("\n" + "\n".join(extras) + "\n") if extras else "\n"
+    ).replace("{TEXT}", text)
+
+    out = claude_rewrite(
+        api_key=api_key,
+        user_prompt=prompt,
+        system_prompt=voice_prompt or None,
+        temperature=0.9,
+        max_tokens=min(4096, max(800, int(len(text) / 2.5) + 400)),
+    )
+    return {"text": out or text, "model_calls": 1 if out else 0}
+
+
+# -----------------------------------------------------------------------------
+# Legacy individual passes (kept for fallback / "max" intensity)
 # -----------------------------------------------------------------------------
 
 _BURSTINESS_PROMPT = """Rewrite the following text to vary sentence length deliberately.
@@ -237,7 +327,6 @@ def fact_guard(text: str, ctx: Dict[str, Any]) -> Dict[str, Any]:
     """
     Compare facts in current text vs. the original (ctx['original_text']).
     Returns {"text": text, "lost": {"numbers":[...], "quotes":[...], "names":[...]}}
-    The pipeline can decide to retry / annotate based on what was lost.
     """
     original = ctx.get("original_text") or ""
     if not original:
@@ -249,8 +338,6 @@ def fact_guard(text: str, ctx: Dict[str, Any]) -> Dict[str, Any]:
         "quotes":  [q for q in orig["quotes"]  if q not in cur["quotes"]],
         "names":   [n for n in orig["names"]   if n not in cur["names"]],
     }
-    # Cheap restore: append a [Note: <original fact>] for any lost numbers/quotes
-    # only if the model fully dropped them. This is a safety net, not a rewrite.
     appendix: List[str] = []
     if lost["numbers"]:
         appendix.append("Numbers preserved: " + ", ".join(lost["numbers"][:10]))
@@ -260,9 +347,6 @@ def fact_guard(text: str, ctx: Dict[str, Any]) -> Dict[str, Any]:
         appendix.append("Names preserved: " + ", ".join(lost["names"][:10]))
 
     if appendix and ctx.get("preserve_facts", True):
-        # Don't mangle the output text by default; the pipeline annotates
-        # the audit log instead. We only append when the user explicitly
-        # asks for visible fact-preservation.
         if ctx.get("annotate_lost_facts"):
             text = text.rstrip() + "\n\n" + "\n".join(appendix)
 
