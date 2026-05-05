@@ -623,71 +623,164 @@ def _make_sandboxed_open(sandbox_dir: Path):
     return _sandboxed_open
 
 
+def _persist_file_for_download(filename: str, raw_bytes: bytes, ext: str) -> Dict[str, str]:
+    """
+    Persist a sandbox-generated file to the Railway volume + Supabase Storage
+    via core.file_store.store_file. Returns a dict with file_id and download_url
+    that the frontend can use to fetch the file even after the artifact rotates
+    out of memory.
+
+    Best-effort: returns {} on any failure.
+    """
+    try:
+        from core.file_store import store_file
+        entry = store_file(
+            data=raw_bytes,
+            filename=filename,
+            file_type=ext.lstrip(".") if ext else "bin",
+            tool_name="sandbox_python",
+        )
+        return {
+            "file_id": entry.file_id,
+            "download_url": f"/files/{entry.file_id}/download",
+        }
+    except Exception as e:
+        logger.warning("Could not persist sandbox file '%s' to volume: %s", filename, e)
+        return {}
+
+
 def _collect_file_artifacts(
     sandbox_dir: Path,
     injected_mtimes: Optional[Dict[str, float]] = None,
+    start_time: Optional[float] = None,
 ) -> List[DisplayArtifact]:
     """
-    Walk sandbox_dir after execution; convert files the user's code wrote into
-    downloadable FileArtifacts (stored as base64 in the DB, served via API).
+    Walk sandbox_dir AND scan common absolute output paths (/tmp, cwd) after
+    execution; convert files the user's code wrote into downloadable
+    FileArtifacts. Each file is also persisted to the Railway volume + Supabase
+    Storage so the frontend can fetch it via /files/{file_id}/download.
 
     injected_mtimes: mapping of absolute path → mtime at injection time.
     Files that are in injected_mtimes AND whose mtime has not changed are
     skipped (they are unmodified input files, not outputs).
+
+    start_time: epoch seconds before exec began. Files in scan dirs (/tmp etc.)
+    are only collected if their mtime is >= start_time (i.e. created/modified
+    by this execution) — this catches files written via openpyxl/zipfile/etc.
+    that bypass our sandboxed open() by calling builtins.open directly.
     """
     _skip: Dict[str, float] = injected_mtimes or {}
     artifacts: List[DisplayArtifact] = []
+    seen_paths: set = set()
+
+    def _emit(fp: Path, source: str = "sandbox") -> None:
+        try:
+            fp_str = str(fp.resolve())
+        except Exception:
+            fp_str = str(fp)
+        if fp_str in seen_paths:
+            return
+        if not fp.is_file():
+            return
+        # Skip injected input files that were NOT modified by user code
+        if fp_str in _skip:
+            try:
+                if abs(fp.stat().st_mtime - _skip[fp_str]) < 0.5:
+                    return
+            except OSError:
+                pass
+        try:
+            size = fp.stat().st_size
+        except OSError:
+            return
+        if size == 0 or size > _MAX_FILE_ARTIFACT_BYTES:
+            return
+        ext = fp.suffix.lower()
+        mime = _FILE_MIME_TYPES.get(ext, "application/octet-stream")
+        filename = fp.name
+        try:
+            raw = fp.read_bytes()
+            is_text = mime.startswith("text/") or mime in (
+                "application/json", "application/xml",
+                "application/x-yaml", "application/toml",
+                "text/x-python", "application/javascript",
+            )
+            if is_text:
+                try:
+                    data = raw.decode("utf-8", errors="replace")
+                    encoding = "utf-8"
+                except Exception:
+                    data = base64.b64encode(raw).decode("ascii")
+                    encoding = "base64"
+            else:
+                data = base64.b64encode(raw).decode("ascii")
+                encoding = "base64"
+        except Exception as e:
+            logger.debug("Cannot read sandbox file %s: %s", filename, e)
+            return
+
+        # Persist to Railway volume + Supabase for durable download
+        persisted = _persist_file_for_download(filename, raw, ext)
+
+        meta = {
+            "filename": filename,
+            "size_bytes": size,
+            "extension": ext,
+            "downloadable": True,
+            "source": source,
+        }
+        meta.update(persisted)  # adds file_id + download_url when persistence works
+
+        artifacts.append(DisplayArtifact(
+            type=mime,
+            data=data,
+            encoding=encoding,
+            display_type="file",
+            metadata=meta,
+        ))
+        seen_paths.add(fp_str)
+        if persisted:
+            logger.info(
+                "✓ Sandbox artifact persisted: %s → %s (source=%s)",
+                filename, persisted.get("download_url"), source,
+            )
+
+    # 1. Scan the per-execution sandbox dir (catches everything written via
+    #    sandboxed open() and most relative paths)
     try:
         for fp in sorted(Path(str(sandbox_dir)).rglob("*")):
-            if not fp.is_file():
-                continue
-            # Skip injected input files that were NOT modified by user code
-            fp_str = str(fp)
-            if fp_str in _skip:
-                try:
-                    current_mtime = fp.stat().st_mtime
-                    if abs(current_mtime - _skip[fp_str]) < 0.5:
-                        logger.debug("Skipping unmodified injected file: %s", fp.name)
-                        continue
-                except OSError:
-                    pass  # file deleted — nothing to skip
-            size = fp.stat().st_size
-            if size == 0 or size > _MAX_FILE_ARTIFACT_BYTES:
-                continue
-            ext = fp.suffix.lower()
-            mime = _FILE_MIME_TYPES.get(ext, "application/octet-stream")
-            filename = fp.name
-            try:
-                is_text = mime.startswith("text/") or mime in (
-                    "application/json", "application/xml",
-                    "application/x-yaml", "application/toml",
-                    "text/x-python", "application/javascript",
-                )
-                if is_text:
-                    data = fp.read_text(encoding="utf-8", errors="replace")
-                    encoding = "utf-8"
-                else:
-                    data = base64.b64encode(fp.read_bytes()).decode("ascii")
-                    encoding = "base64"
-            except Exception as e:
-                logger.debug("Cannot read sandbox file %s: %s", filename, e)
-                continue
-
-            artifacts.append(DisplayArtifact(
-                type=mime,
-                data=data,
-                encoding=encoding,
-                display_type="file",
-                metadata={
-                    "filename": filename,
-                    "size_bytes": size,
-                    "extension": ext,
-                    "downloadable": True,
-                },
-            ))
+            _emit(fp, source="sandbox_dir")
     except Exception as e:
-        logger.debug("File artifact collection error: %s", e)
+        logger.debug("sandbox_dir scan error: %s", e)
+
+    # 2. Scan /tmp for files written via libraries that bypass our sandboxed
+    #    open() (e.g. openpyxl/zipfile/python-pptx use builtins.open directly).
+    #    Only pick up files newer than start_time, with known extensions.
+    if start_time is not None:
+        scan_dirs = ["/tmp", str(Path.cwd())]
+        wanted_exts = set(_FILE_MIME_TYPES.keys())
+        for sd in scan_dirs:
+            try:
+                p = Path(sd)
+                if not p.exists() or not p.is_dir():
+                    continue
+                # Don't recurse into deep system trees — top-level only
+                for fp in p.iterdir():
+                    if not fp.is_file():
+                        continue
+                    if fp.suffix.lower() not in wanted_exts:
+                        continue
+                    try:
+                        if fp.stat().st_mtime < start_time - 0.5:
+                            continue
+                    except OSError:
+                        continue
+                    _emit(fp, source=f"scan:{sd}")
+            except Exception as e:
+                logger.debug("scan dir %s error: %s", sd, e)
+
     return artifacts
+
 
 
 # ---------------------------------------------------------------------------
@@ -915,6 +1008,7 @@ class PythonSandbox(BaseSandbox):
         # ---- Per-execution sandbox directory for file I/O ----
         exec_id = execution_id or str(uuid.uuid4())
         sandbox_dir = Path(_tempfile_mod.mkdtemp(prefix=f"sbx_{exec_id[:8]}_"))
+        _exec_started_at = time.time()
 
         # ---- Captures ----
         captured_output = _io.StringIO()
@@ -1101,9 +1195,14 @@ class PythonSandbox(BaseSandbox):
             except ImportError:
                 pass
 
-            # Collect files written to sandbox_dir as downloadable artifacts.
-            # Skip injected input files that were NOT modified by the code.
-            file_artifacts = _collect_file_artifacts(sandbox_dir, _injected_mtimes)
+            # Collect files written to sandbox_dir AND scan /tmp for files
+            # written via libraries that bypass our sandboxed open() (openpyxl,
+            # python-pptx, zipfile, etc.). Each collected file is also
+            # persisted to the Railway volume + Supabase Storage so the
+            # frontend can fetch it via /files/{file_id}/download.
+            file_artifacts = _collect_file_artifacts(
+                sandbox_dir, _injected_mtimes, start_time=_exec_started_at
+            )
             captured_artifacts.extend(file_artifacts)
 
             stdout_str = captured_output.getvalue()
