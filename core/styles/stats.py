@@ -182,23 +182,48 @@ def aggregate(stats_list: List[Dict[str, Any]]) -> Dict[str, Any]:
     if not stats_list:
         return {}
 
+    # Coerce JSON-roundtripped values back to numbers. Postgres jsonb may store
+    # ints/floats correctly, but other DB drivers (or hand-edited rows) can
+    # leave numeric fields as strings — which would crash sum()/+= below with
+    # "unsupported operand type(s) for +=: 'float' and 'str'".
+    def _num(v: Any, default: float = 0.0) -> float:
+        if v is None or v == "":
+            return default
+        if isinstance(v, bool):
+            return float(v)
+        if isinstance(v, (int, float)):
+            return float(v)
+        try:
+            return float(v)
+        except (TypeError, ValueError):
+            return default
+
+    def _int(v: Any, default: int = 0) -> int:
+        return int(_num(v, default))
+
     def avg(key: str) -> float:
-        vals = [s.get(key, 0) or 0 for s in stats_list]
+        vals = [_num(s.get(key, 0)) for s in stats_list]
         return round(sum(vals) / len(vals), 3) if vals else 0.0
 
     # Aggregate punctuation density per 1000 chars
-    total_chars = max(1, sum(s.get("char_count", 0) for s in stats_list))
+    total_chars = max(1, sum(_int(s.get("char_count", 0)) for s in stats_list))
     punct_keys = ["comma","semicolon","colon","em_dash","ellipsis","exclam","question","open_paren"]
     punct_density = {
-        k: round(sum(s.get("punctuation",{}).get(k,0) for s in stats_list) / total_chars * 1000.0, 3)
+        k: round(
+            sum(_int((s.get("punctuation") or {}).get(k, 0)) for s in stats_list)
+            / total_chars * 1000.0,
+            3,
+        )
         for k in punct_keys
     }
 
-    # AI fingerprint occurrences
-    fp = Counter()
+    # AI fingerprint occurrences — coerce values; drop anything non-numeric.
+    fp: Counter = Counter()
     for s in stats_list:
         for k, v in (s.get("ai_fingerprints") or {}).items():
-            fp[k] += v
+            n = _int(v, 0)
+            if n:
+                fp[k] += n
 
     return {
         "samples":            len(stats_list),
