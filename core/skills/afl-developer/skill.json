@@ -5,7 +5,7 @@
   "category": "code",
   "tools": ["execute_python"],
   "output_type": "code",
-  "max_tokens": 163840,
+  "max_tokens": 32000,
   "timeout": 18000,
   "enabled": true,
   "aliases": ["amibroker-afl-developer", "afl", "amibroker", "afl-expert", "amibroker-developer"]

@@ -287,7 +287,7 @@ class AnthropicProvider(BaseLLMProvider):
         except Exception as e:
             logger.error("Anthropic chat error: %s", e, exc_info=True)
             return LLMResponse(
-                text="",
+                text=f"[Anthropic API error: {e}]",
                 finish_reason="error",
                 usage={},
             )
