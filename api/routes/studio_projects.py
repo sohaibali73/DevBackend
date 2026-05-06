@@ -44,7 +44,7 @@ router = APIRouter(prefix="/studio/projects", tags=["studio"])
 # -----------------------------------------------------------------------------
 
 class CreateProjectRequest(BaseModel):
-    kind: str  # 'pptx' | 'docx' | 'chat'
+    kind: str  # 'pptx' | 'docx' | 'chat' | 'site'
     title: Optional[str] = None
     description: str = ""
     style_profile_id: Optional[str] = None
@@ -97,7 +97,7 @@ async def create_project(
 
 @router.get("")
 async def list_projects(
-    kind: Optional[str] = Query(None, regex="^(pptx|docx|chat)$"),
+    kind: Optional[str] = Query(None, regex="^(pptx|docx|chat|site)$"),
     include_archived: bool = Query(False),
     limit: int = Query(100, ge=1, le=500),
     offset: int = Query(0, ge=0),
@@ -253,13 +253,18 @@ async def upload_artifact(
 
     name = file.filename or "uploaded.bin"
     ext = name.rsplit(".", 1)[-1].lower() if "." in name else ""
-    if ext not in ("pptx", "docx"):
+    # site uploads come in as a zip bundle
+    if ext == "zip":
+        kind = "site"
+    elif ext in ("pptx", "docx"):
+        kind = ext
+    else:
         raise HTTPException(status_code=400, detail=f"unsupported extension: .{ext}")
 
     artifact = studio.register_artifact_from_bytes(
         user_id=user_id,
         project_id=project_id,
-        kind=ext,
+        kind=kind,
         data=content,
         filename=name,
         meta={"source": "user_upload"},

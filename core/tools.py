@@ -2089,6 +2089,82 @@ TOOL_DEFINITIONS = [
             "required": ["text"]
         }
     },
+    # ── Content Studio: Sites (Lovable-style website builder) ────────────────
+    # generate_site / revise_site emit a multi-file static HTML/CSS/JS bundle
+    # that is captured as a versioned 'site' artifact under the active Studio
+    # project, previewable in an iframe and publishable to a public subdomain.
+    {
+        "name": "generate_site",
+        "description": (
+            "Generate a complete static website (HTML / CSS / JS) as a multi-file "
+            "bundle. Use this whenever the user asks to build, design, or scaffold "
+            "a website, landing page, portfolio, marketing page, microsite, or web app "
+            "front-end. Output is a versioned site artifact in the active Content "
+            "Studio project, previewable in an iframe and publishable to a public "
+            "subdomain.\n\n"
+            "REQUIREMENTS:\n"
+            "- The `files` dict MUST contain an `index.html` at the root.\n"
+            "- All assets are relative paths (e.g. styles/main.css, scripts/app.js).\n"
+            "- Use modern, accessible, mobile-first HTML5 + CSS. No build tools. "
+            "You may inline Tailwind via CDN if helpful.\n"
+            "- Do NOT include server-side files (.py, .php, .rb, .sh, etc.) — "
+            "they will be rejected. Static-only.\n"
+            "- Keep total bundle ≤ 50 MB and ≤ 200 files."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "title":       {"type": "string", "description": "Human-readable site title."},
+                "description": {"type": "string", "description": "One-sentence summary."},
+                "files": {
+                    "type": "object",
+                    "description": (
+                        "Map of relative file paths to their full text content. "
+                        "MUST include 'index.html'."
+                    ),
+                    "additionalProperties": {"type": "string"},
+                },
+            },
+            "required": ["title", "files"],
+        },
+    },
+    {
+        "name": "revise_site",
+        "description": (
+            "Apply targeted edit operations to an existing Content Studio site "
+            "artifact and produce a new version. Use this when the user asks to "
+            "modify, restyle, fix, or extend a site they already generated. "
+            "Operations are applied in order to the file map of the previous version.\n\n"
+            "Supported ops:\n"
+            "  {op:'write',  path:'index.html', content:'...'}  // add or replace\n"
+            "  {op:'delete', path:'old.html'}\n"
+            "  {op:'rename', from:'a.css', to:'b.css'}\n\n"
+            "If artifact_id is omitted, the LATEST site artifact in the conversation's "
+            "Studio project is used."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "artifact_id": {"type": "string"},
+                "summary":     {"type": "string"},
+                "ops": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "op":      {"type": "string", "enum": ["write", "delete", "rename"]},
+                            "path":    {"type": "string"},
+                            "content": {"type": "string"},
+                            "from":    {"type": "string"},
+                            "to":      {"type": "string"},
+                        },
+                        "required": ["op"],
+                    },
+                },
+            },
+            "required": ["ops"],
+        },
+    },
 ]
 
 
@@ -5362,6 +5438,26 @@ def handle_tool_call(
             result = _create_word_document(tool_input, api_key)
         elif tool_name == "create_pptx_with_skill":
             result = _create_pptx_with_skill(tool_input, api_key)
+        elif tool_name == "generate_site":
+            # Content Studio: Lovable-style website generation.
+            try:
+                from core.tools_v2.site_tools import handle_generate_site
+                _site_json = handle_generate_site(tool_input, api_key=api_key)
+                result = json.loads(_site_json)
+            except Exception as _site_err:
+                result = {"status": "error", "error": str(_site_err), "tool": "generate_site"}
+        elif tool_name == "revise_site":
+            try:
+                from core.tools_v2.site_tools import handle_revise_site
+                # Inject conversation_id so the handler can resolve the latest
+                # site artifact in the active Studio project.
+                _ti = dict(tool_input or {})
+                if conversation_id and "conversation_id" not in _ti:
+                    _ti["conversation_id"] = conversation_id
+                _site_json = handle_revise_site(_ti, api_key=api_key)
+                result = json.loads(_site_json)
+            except Exception as _site_err:
+                result = {"status": "error", "error": str(_site_err), "tool": "revise_site"}
         elif tool_name == "humanize_text":
             # Multi-pass advanced humanizer (AI detector bypass + LinkedIn SEO + voice clone).
             try:

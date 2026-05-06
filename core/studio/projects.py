@@ -51,6 +51,7 @@ PROJECTS_ROOT = os.path.join(STORAGE_ROOT, "projects")
 _MIME = {
     "pptx": "application/vnd.openxmlformats-officedocument.presentationml.presentation",
     "docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    "site": "application/zip",
 }
 
 
@@ -125,7 +126,7 @@ def create_project(
     Create a project + its underlying conversation (or reuse an existing one).
     Returns the full project row including conversation_id.
     """
-    if kind not in ("pptx", "docx", "chat"):
+    if kind not in ("pptx", "docx", "chat", "site"):
         raise ValueError(f"Invalid kind: {kind}")
 
     db = _db()
@@ -365,19 +366,31 @@ def register_artifact_from_bytes(
     set_current: bool = True,
 ) -> Dict[str, Any]:
     """Persist bytes to volume and insert a studio_artifacts row."""
-    if kind not in ("pptx", "docx"):
+    if kind not in ("pptx", "docx", "site"):
         raise ValueError(f"Invalid kind: {kind}")
 
     db = _db()
     version = _next_version(project_id, user_id)
-    safe_fn = _safe_name(filename) or f"v{version}.{kind}"
-    abs_path = _version_filename(project_id, version, kind)
+    # Site artifacts are stored as a single zip on the volume; the public
+    # router / preview endpoint extracts to v{n}_files/ on demand.
+    ext = "zip" if kind == "site" else kind
+    safe_fn = _safe_name(filename) or f"v{version}.{ext}"
+    abs_path = _version_filename(project_id, version, ext)
 
     with open(abs_path, "wb") as f:
         f.write(data)
 
     slides = _slide_count(data) if kind == "pptx" else None
     pages = _page_count(data) if kind == "docx" else None
+    file_count = None
+    if kind == "site":
+        try:
+            from core.studio.sites import extract_site_bundle, count_files_in_zip
+            file_count = count_files_in_zip(data)
+            # Eagerly extract for fast preview/publish
+            extract_site_bundle(project_id, version, data)
+        except Exception as e:
+            logger.warning("site extract failed for %s v%d: %s", project_id, version, e)
 
     row = {
         "user_id": user_id,
@@ -392,6 +405,7 @@ def register_artifact_from_bytes(
         "size_bytes": len(data),
         "slide_count": slides,
         "page_count": pages,
+        "file_count": file_count,
         "edit_state": edit_state,
         "meta": meta or {},
     }

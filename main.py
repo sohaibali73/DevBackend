@@ -36,6 +36,25 @@ app.add_middleware(
 )
 
 
+# ── Public Sites: Host-header subdomain router (Lovable-style) ───────────────
+# Runs BEFORE the rate limiter so a request like
+#   Host: my-portfolio.sites.potomacai.com  →  /index.html
+# is served straight from the published bundle without traversing the
+# normal API rate-limit / auth pipeline. Activates only when
+# PUBLIC_SITES_BASE_DOMAINS is set (e.g. "sites.potomacai.com").
+@app.middleware("http")
+async def public_sites_host_middleware(request: Request, call_next):
+    try:
+        from api.routes.public_sites import serve_host_routed
+        resp = await serve_host_routed(request)
+        if resp is not None:
+            return resp
+    except Exception as _e:
+        # Never let the public-sites router crash the rest of the API.
+        logger.warning("public_sites_host_middleware error: %s", _e)
+    return await call_next(request)
+
+
 # Simple in-memory rate limiting middleware
 from collections import defaultdict
 import time as _time
@@ -512,6 +531,27 @@ try:
 except Exception as e:
     routers_failed.append(("studio_humanize", str(e)))
     logger.error(f"✗ Failed to load studio_humanize router: {e}")
+    logger.debug(traceback.format_exc())
+
+# ── Content Studio: Sites (Lovable-style website builder) ────────────────────
+try:
+    from api.routes import studio_sites
+    app.include_router(studio_sites.router)
+    routers_loaded.append("studio_sites")
+    logger.info("✓ Loaded studio_sites router (Lovable-style site builder: preview, publish, subdomains)")
+except Exception as e:
+    routers_failed.append(("studio_sites", str(e)))
+    logger.error(f"✗ Failed to load studio_sites router: {e}")
+    logger.debug(traceback.format_exc())
+
+try:
+    from api.routes import public_sites
+    app.include_router(public_sites.router)
+    routers_loaded.append("public_sites")
+    logger.info("✓ Loaded public_sites router (anonymous /s/{subdomain}/* path-based hosting)")
+except Exception as e:
+    routers_failed.append(("public_sites", str(e)))
+    logger.error(f"✗ Failed to load public_sites router: {e}")
     logger.debug(traceback.format_exc())
 
 # Start background task cleanup loop on app startup

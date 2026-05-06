@@ -31,7 +31,7 @@ from typing import Any, Dict, Optional
 logger = logging.getLogger(__name__)
 
 
-# Map: tool name → file kind ('pptx' | 'docx')
+# Map: tool name → file kind ('pptx' | 'docx' | 'site')
 _FILE_TOOL_MAP = {
     "create_pptx_with_skill": "pptx",
     "create_word_document":   "docx",
@@ -40,6 +40,8 @@ _FILE_TOOL_MAP = {
     "generate_pptx_template": "pptx",
     "revise_pptx":            "pptx",
     "generate_docx":          "docx",
+    "generate_site":          "site",
+    "revise_site":            "site",
 }
 
 
