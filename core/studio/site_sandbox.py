@@ -112,19 +112,49 @@ def is_react_site(files: Dict[str, str]) -> bool:
 # React import stripping (same logic as node_sandbox)
 # ---------------------------------------------------------------------------
 
-_REACT_IMPORT_PATTERNS = [
-    r"import\s+React\s*,?\s*(?:\{[^}]*\})?\s*from\s+['\"]react['\"][ \t]*;?[ \t]*\n?",
-    r"import\s*\{[^}]*\}\s*from\s+['\"]react['\"][ \t]*;?[ \t]*\n?",
-    r"import\s*\*\s*as\s+\w+\s+from\s+['\"]react['\"][ \t]*;?[ \t]*\n?",
-    r"import\s+\w+\s+from\s+['\"]react-dom['\"][ \t]*;?[ \t]*\n?",
-    r"import\s*\{[^}]*\}\s*from\s+['\"]react-dom(?:/client|/server)?['\"][ \t]*;?[ \t]*\n?",
-]
+# All package imports that are handled by the ESM importmap — these get
+# stripped from inlined modules because the wrapper's top-level import
+# already provides them (React, framer-motion, lucide-react, etc.).
+_ESM_PACKAGE_NAMES = None  # lazy-loaded from the importmap
+
+def _get_esm_package_names() -> set:
+    """Return the set of package names in the ESM importmap."""
+    global _ESM_PACKAGE_NAMES
+    if _ESM_PACKAGE_NAMES is None:
+        imap = _get_esm_import_map()
+        _ESM_PACKAGE_NAMES = set(imap.keys())
+    return _ESM_PACKAGE_NAMES
 
 
-def _strip_react_imports(code: str) -> str:
-    for p in _REACT_IMPORT_PATTERNS:
-        code = re.sub(p, "", code, flags=re.MULTILINE)
-    return code
+def _strip_all_package_imports(code: str) -> str:
+    """
+    Strip ALL import statements that reference packages in the ESM importmap.
+    This prevents 'Identifier X has already been declared' when multiple
+    components import the same package and get inlined into one script block.
+    
+    Handles:
+      import { motion } from 'framer-motion';
+      import { ArrowRight, Play } from 'lucide-react';
+      import React, { useState } from 'react';
+      import axios from 'axios';
+      import * as d3 from 'd3';
+    """
+    pkg_names = _get_esm_package_names()
+    
+    lines = code.split("\n")
+    out = []
+    for line in lines:
+        stripped = line.strip()
+        # Match: import ... from 'package-name'
+        m = re.match(r"""import\s+.*?\s+from\s+['"]([^'"]+)['"]""", stripped)
+        if m:
+            pkg = m.group(1)
+            # Check if the package (or its root) is in the importmap
+            root = "/".join(pkg.split("/")[:2]) if pkg.startswith("@") else pkg.split("/")[0]
+            if pkg in pkg_names or root in pkg_names:
+                continue  # skip this line
+        out.append(line)
+    return "\n".join(out)
 
 
 def _strip_export_default(code: str) -> Tuple[str, Optional[str]]:
@@ -321,8 +351,9 @@ def wrap_react_site(files: Dict[str, str], title: str = "Site Preview") -> Dict[
     # Find the entry component file
     entry_path, entry_source = _find_entry_component(jsx_files)
 
-    # Process the entry component
-    entry_source = _strip_react_imports(entry_source)
+    # Process the entry component — strip ALL package imports (React, framer-motion,
+    # lucide-react, etc.) since the wrapper provides them via the top-level import.
+    entry_source = _strip_all_package_imports(entry_source)
     local_names = set(jsx_files.keys())
     entry_source = _strip_local_imports(entry_source, local_names)
     entry_source, entry_name = _strip_export_default(entry_source)
@@ -337,7 +368,7 @@ def wrap_react_site(files: Dict[str, str], title: str = "Site Preview") -> Dict[
     for path, source in jsx_files.items():
         if path == entry_path:
             continue
-        processed = _strip_react_imports(source)
+        processed = _strip_all_package_imports(source)
         processed = _strip_local_imports(processed, local_names)
         processed, comp_name = _strip_export_default(processed)
         # Strip named exports

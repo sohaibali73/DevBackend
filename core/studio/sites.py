@@ -146,18 +146,30 @@ def build_zip_from_files(files: Dict[str, Union[str, bytes]]) -> bytes:
     # ── React sandbox pass ────────────────────────────────────────────────
     # Auto-detect JSX/React and wrap the bundle so it renders properly.
     # Pure HTML/CSS/JS sites pass through unchanged.
+    #
+    # IMPORTANT: We keep the original JSX source files in the zip alongside
+    # the generated index.html so that revise_site can read them back and
+    # apply targeted edits to individual components (not the monolithic HTML).
+    # Original sources are stored under _src/{path} (prefixed to avoid
+    # collision with the sandbox output).
     try:
         from core.studio.site_sandbox import wrap_react_site, is_react_site
         str_files = {k: v for k, v in files.items() if isinstance(v, str)}
         if is_react_site(str_files):
             logger.info("build_zip_from_files: React detected — wrapping via sandbox")
+            # Preserve originals under _src/ so revise_site can read them back
+            originals: Dict[str, Union[str, bytes]] = {}
+            for k, v in files.items():
+                if isinstance(v, str):
+                    originals[f"_src/{k}"] = v
             wrapped = wrap_react_site(str_files, title="Site Preview")
-            # Merge: wrapped replaces any str files; keep binary pass-throughs
+            # Merge: wrapped replaces any str files; keep binary pass-throughs + originals
             merged: Dict[str, Union[str, bytes]] = {}
             for k, v in files.items():
                 if not isinstance(v, str):
                     merged[k] = v  # binary asset — keep
             merged.update(wrapped)
+            merged.update(originals)
             files = merged
     except Exception as e:
         logger.warning("React sandbox wrap failed (continuing with raw files): %s", e)
@@ -261,14 +273,44 @@ def read_site_files_as_dict(artifact: Dict[str, Any]) -> Dict[str, str]:
     Load all text-decodable files in the artifact's bundle into a {path: text}
     dict. Binary files are returned as base64-prefixed strings ('b64:<...>').
     Used by the `revise_site` tool so the LLM has full context.
+
+    For React sites: if the bundle contains a ``_src/`` directory (original
+    JSX source files preserved by ``build_zip_from_files``), those are
+    returned INSTEAD of the sandbox-generated index.html so that
+    ``revise_site`` edits individual component files — not the monolithic
+    HTML. The ``_src/`` prefix is stripped from paths.
     """
     import base64
     root = site_root_for_artifact(artifact)
+
+    # Check if _src/ originals exist (React sites)
+    src_dir = os.path.join(root, "_src")
+    has_src = os.path.isdir(src_dir)
+
     out: Dict[str, str] = {}
     for dirpath, _dirs, files in os.walk(root):
         for fn in files:
             full = os.path.join(dirpath, fn)
             rel = os.path.relpath(full, root).replace("\\", "/")
+
+            # If _src/ exists, skip everything EXCEPT _src/* and binary assets
+            if has_src:
+                if rel.startswith("_src/"):
+                    # Strip the _src/ prefix to get the original path
+                    original_rel = rel[5:]  # len("_src/") == 5
+                    try:
+                        with open(full, "rb") as f:
+                            blob = f.read()
+                        try:
+                            out[original_rel] = blob.decode("utf-8")
+                        except UnicodeDecodeError:
+                            out[original_rel] = "b64:" + base64.b64encode(blob).decode("ascii")
+                    except Exception as e:
+                        logger.warning("could not read %s: %s", full, e)
+                # Skip generated files (index.html, CSS copies) — use _src originals
+                continue
+
+            # No _src/ → plain HTML site, read everything
             try:
                 with open(full, "rb") as f:
                     blob = f.read()
