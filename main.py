@@ -273,6 +273,16 @@ except Exception as e:
     logger.debug(traceback.format_exc())
 
 try:
+    from api.routes import skills_upload
+    app.include_router(skills_upload.router)
+    routers_loaded.append("skills_upload")
+    logger.info("✓ Loaded skills_upload router (User skill bundle upload / edit / delete)")
+except Exception as e:
+    routers_failed.append(("skills_upload", str(e)))
+    logger.error(f"✗ Failed to load skills_upload router: {e}")
+    logger.debug(traceback.format_exc())
+
+try:
     from api.routes import yfinance
     app.include_router(yfinance.router)
     routers_loaded.append("yfinance")
@@ -634,6 +644,125 @@ async def startup_copy_pptx_assets():
         logger.info("✓ Copied %d Potomac PPTX logo assets → %s", copied, dst)
     except Exception as e:
         logger.warning("startup_copy_pptx_assets: could not copy assets: %s", e)
+
+
+@app.on_event("startup")
+async def startup_reconcile_user_skills():
+    """
+    Reconcile uploaded skills on boot:
+
+      1. For every row in `user_skills` whose folder is missing on disk
+         (typical after Railway redeploys ephemeral FS), download the
+         archived zip from Supabase Storage and re-extract it.
+      2. For every folder under core/skills/ and ClaudeSkills/ that lacks
+         a DB row, insert one with source='system' so the registry stays
+         consistent.
+
+    Failures are logged but never block startup.
+    """
+    try:
+        import io
+        import zipfile
+        from pathlib import Path as _Path
+        from db.supabase_client import get_supabase
+        from core.skills import skill_storage, invalidate_cache
+        from core.skills.uploads import (
+            extract_and_validate, materialize, decide_storage_kind,
+            LIGHTWEIGHT_ROOT, BUNDLE_ROOT, delete_on_disk,
+        )
+
+        sb = get_supabase()
+        rows = sb.table("user_skills").select(
+            "slug, storage_kind, storage_path, source"
+        ).execute().data or []
+
+        rehydrated, missing = 0, 0
+        for row in rows:
+            slug = row.get("slug")
+            sp = _Path(row.get("storage_path") or "")
+            if sp.exists() and sp.is_dir():
+                continue
+            if (row.get("source") or "system") == "system":
+                # Repo-shipped folders that vanished — just mark disabled
+                missing += 1
+                try:
+                    sb.table("user_skills").update({"enabled": False}).eq("slug", slug).execute()
+                except Exception:
+                    pass
+                continue
+            zip_bytes = skill_storage.download_zip(slug)
+            if zip_bytes is None:
+                logger.warning("Skill '%s' folder missing and no archive in Storage", slug)
+                missing += 1
+                continue
+            try:
+                # Re-extract from archive
+                parsed = extract_and_validate(
+                    zip_bytes, metadata_overrides={"slug": slug},
+                )
+                kind = decide_storage_kind(parsed)
+                # Defensive cleanup if a partial folder somehow exists
+                try:
+                    delete_on_disk(slug)
+                except Exception:
+                    pass
+                target = materialize(parsed, kind)
+                sb.table("user_skills").update({
+                    "storage_path": str(target),
+                    "storage_kind": kind,
+                    "enabled": True,
+                }).eq("slug", slug).execute()
+                rehydrated += 1
+                try:
+                    sb.table("user_skill_audit").insert({
+                        "slug": slug, "actor_id": None,
+                        "action": "rehydrate",
+                        "detail": {"kind": kind},
+                    }).execute()
+                except Exception:
+                    pass
+            except Exception as e:
+                logger.warning("Rehydrate failed for '%s': %s", slug, e)
+                missing += 1
+
+        # Insert system rows for repo-shipped folders that aren't tracked
+        known = {r["slug"] for r in rows}
+        added_system = 0
+        for root, kind in ((LIGHTWEIGHT_ROOT, "lightweight"),
+                           (BUNDLE_ROOT, "bundle")):
+            if not root.exists():
+                continue
+            for folder in root.iterdir():
+                if not folder.is_dir() or folder.name.startswith((".", "_")):
+                    continue
+                if folder.name in known:
+                    continue
+                try:
+                    sb.table("user_skills").insert({
+                        "slug": folder.name,
+                        "name": folder.name,
+                        "description": "",
+                        "category": "general",
+                        "tags": [],
+                        "storage_kind": kind,
+                        "storage_path": str(folder),
+                        "bundle_size": 0,
+                        "file_count": sum(1 for _ in folder.rglob("*") if _.is_file()),
+                        "enabled": True,
+                        "source": "system",
+                        "created_by": None,
+                    }).execute()
+                    added_system += 1
+                except Exception as e:
+                    logger.debug("System row insert skipped for %s: %s", folder.name, e)
+
+        invalidate_cache()
+        logger.info(
+            "✓ user_skills reconciled: %d rehydrated, %d missing/disabled, %d new system rows",
+            rehydrated, missing, added_system,
+        )
+    except Exception as e:
+        logger.warning("startup_reconcile_user_skills failed: %s", e)
 
 
 @app.on_event("startup")

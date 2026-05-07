@@ -54,6 +54,11 @@ class SkillDefinition:
     supports_streaming: bool = True
     # Anthropic built-in skills have no skill_id — set is_builtin=True
     is_builtin: bool = False
+    # Upload-related fields (None for hardcoded portal skills)
+    source: str = "system"            # 'system' | 'upload' | 'inline'
+    storage_kind: str = "portal"      # 'portal' | 'lightweight' | 'bundle'
+    created_by: Optional[str] = None
+    created_at: Optional[str] = None
 
     def to_dict(self) -> Dict[str, Any]:
         """Serialize for the REST API."""
@@ -68,6 +73,10 @@ class SkillDefinition:
             "enabled": self.enabled,
             "supports_streaming": self.supports_streaming,
             "is_builtin": self.is_builtin,
+            "source": self.source,
+            "storage_kind": self.storage_kind,
+            "created_by": self.created_by,
+            "created_at": self.created_at,
         }
 
 
@@ -600,15 +609,52 @@ router = APIRouter(prefix="/skills", tags=["Skills"])
 async def list_all_skills(
     category: Optional[str] = Query(None, description="Filter by category slug"),
     include_builtins: bool = Query(True, description="Include Anthropic built-in skills"),
+    owned: Optional[str] = Query(None, description="Set to 'me' to filter to skills uploaded by the current user"),
     user_id: str = Depends(get_current_user_id),
 ):
-    """List all registered custom beta skills, optionally filtered by category."""
-    skills = list_skills_dict(
+    """
+    List all registered skills:
+      • Hardcoded portal skills (this module's SKILL_REGISTRY)
+      • Filesystem-discovered skills (core/skills/ + ClaudeSkills/) via loader,
+        with DB-decorated source/created_by/created_at when available
+    """
+    portal_skills = list_skills_dict(
         category=category,
         enabled_only=True,
         include_builtins=include_builtins,
     )
-    return {"skills": skills, "count": len(skills)}
+
+    # Merge with loader-discovered skills (uploaded + repo-shipped folders)
+    try:
+        from core.skills.loader import list_skills as fs_list_skills
+        seen_slugs = {s["slug"] for s in portal_skills}
+        for sk in fs_list_skills(category=category, enabled_only=True):
+            if sk.slug in seen_slugs:
+                continue
+            portal_skills.append({
+                "skill_id": "",
+                "name": sk.name,
+                "slug": sk.slug,
+                "description": sk.description,
+                "category": sk.category,
+                "max_tokens": sk.max_tokens,
+                "tags": list(sk.tags or []),
+                "enabled": sk.enabled,
+                "supports_streaming": True,
+                "is_builtin": False,
+                "source": sk.source,
+                "storage_kind": sk.storage_kind,
+                "created_by": sk.created_by,
+                "created_at": sk.created_at,
+            })
+            seen_slugs.add(sk.slug)
+    except Exception as e:
+        logger.warning("Could not merge filesystem skills: %s", e)
+
+    if owned == "me":
+        portal_skills = [s for s in portal_skills if s.get("created_by") == user_id]
+
+    return {"skills": portal_skills, "count": len(portal_skills)}
 
 
 @router.get("/categories")
@@ -638,12 +684,39 @@ async def get_skill_detail(
 ):
     """Get full details for a specific skill by its slug."""
     skill = get_skill(slug)
-    if skill is None:
-        available = sorted(
-            {s.slug for s in list_skills(enabled_only=False, include_builtins=True)}
-        )
-        raise HTTPException(
-            status_code=404,
-            detail=f"Skill '{slug}' not found. Available slugs: {available}",
-        )
-    return skill.to_dict()
+    if skill is not None:
+        return skill.to_dict()
+
+    # Fall back to filesystem-discovered (uploaded / repo-folder) skills
+    try:
+        from core.skills.loader import get_skill as fs_get_skill
+        fs = fs_get_skill(slug)
+        if fs is not None:
+            return {
+                "skill_id": "",
+                "name": fs.name,
+                "slug": fs.slug,
+                "description": fs.description,
+                "category": fs.category,
+                "max_tokens": fs.max_tokens,
+                "tags": list(fs.tags or []),
+                "enabled": fs.enabled,
+                "supports_streaming": True,
+                "is_builtin": False,
+                "source": fs.source,
+                "storage_kind": fs.storage_kind,
+                "created_by": fs.created_by,
+                "created_at": fs.created_at,
+                "system_prompt": fs.system_prompt,
+                "tools": list(fs.tools or []),
+            }
+    except Exception as e:
+        logger.warning("loader fallback failed for %s: %s", slug, e)
+
+    available = sorted(
+        {s.slug for s in list_skills(enabled_only=False, include_builtins=True)}
+    )
+    raise HTTPException(
+        status_code=404,
+        detail=f"Skill '{slug}' not found. Available slugs: {available}",
+    )
