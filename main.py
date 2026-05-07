@@ -68,8 +68,11 @@ _RATE_LIMIT_MAX_REQUESTS = 120  # max requests per window per IP
 async def rate_limit_middleware(request: Request, call_next):
     """Simple rate limiting — 120 requests/minute per IP. Skips health/docs."""
     path = request.url.path
-    # Skip rate limiting for health checks and docs
-    if path in ("/health", "/", "/docs", "/openapi.json", "/routes", "/redoc"):
+    # Skip rate limiting for health checks, docs, AND site preview/public hosting
+    # (a single page load can trigger 20+ asset requests — must not count against limit)
+    if path in ("/health", "/", "/docs", "/openapi.json", "/routes", "/redoc") \
+       or path.startswith("/studio/sites/") \
+       or path.startswith("/s/"):
         return await call_next(request)
     
     client_ip = request.client.host if request.client else "unknown"
