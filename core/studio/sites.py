@@ -131,11 +131,36 @@ def build_zip_from_files(files: Dict[str, Union[str, bytes]]) -> bytes:
     """
     Build a zip from a {relpath: content} dict. Strings are utf-8 encoded.
     Performs the same path safety checks as extraction.
+
+    **React/JSX auto-sandbox**: if the file map contains .jsx/.tsx files or
+    React imports, the bundle is automatically wrapped through the sandbox
+    renderer (same engine as ``execute_react``) so the resulting index.html
+    is a self-contained Babel + ESM importmap page that renders React
+    components in the browser — identical to v0 / Lovable.
     """
     if not isinstance(files, dict) or not files:
         raise ValueError("files must be a non-empty dict")
     if len(files) > MAX_FILES:
         raise ValueError(f"too many files (max {MAX_FILES})")
+
+    # ── React sandbox pass ────────────────────────────────────────────────
+    # Auto-detect JSX/React and wrap the bundle so it renders properly.
+    # Pure HTML/CSS/JS sites pass through unchanged.
+    try:
+        from core.studio.site_sandbox import wrap_react_site, is_react_site
+        str_files = {k: v for k, v in files.items() if isinstance(v, str)}
+        if is_react_site(str_files):
+            logger.info("build_zip_from_files: React detected — wrapping via sandbox")
+            wrapped = wrap_react_site(str_files, title="Site Preview")
+            # Merge: wrapped replaces any str files; keep binary pass-throughs
+            merged: Dict[str, Union[str, bytes]] = {}
+            for k, v in files.items():
+                if not isinstance(v, str):
+                    merged[k] = v  # binary asset — keep
+            merged.update(wrapped)
+            files = merged
+    except Exception as e:
+        logger.warning("React sandbox wrap failed (continuing with raw files): %s", e)
 
     buf = io.BytesIO()
     total = 0

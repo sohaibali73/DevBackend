@@ -2090,26 +2090,40 @@ TOOL_DEFINITIONS = [
         }
     },
     # ── Content Studio: Sites (Lovable-style website builder) ────────────────
-    # generate_site / revise_site emit a multi-file static HTML/CSS/JS bundle
-    # that is captured as a versioned 'site' artifact under the active Studio
-    # project, previewable in an iframe and publishable to a public subdomain.
+    # generate_site / revise_site emit a multi-file HTML/CSS/JS or React/JSX
+    # bundle. React files are auto-detected and wrapped through the same
+    # sandbox engine as execute_react (Babel + ESM importmap + Tailwind CDN).
     {
         "name": "generate_site",
         "description": (
-            "Generate a complete static website (HTML / CSS / JS) as a multi-file "
-            "bundle. Use this whenever the user asks to build, design, or scaffold "
-            "a website, landing page, portfolio, marketing page, microsite, or web app "
-            "front-end. Output is a versioned site artifact in the active Content "
-            "Studio project, previewable in an iframe and publishable to a public "
-            "subdomain.\n\n"
-            "REQUIREMENTS:\n"
-            "- The `files` dict MUST contain an `index.html` at the root.\n"
-            "- All assets are relative paths (e.g. styles/main.css, scripts/app.js).\n"
-            "- Use modern, accessible, mobile-first HTML5 + CSS. No build tools. "
-            "You may inline Tailwind via CDN if helpful.\n"
-            "- Do NOT include server-side files (.py, .php, .rb, .sh, etc.) — "
-            "they will be rejected. Static-only.\n"
-            "- Keep total bundle ≤ 50 MB and ≤ 200 files."
+            "Generate a complete website as a multi-file bundle. Supports TWO modes:\n\n"
+            "MODE 1 — Plain HTML/CSS/JS (default):\n"
+            "  The `files` dict MUST contain an `index.html` at the root.\n"
+            "  Use modern HTML5 + CSS + vanilla JS. Tailwind CDN is fine.\n\n"
+            "MODE 2 — React/JSX (like v0 / Lovable):\n"
+            "  Write .jsx files (e.g. App.jsx, components/Header.jsx).\n"
+            "  The backend AUTO-DETECTS React and wraps the bundle in a sandboxed\n"
+            "  HTML page with Babel + ESM importmap + Tailwind — exactly like the\n"
+            "  execute_react tool. You do NOT need to provide your own index.html;\n"
+            "  one will be generated automatically from the entry component.\n\n"
+            "  Available packages (imported normally in JSX — CDN-backed):\n"
+            "    react, react-dom, lucide-react, recharts, framer-motion, react-router-dom,\n"
+            "    react-hook-form, zustand, jotai, immer, clsx, tailwind-merge, date-fns,\n"
+            "    dayjs, lodash, axios, zod, uuid, d3, chart.js, @headlessui/react,\n"
+            "    @heroicons/react, @radix-ui/react-icons, react-icons\n\n"
+            "  All React hooks (useState, useEffect, useRef, etc.) are pre-imported.\n"
+            "  Export the root component as `export default function App()` in App.jsx.\n"
+            "  Tailwind classes work out of the box.\n\n"
+            "Use this whenever the user asks to build, design, or scaffold a website,\n"
+            "landing page, portfolio, dashboard, marketing page, microsite, or web app.\n"
+            "Output is a versioned site artifact previewable in an iframe and publishable\n"
+            "to a public subdomain.\n\n"
+            "RULES:\n"
+            "- Do NOT include server-side files (.py, .php, .rb, .sh, etc.)\n"
+            "- Keep total bundle ≤ 50 MB and ≤ 200 files.\n"
+            "- For React: put the entry component in App.jsx. Child components go in\n"
+            "  components/ or pages/ subdirs. CSS goes in styles/.\n"
+            "- For plain HTML: put everything under index.html + styles/ + scripts/."
         ),
         "input_schema": {
             "type": "object",
@@ -2119,8 +2133,12 @@ TOOL_DEFINITIONS = [
                 "files": {
                     "type": "object",
                     "description": (
-                        "Map of relative file paths to their full text content. "
-                        "MUST include 'index.html'."
+                        "Map of relative file paths to their full text content.\n"
+                        "For plain HTML: MUST include 'index.html'.\n"
+                        "For React: MUST include 'App.jsx' (index.html is auto-generated).\n\n"
+                        "Examples:\n"
+                        "  Plain: {\"index.html\": \"<!doctype html>...\", \"styles/main.css\": \"...\"}\n"
+                        "  React: {\"App.jsx\": \"export default function App() { return <div>Hi</div> }\"}"
                     ),
                     "additionalProperties": {"type": "string"},
                 },
