@@ -59,6 +59,7 @@ pydantic-settings
 python-multipart
 aiofiles
 email-validator
+PyYAML>=6.0          # SKILL.md frontmatter parsing for user-uploaded skills
 
 # =============================================================================
 # DATA ANALYSIS
