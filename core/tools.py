@@ -472,7 +472,7 @@ TOOL_DEFINITIONS = [
     # Custom: Python Code Execution
     {
         "name": "execute_python",
-        "description": "Execute Python code for calculations, data analysis, or generating AFL formulas. The code runs in a sandboxed environment with access to common libraries like math, statistics, numpy, pandas, matplotlib, seaborn, plotly, yfinance, requests, and more. Use this for complex calculations, backtesting logic, data processing, or generating charts. Charts created with plt.show() are automatically captured as image artifacts. Use display(HTML(...)) or display(SVG(...)) for rich HTML/SVG output.",
+        "description": "Execute Python code for calculations, data analysis, or generating AFL formulas. The code runs in a sandboxed environment with access to common libraries like math, statistics, numpy, pandas, matplotlib, seaborn, plotly, yfinance, requests, and more. Use this for complex calculations, backtesting logic, data processing, or generating charts. Charts created with plt.show() are automatically captured AND persisted to file_store — the response includes a top-level `charts` array of `{file_id, filename, type}` entries. To embed a chart into a Word/PowerPoint document, take the `file_id` from `charts[]` and pass it into a `generate_docx` or `generate_pptx` image section: `{\"type\":\"image\",\"file_id\":\"<file_id>\"}`. This is the ONLY reliable way to embed Python-generated charts into Office documents. Use display(HTML(...)) or display(SVG(...)) for rich HTML/SVG output.",
         "input_schema": {
             "type": "object",
             "properties": {
@@ -2417,6 +2417,36 @@ def execute_python(
                     }
                     for aid, fid in _stored_file_ids.items()
                 ]
+
+            # ── Surface chart/image file_ids at the TOP LEVEL ─────────────────
+            # plt.show() and other image artifacts now persist to file_store
+            # (see python_sandbox._PltCapture.show). The model can pass these
+            # file_ids straight into generate_docx / generate_pptx image
+            # sections so charts get embedded into Word/PowerPoint instead of
+            # silently disappearing.
+            _charts: List[Dict[str, Any]] = []
+            for a in result.artifacts:
+                meta = a.metadata or {}
+                fid = meta.get("file_id")
+                if not fid:
+                    continue
+                if a.display_type != "image":
+                    continue
+                _charts.append({
+                    "file_id":      fid,
+                    "filename":     meta.get("filename", f"chart_{a.artifact_id[:8]}.png"),
+                    "type":         a.type or "image/png",
+                    "download_url": meta.get("download_url", f"/files/{fid}/download"),
+                    "format":       (meta.get("format") or "png"),
+                })
+            if _charts:
+                out["charts"] = _charts
+                # Hint for the model — terse so it stays in context cheaply.
+                out["charts_hint"] = (
+                    "To embed a chart into a Word/PowerPoint doc, pass its "
+                    "file_id in an image section: "
+                    '{"type":"image","file_id":"<file_id>"}.'
+                )
         return out
 
     except Exception as e:

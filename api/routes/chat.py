@@ -1834,6 +1834,94 @@ async def chat_agent(
 
                     final_message = await stream.get_final_message()
 
+                # ── MID-TOOL / MAX-TOKENS RECOVERY (Claude-style continuation) ──
+                # When the model hits the per-message max_tokens cap mid-output
+                # (very common for big PPTX/DOCX JSON specs), Anthropic returns
+                # stop_reason="max_tokens". Two failure modes if not handled:
+                #   (a) A tool_use block was opened but its input JSON was
+                #       truncated → content_block_stop never fired → we'd drop
+                #       the entire call silently and the chat would "give up".
+                #   (b) Plain text was cut mid-sentence → loop exits without
+                #       continuation since stop_reason != "tool_use".
+                #
+                # Fix: detect max_tokens, drop any partial tool_use, then push
+                # the partial assistant content + a synthetic continuation
+                # nudge into the messages list so the next while-iteration
+                # resumes generation cleanly. Capped by _max_continuations.
+                _stop_reason = getattr(final_message, "stop_reason", None) if final_message else None
+                if _stop_reason == "max_tokens":
+                    # Track continuations across iterations of this turn so we
+                    # don't loop forever if the model truly cannot finish.
+                    if "_continuation_count" not in locals():
+                        _continuation_count = 0
+                        _max_continuations = 6
+                    _had_partial_tool = bool(
+                        pending_tool_calls
+                        and not pending_tool_calls[-1].get("input", "").strip().endswith("}")
+                    )
+                    if _had_partial_tool:
+                        # Drop the malformed partial tool_use entirely — it has
+                        # no matching content_block_stop, so we never executed
+                        # it and Claude never saw a tool_result.
+                        try:
+                            _bad = pending_tool_calls.pop()
+                            logger.warning(
+                                "max_tokens: discarded partial tool_use '%s' (id=%s, %d chars of input)",
+                                _bad.get("name"), _bad.get("id"),
+                                len(_bad.get("input", "")),
+                            )
+                        except Exception:
+                            pass
+
+                    if _continuation_count < _max_continuations:
+                        _continuation_count += 1
+                        # Build assistant message from content blocks the API
+                        # actually finished (final_message.content) so Claude
+                        # has perfect awareness of what it already produced.
+                        try:
+                            _assistant_blocks = list(final_message.content or [])
+                        except Exception:
+                            _assistant_blocks = []
+                        if _had_partial_tool:
+                            _nudge = (
+                                "Your previous tool call was truncated due to length. "
+                                "Please retry — split very large tool inputs into multiple "
+                                "smaller calls (e.g. fewer slides/sections per call) and "
+                                "continue from where you left off."
+                            )
+                        else:
+                            _nudge = (
+                                "Your previous response was cut off because it reached the output "
+                                "token limit. Please continue exactly where you left off, without "
+                                "repeating content already produced."
+                            )
+                        if _assistant_blocks:
+                            messages.append({"role": "assistant", "content": _assistant_blocks})
+                        messages.append({"role": "user", "content": _nudge})
+                        # Surface to the UI so the user knows we recovered
+                        yield encoder.encode_data({
+                            "auto_continuation": True,
+                            "reason":            "max_tokens",
+                            "had_partial_tool":  _had_partial_tool,
+                            "continuation":      _continuation_count,
+                            "max_continuations": _max_continuations,
+                        })
+                        # Skip the normal "stop_reason==tool_use" branch and
+                        # loop again — we want another model turn now.
+                        # Fast-forward past usage tracking + parallel/tool-result
+                        # handling for this iteration since there's nothing to do.
+                        # Track usage but skip everything else.
+                        if final_message and hasattr(final_message, "usage"):
+                            for _k in total_usage:
+                                _v = getattr(final_message.usage, _k, 0) if hasattr(final_message.usage, _k) else 0
+                                total_usage[_k] += _v
+                        continue
+                    else:
+                        logger.warning(
+                            "max_tokens: continuation budget exhausted (%d) for conv %s",
+                            _max_continuations, conversation_id,
+                        )
+
                 # NEW: Track per-iteration usage
                 if final_message and hasattr(final_message, 'usage'):
                     iteration_usage = {

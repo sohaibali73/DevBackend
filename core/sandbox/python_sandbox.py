@@ -270,20 +270,44 @@ class _PltCapture:
         self._captured = captured
 
     def show(self, **kwargs):
-        """Capture current figure as PNG artifact instead of displaying."""
+        """Capture current figure as PNG artifact instead of displaying.
+
+        ALSO persists the PNG to ``core.file_store`` so a stable ``file_id`` is
+        available for downstream tools (DOCX/PPTX image embedding, downloads).
+        Without this, ``plt.show()`` charts only existed as inline base64 and
+        could not be embedded into Word documents — they "disappeared".
+        """
         if self._plt is None:
             return
         buf = _io.BytesIO()
         try:
             self._plt.savefig(buf, format="png", bbox_inches="tight", dpi=150)
             buf.seek(0)
-            png_b64 = base64.b64encode(buf.read()).decode("utf-8")
+            raw = buf.read()
+            png_b64 = base64.b64encode(raw).decode("utf-8")
+
+            # ── Persist to file_store so DOCX/PPTX skills can embed via file_id
+            persisted: Dict[str, str] = {}
+            try:
+                import uuid as _uuid
+                _fname = f"plot_{_uuid.uuid4().hex[:8]}.png"
+                persisted = _persist_file_for_download(_fname, raw, ".png") or {}
+                if persisted:
+                    persisted["filename"] = _fname
+            except Exception as _pe:
+                logger.debug("plt.show: persist to file_store failed: %s", _pe)
+
+            meta: Dict[str, Any] = {
+                "format": "png",
+                "source": "matplotlib",
+            }
+            meta.update(persisted)  # adds file_id + download_url + filename
             self._captured.append(DisplayArtifact(
                 type="image/png",
                 data=png_b64,
                 encoding="base64",
                 display_type="image",
-                metadata={"format": "png", "source": "matplotlib"},
+                metadata=meta,
             ))
         finally:
             self._plt.close("all")
