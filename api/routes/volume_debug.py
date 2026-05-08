@@ -180,19 +180,29 @@ async def _list_dir(dirpath: str, x_debug_key: Optional[str]):
     try:
         for p in sorted(target.iterdir()):
             rel = str(p.relative_to(VOLUME_PATH))
+            try:
+                st = p.stat()
+                mtime = st.st_mtime
+            except OSError:
+                st = None
+                mtime = None
             if p.is_dir():
-                items.append({"name": p.name, "path": rel, "type": "directory", "size_bytes": None})
+                items.append({
+                    "name": p.name,
+                    "path": rel,
+                    "type": "directory",
+                    "size_bytes": None,
+                    "mtime": mtime,
+                })
             else:
-                try:
-                    size = p.stat().st_size
-                except OSError:
-                    size = 0
+                size = st.st_size if st else 0
                 items.append({
                     "name": p.name,
                     "path": rel,
                     "type": "file",
                     "size_bytes": size,
                     "size_kb": round(size / 1024, 1),
+                    "mtime": mtime,
                 })
     except PermissionError as e:
         raise HTTPException(status_code=403, detail=str(e))
@@ -467,8 +477,13 @@ _UI_HTML = r"""<!doctype html>
   .name a:hover{color:var(--accent)}
   .actions{display:flex;gap:6px;justify-content:flex-end}
   .actions button{padding:5px 9px;font-size:12px}
-  .size{color:var(--muted);font-variant-numeric:tabular-nums;font-size:12.5px;white-space:nowrap}
+  .size,.mtime{color:var(--muted);font-variant-numeric:tabular-nums;font-size:12.5px;white-space:nowrap}
   .empty{padding:40px;text-align:center;color:var(--muted)}
+  th.sortable{cursor:pointer;user-select:none}
+  th.sortable:hover{color:var(--accent)}
+  th.sortable .arrow{display:inline-block;margin-left:4px;opacity:.5;font-size:10px}
+  th.sortable.active{color:var(--accent)}
+  th.sortable.active .arrow{opacity:1}
 
   .drop{border:2px dashed var(--line);border-radius:12px;padding:20px;margin:14px 0;text-align:center;color:var(--muted);
         transition:.2s}
@@ -489,7 +504,8 @@ _UI_HTML = r"""<!doctype html>
   .progress > div{height:100%;background:linear-gradient(90deg,var(--accent),var(--accent2));width:0}
 
   @media (max-width:640px){
-    th.col-size,td.col-size{display:none}
+    th.col-size,td.col-size,
+    th.col-mtime,td.col-mtime{display:none}
   }
 </style>
 </head>
@@ -542,9 +558,10 @@ _UI_HTML = r"""<!doctype html>
       <table>
         <thead>
           <tr>
-            <th style="width:50%">Name</th>
-            <th class="col-size" style="width:120px">Size</th>
-            <th style="width:100px">Type</th>
+            <th class="sortable" data-sort="name"   style="width:38%">Name<span class="arrow"></span></th>
+            <th class="sortable col-size"  data-sort="size"   style="width:110px">Size<span class="arrow"></span></th>
+            <th class="sortable col-mtime" data-sort="mtime"  style="width:170px">Modified<span class="arrow"></span></th>
+            <th style="width:90px">Type</th>
             <th style="width:240px;text-align:right">Actions</th>
           </tr>
         </thead>
@@ -571,8 +588,11 @@ const els = {
 };
 
 const KEY_STORAGE = 'volume_debug_key';
+const SORT_STORAGE = 'volume_sort';
 let KEY = localStorage.getItem(KEY_STORAGE) || '';
 let CWD = ''; // relative path within volume
+let SORT = JSON.parse(localStorage.getItem(SORT_STORAGE) || 'null') || {by:'mtime', dir:'desc'};
+let LAST_ITEMS = [];
 
 function toast(msg, kind='ok'){
   const el = document.createElement('div');
@@ -588,6 +608,43 @@ function fmtSize(b){
   if(b < 1024*1024) return (b/1024).toFixed(1) + ' KB';
   if(b < 1024*1024*1024) return (b/1048576).toFixed(2) + ' MB';
   return (b/1073741824).toFixed(2) + ' GB';
+}
+function fmtDate(secs){
+  if(!secs) return '';
+  const d = new Date(secs * 1000);
+  const now = new Date();
+  const sameDay = d.toDateString() === now.toDateString();
+  const opts = sameDay
+    ? {hour:'2-digit', minute:'2-digit'}
+    : (d.getFullYear() === now.getFullYear()
+        ? {month:'short', day:'2-digit', hour:'2-digit', minute:'2-digit'}
+        : {year:'numeric', month:'short', day:'2-digit'});
+  return d.toLocaleString(undefined, opts);
+}
+
+function sortItems(items){
+  // Always: directories first, then files; within each group, apply SORT.
+  const dirs  = items.filter(i => i.type === 'directory');
+  const files = items.filter(i => i.type !== 'directory');
+  const cmp = (a,b) => {
+    let av, bv;
+    if(SORT.by === 'name'){ av = (a.name||'').toLowerCase(); bv = (b.name||'').toLowerCase(); }
+    else if(SORT.by === 'size'){ av = a.size_bytes ?? -1; bv = b.size_bytes ?? -1; }
+    else { av = a.mtime ?? 0; bv = b.mtime ?? 0; }
+    if(av < bv) return SORT.dir === 'asc' ? -1 :  1;
+    if(av > bv) return SORT.dir === 'asc' ?  1 : -1;
+    return (a.name||'').localeCompare(b.name||'');
+  };
+  dirs.sort(cmp); files.sort(cmp);
+  return [...dirs, ...files];
+}
+
+function updateSortHeaders(){
+  document.querySelectorAll('th.sortable').forEach(th => {
+    const isActive = th.dataset.sort === SORT.by;
+    th.classList.toggle('active', isActive);
+    th.querySelector('.arrow').textContent = isActive ? (SORT.dir === 'asc' ? '▲' : '▼') : '';
+  });
 }
 function iconFor(item){
   if(item.type === 'directory') return '📁';
@@ -644,21 +701,15 @@ function escapeHtml(s){ return String(s).replace(/[&<>"']/g, c => ({'&':'&amp;',
 
 async function load(){
   renderCrumbs();
-  els.rows.innerHTML = `<tr><td colspan="4" style="color:var(--muted);padding:24px;text-align:center">Loading…</td></tr>`;
+  els.rows.innerHTML = `<tr><td colspan="5" style="color:var(--muted);padding:24px;text-align:center">Loading…</td></tr>`;
   els.empty.classList.add('hidden');
   try {
     const data = await api(`/volume/ls/${encodeURI(CWD)}`);
-    const items = data.items || [];
-    if(!items.length){
-      els.rows.innerHTML = '';
-      els.empty.classList.remove('hidden');
-    } else {
-      els.rows.innerHTML = items.map(it => row(it)).join('');
-      bindRowEvents();
-    }
+    LAST_ITEMS = data.items || [];
+    renderRows();
     els.stats.textContent = `${data.directories || 0} folders · ${data.files || 0} files`;
   } catch(e){
-    els.rows.innerHTML = `<tr><td colspan="4" style="color:var(--err);padding:24px;text-align:center">${escapeHtml(e.message)}</td></tr>`;
+    els.rows.innerHTML = `<tr><td colspan="5" style="color:var(--err);padding:24px;text-align:center">${escapeHtml(e.message)}</td></tr>`;
   }
 
   // disk info (best-effort)
@@ -669,6 +720,19 @@ async function load(){
     else
       els.disk.textContent = `${info.total_files || 0} files · ${info.total_size_mb || 0} MB`;
   }catch{}
+}
+
+function renderRows(){
+  updateSortHeaders();
+  if(!LAST_ITEMS.length){
+    els.rows.innerHTML = '';
+    els.empty.classList.remove('hidden');
+    return;
+  }
+  els.empty.classList.add('hidden');
+  const sorted = sortItems(LAST_ITEMS);
+  els.rows.innerHTML = sorted.map(it => row(it)).join('');
+  bindRowEvents();
 }
 
 function row(it){
@@ -682,6 +746,7 @@ function row(it){
         : `<a href="${downloadUrl(it.path)}" download>${escapeHtml(it.name)}</a>`}
     </td>
     <td class="col-size size">${isDir ? '—' : fmtSize(it.size_bytes)}</td>
+    <td class="col-mtime mtime">${fmtDate(it.mtime)}</td>
     <td><span class="pill">${isDir ? 'folder' : 'file'}</span></td>
     <td class="actions">
       ${isDir
@@ -829,6 +894,22 @@ els.zipBtn.onclick = () => {
 };
 els.uploadBtn.onclick = () => els.fileInput.click();
 els.fileInput.addEventListener('change', e => uploadFiles(Array.from(e.target.files)));
+
+// Sortable column headers
+document.querySelectorAll('th.sortable').forEach(th => {
+  th.addEventListener('click', () => {
+    const by = th.dataset.sort;
+    if(SORT.by === by){
+      SORT.dir = SORT.dir === 'asc' ? 'desc' : 'asc';
+    } else {
+      SORT.by = by;
+      // Sensible defaults: name asc, size/mtime desc
+      SORT.dir = (by === 'name') ? 'asc' : 'desc';
+    }
+    localStorage.setItem(SORT_STORAGE, JSON.stringify(SORT));
+    renderRows();
+  });
+});
 
 ['dragenter','dragover'].forEach(ev =>
   els.drop.addEventListener(ev, e => { e.preventDefault(); els.drop.classList.add('over'); }));
