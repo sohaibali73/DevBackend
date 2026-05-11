@@ -134,6 +134,25 @@ async function handlePptx(spec, workdir) {
   }
   const prevCwd = process.cwd();
   const prevArgv = process.argv.slice();
+
+  // CRITICAL: runtime.js writes its own JSON status line to stdout when it
+  // finishes (e.g. `{"status":"ok","filename":"...","warnings":[...]}`).
+  // That collides with the worker's NDJSON protocol — the Python pool would
+  // read runtime.js's line first and interpret it as a worker response
+  // (missing `ok:true` → reported as a generic "Node worker failed"). To
+  // prevent that, intercept stdout writes during runtime.js execution and
+  // forward them to stderr (where they show up as informational logs only).
+  const realStdoutWrite = process.stdout.write.bind(process.stdout);
+  process.stdout.write = (chunk, ...rest) => {
+    try {
+      process.stderr.write('[runtime stdout] ' + String(chunk));
+    } catch (_) { /* ignore */ }
+    // Pretend the write succeeded; the original callback (if any) is `rest[1]`.
+    const cb = typeof rest[rest.length - 1] === 'function' ? rest[rest.length - 1] : null;
+    if (cb) cb();
+    return true;
+  };
+
   try {
     process.chdir(workdir);
     process.argv = [process.argv[0], runtimePath, 'spec.json'];
@@ -158,6 +177,8 @@ async function handlePptx(spec, workdir) {
   } finally {
     process.chdir(prevCwd);
     process.argv = prevArgv;
+    // Restore stdout so the worker's own NDJSON response gets through.
+    process.stdout.write = realStdoutWrite;
   }
 }
 
