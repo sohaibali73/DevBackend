@@ -321,10 +321,12 @@ class _SmartGZipMiddleware(GZipMiddleware):
         # Skip GZip entirely on known streaming routes — they emit tiny
         # chunks and any buffering shows up as multi-second TTFT delay.
         STREAM_PATHS = (
-            "/chat/agent", "/chat/stream", "/chat/sse",
+            "/chat/agent", "/chat/agent/ui-stream",
+            "/chat/stream", "/chat/sse",
             "/ai/", "/agent/", "/researcher/stream",
             "/skills/execute/stream", "/consensus/stream",
         )
+
         if any(path.startswith(p) for p in STREAM_PATHS):
             from starlette.types import ASGIApp
             # Bypass: forward unchanged to the next app.
