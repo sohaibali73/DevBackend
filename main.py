@@ -334,6 +334,17 @@ class _SmartGZipMiddleware(GZipMiddleware):
 
 app.add_middleware(_SmartGZipMiddleware, minimum_size=1024)
 
+# Server-Timing header — adds total;dur=<ms> to every response so the
+# browser DevTools Network panel "Timings" tab shows exactly how long each
+# request spent on the server. Routes can record sub-measurements via
+# ``with perf.span("label"): ...`` for fine-grained breakdowns.
+try:
+    from core.perf import PerfMiddleware
+    app.add_middleware(PerfMiddleware)
+except Exception as _perf_err:
+    logger.warning("PerfMiddleware not loaded: %s", _perf_err)
+
+
 
 
 # ── Public Sites: Host-header subdomain router (Lovable-style) ───────────────
