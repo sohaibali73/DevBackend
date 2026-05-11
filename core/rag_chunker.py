@@ -145,14 +145,39 @@ def generate_embeddings_batch(
     embedding list[float] or None (if the API failed for that batch).
 
     Silently returns all-None if VOYAGE_API_KEY is not configured.
+
+    Prefer the async ``core.embeddings.embed_many`` when called from a FastAPI
+    handler — it uses the shared ``httpx.AsyncClient`` and caches results in
+    Redis. This sync version is kept for offline scripts (bulk_kb_upload, etc.)
+    and as a synchronous fallback. When called from sync code on the server,
+    we still try to route through the cached async path via ``asyncio.run`` if
+    no event loop is already running.
     """
     api_key = api_key or os.getenv("VOYAGE_API_KEY")
     if not api_key:
         return [None] * len(texts)
 
+    # ── Fast path: use the cached async implementation when possible ──────
+    try:
+        import asyncio as _aio
+        from core.embeddings import embed_many as _embed_many
+
+        try:
+            _aio.get_running_loop()
+            # We're inside an event loop — caller should be using await
+            # ``embed_many`` directly. Fall through to the legacy sync path
+            # to avoid nested-loop errors.
+            raise RuntimeError("inside event loop")
+        except RuntimeError:
+            return _aio.run(_embed_many(list(texts), model=model, api_key=api_key))
+    except Exception:
+        # Fall through to legacy urllib path
+        pass
+
     out: List[Optional[List[float]]] = [None] * len(texts)
 
     for batch_start in range(0, len(texts), VOYAGE_BATCH_SIZE):
+
         batch = list(texts[batch_start : batch_start + VOYAGE_BATCH_SIZE])
         # Voyage caps individual inputs at ~32k tokens; truncate aggressively
         batch_trimmed = [t[:8000] for t in batch]

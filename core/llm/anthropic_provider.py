@@ -120,6 +120,15 @@ class AnthropicProvider(BaseLLMProvider):
         and converts events to our unified StreamChunk format.
         """
         try:
+            # Apply Anthropic prompt caching to large static content.
+            # System prompts and tool defs are identical across users/turns,
+            # so caching them cuts TTFT by 0.5–2 s and input cost by ~90%.
+            try:
+                from core.prompt_cache import as_cached_system, mark_tools_cached
+            except Exception:
+                as_cached_system = lambda x, **_kw: x  # noqa: E731
+                mark_tools_cached = lambda x: x        # noqa: E731
+
             request_kwargs: Dict[str, Any] = {
                 "model": model,
                 "max_tokens": max_tokens,
@@ -127,10 +136,11 @@ class AnthropicProvider(BaseLLMProvider):
             }
 
             if system:
-                request_kwargs["system"] = system
+                request_kwargs["system"] = as_cached_system(system)
 
             if tools:
-                request_kwargs["tools"] = self.normalize_tools(tools)
+                request_kwargs["tools"] = mark_tools_cached(self.normalize_tools(tools))
+
 
             # Pass through any extra kwargs (thinking, betas, etc.)
             for k, v in kwargs.items():

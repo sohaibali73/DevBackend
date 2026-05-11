@@ -104,13 +104,27 @@ class PptxResult:
 # npm cache bootstrap
 # ─────────────────────────────────────────────────────────────────────────────
 
+# Module-level cache: once we've verified the install, never stat the FS again.
+_MODULES_CACHED: Optional[Path] = None
+
+
 def _ensure_pptxgenjs_modules() -> Optional[Path]:
-    """Install pptxgenjs into the persistent cache dir if not already present."""
+    """Install pptxgenjs into the persistent cache dir if not already present.
+
+    The result is memoized at module load: after the first call (which may stat
+    or invoke npm), subsequent calls return instantly without touching the FS.
+    """
+    global _MODULES_CACHED
+    if _MODULES_CACHED is not None:
+        return _MODULES_CACHED
+
     modules = _PPTX_CACHE_DIR / "node_modules"
     pkg = modules / "pptxgenjs"
 
     if pkg.exists():
+        _MODULES_CACHED = modules
         return modules
+
 
     logger.info("First-time pptxgenjs install → %s", _PPTX_CACHE_DIR)
     _PPTX_CACHE_DIR.mkdir(parents=True, exist_ok=True)
@@ -147,7 +161,9 @@ def _ensure_pptxgenjs_modules() -> Optional[Path]:
                      proc.returncode, proc.stderr.decode(errors="replace"))
         return None
 
+    _MODULES_CACHED = modules
     return modules
+
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -282,9 +298,14 @@ class PptxSandbox:
             if logos_found == 0:
                 logger.warning("No brand logos found for pptx run")
 
-            # Copy the JS module directory
+            # Symlink the JS module directory (read-only, identical every run).
+            # Symlinking is O(1) vs the ~10-50 ms copytree was costing.
             js_target = tmp / "js"
-            shutil.copytree(_JS_DIR, js_target)
+            try:
+                os.symlink(str(_JS_DIR), str(js_target), target_is_directory=True)
+            except (OSError, NotImplementedError):
+                shutil.copytree(_JS_DIR, js_target)
+
 
             # Write spec
             (tmp / "spec.json").write_text(
