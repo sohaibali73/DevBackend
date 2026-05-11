@@ -108,11 +108,30 @@ class PptxResult:
 _MODULES_CACHED: Optional[Path] = None
 
 
+# Global node_modules locations (set by Dockerfile via `npm install -g`).
+# Used as a fallback when the per-user cache install can't be created.
+_GLOBAL_NODE_MODULES = [
+    Path("/usr/lib/node_modules"),
+    Path("/usr/local/lib/node_modules"),
+]
+
+
+def _find_global_pptxgenjs() -> Optional[Path]:
+    """Return a node_modules dir that already contains pptxgenjs, if any."""
+    for nm in _GLOBAL_NODE_MODULES:
+        if (nm / "pptxgenjs").exists():
+            return nm
+    return None
+
+
 def _ensure_pptxgenjs_modules() -> Optional[Path]:
     """Install pptxgenjs into the persistent cache dir if not already present.
 
     The result is memoized at module load: after the first call (which may stat
     or invoke npm), subsequent calls return instantly without touching the FS.
+
+    Falls back to the global ``npm install -g`` location (used in the Docker
+    image) when the per-user cache cannot be created or npm is unavailable.
     """
     global _MODULES_CACHED
     if _MODULES_CACHED is not None:
@@ -125,8 +144,15 @@ def _ensure_pptxgenjs_modules() -> Optional[Path]:
         _MODULES_CACHED = modules
         return modules
 
+    # Fast path: pptxgenjs already installed globally (Docker image case).
+    global_nm = _find_global_pptxgenjs()
+    if global_nm is not None:
+        logger.info("Using global pptxgenjs from %s", global_nm)
+        _MODULES_CACHED = global_nm
+        return global_nm
 
     logger.info("First-time pptxgenjs install → %s", _PPTX_CACHE_DIR)
+
     _PPTX_CACHE_DIR.mkdir(parents=True, exist_ok=True)
     (_PPTX_CACHE_DIR / "package.json").write_text(json.dumps({
         "name": "pptx-cache", "version": "1.0.0",

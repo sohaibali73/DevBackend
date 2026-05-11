@@ -787,6 +787,21 @@ class DocxResult:
 _DOCX_MODULES_CACHED: Optional[Path] = None
 
 
+# Global node_modules locations (set by Dockerfile via `npm install -g`).
+_DOCX_GLOBAL_NODE_MODULES = [
+    Path("/usr/lib/node_modules"),
+    Path("/usr/local/lib/node_modules"),
+]
+
+
+def _find_global_docx() -> Optional[Path]:
+    """Return a node_modules dir that already contains docx, if any."""
+    for nm in _DOCX_GLOBAL_NODE_MODULES:
+        if (nm / "docx").exists():
+            return nm
+    return None
+
+
 def _ensure_docx_modules() -> Optional[Path]:
     """
     Ensure the ``docx`` npm package is installed in the persistent cache dir.
@@ -794,6 +809,9 @@ def _ensure_docx_modules() -> Optional[Path]:
     First call installs once (takes ~30 s). Subsequent calls return instantly
     via the module-level memo (no FS stat). Returns the ``node_modules`` Path,
     or ``None`` on failure.
+
+    Falls back to the global ``npm install -g`` location (used in the Docker
+    image) when the per-user cache cannot be created or npm is unavailable.
     """
     global _DOCX_MODULES_CACHED
     if _DOCX_MODULES_CACHED is not None:
@@ -807,8 +825,15 @@ def _ensure_docx_modules() -> Optional[Path]:
         logger.debug("docx node_modules cache hit: %s", modules)
         return modules
 
+    # Fast path: docx already installed globally (Docker image case).
+    global_nm = _find_global_docx()
+    if global_nm is not None:
+        logger.info("Using global docx from %s", global_nm)
+        _DOCX_MODULES_CACHED = global_nm
+        return global_nm
 
     logger.info("First-time docx install — this takes ~30 s…")
+
     _DOCX_CACHE_DIR.mkdir(parents=True, exist_ok=True)
 
     pkg = {"name": "docx-cache", "version": "1.0.0", "dependencies": {"docx": "^8.5.0"}}
