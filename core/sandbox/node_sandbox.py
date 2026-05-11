@@ -17,6 +17,7 @@ import asyncio
 import os
 import re
 import shutil
+import sys
 import time
 import json
 import hashlib
@@ -28,6 +29,34 @@ from typing import Dict, Any, Optional, List
 from core.sandbox.base import BaseSandbox, SandboxResult, SandboxLanguage, DisplayArtifact
 
 logger = logging.getLogger(__name__)
+
+
+# ---------------------------------------------------------------------------
+# Cross-platform binary resolution
+# ---------------------------------------------------------------------------
+# On Windows, ``npm`` / ``npx`` are ``.cmd`` shims that the default
+# ``asyncio.create_subprocess_exec`` cannot find without the extension.
+# ``shutil.which`` resolves the full path (including .cmd) when present.
+_IS_WINDOWS = sys.platform.startswith("win")
+
+
+def _resolve_bin(name: str) -> Optional[str]:
+    """Return the full path to an executable, or None if not on PATH."""
+    found = shutil.which(name)
+    if found:
+        return found
+    if _IS_WINDOWS:
+        for ext in (".cmd", ".exe", ".bat"):
+            found = shutil.which(name + ext)
+            if found:
+                return found
+    return None
+
+
+_NODE_BIN = _resolve_bin("node")
+_NPM_BIN = _resolve_bin("npm")
+_NPX_BIN = _resolve_bin("npx")
+
 
 # ---------------------------------------------------------------------------
 # Persistent cache path (Fix 3c) — configurable, not /tmp
@@ -648,13 +677,16 @@ console.log(renderToString(createElement({name})));
             return
 
         # Install fresh
+        if not _NPM_BIN:
+            raise RuntimeError("npm is not installed or not on PATH")
         proc = await asyncio.create_subprocess_exec(
-            "npm", "install", "--prefer-offline", "--no-audit", "--no-fund",
+            _NPM_BIN, "install", "--prefer-offline", "--no-audit", "--no-fund",
             cwd=str(temp_dir),
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
         )
         await proc.communicate()
+
 
         # Cache to persistent disk (Fix 3c)
         node_modules = temp_dir / "node_modules"
@@ -672,15 +704,22 @@ console.log(renderToString(createElement({name})));
     ) -> SandboxResult:
         """Bundle index.jsx with esbuild and execute with Node.js."""
         try:
+            if not _NPX_BIN:
+                return SandboxResult(
+                    success=False, error="npx is not installed or not on PATH",
+                    execution_time_ms=round((time.time() - start_time) * 1000, 2),
+                    language="javascript",
+                )
             bundled = temp_dir / "bundle.js"
             proc = await asyncio.create_subprocess_exec(
-                "npx", "esbuild", "index.jsx",
+                _NPX_BIN, "esbuild", "index.jsx",
                 "--bundle", "--format=cjs", "--platform=node",
                 "--outfile=bundle.js", "--jsx=automatic", "--loader:.jsx=jsx",
                 cwd=str(temp_dir),
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
             )
+
             try:
                 _, stderr = await asyncio.wait_for(proc.communicate(), timeout=30)
             except asyncio.TimeoutError:
@@ -699,7 +738,8 @@ console.log(renderToString(createElement({name})));
                 )
 
             exec_proc = await asyncio.create_subprocess_exec(
-                "node", str(bundled),
+                _NODE_BIN or "node", str(bundled),
+
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
                 cwd=str(temp_dir),
@@ -748,8 +788,15 @@ console.log(renderToString(createElement({name})));
     ) -> SandboxResult:
         """Execute plain JavaScript with Node.js."""
         try:
+            if not _NODE_BIN:
+                return SandboxResult(
+                    success=False, error="Node.js is not installed or not on PATH",
+                    execution_time_ms=round((time.time() - start_time) * 1000, 2),
+                    language="javascript",
+                )
             proc = await asyncio.create_subprocess_exec(
-                "node", str(code_file),
+                _NODE_BIN, str(code_file),
+
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
                 cwd=str(temp_dir),
