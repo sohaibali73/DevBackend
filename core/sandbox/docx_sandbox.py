@@ -783,21 +783,30 @@ class DocxResult:
 # Module-level npm cache helper
 # =============================================================================
 
+# Module-level memo so we don't stat the FS on every doc generation.
+_DOCX_MODULES_CACHED: Optional[Path] = None
+
+
 def _ensure_docx_modules() -> Optional[Path]:
     """
     Ensure the ``docx`` npm package is installed in the persistent cache dir.
 
     First call installs once (takes ~30 s). Subsequent calls return instantly
-    after confirming the ``node_modules/docx`` directory exists.
-
-    Returns the ``node_modules`` Path, or ``None`` on failure.
+    via the module-level memo (no FS stat). Returns the ``node_modules`` Path,
+    or ``None`` on failure.
     """
+    global _DOCX_MODULES_CACHED
+    if _DOCX_MODULES_CACHED is not None:
+        return _DOCX_MODULES_CACHED
+
     modules   = _DOCX_CACHE_DIR / "node_modules"
     docx_pkg  = modules / "docx"
 
     if docx_pkg.exists():
+        _DOCX_MODULES_CACHED = modules
         logger.debug("docx node_modules cache hit: %s", modules)
         return modules
+
 
     logger.info("First-time docx install — this takes ~30 s…")
     _DOCX_CACHE_DIR.mkdir(parents=True, exist_ok=True)
@@ -819,6 +828,9 @@ def _ensure_docx_modules() -> Optional[Path]:
             proc.returncode, proc.stderr.decode(errors="replace").strip(),
         )
         return None
+
+    _DOCX_MODULES_CACHED = modules
+
 
     logger.info("docx package installed → %s", modules)
     return modules
