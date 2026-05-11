@@ -64,12 +64,37 @@ class _Worker:
 
     async def start(self) -> bool:
         try:
-            # On Railway/Docker we install pptxgenjs+docx globally; tell Node
-            # to look there so `require()` finds them from the worker script.
+            # The worker uses `require('pptxgenjs')` and `require('docx')`.
+            # These packages live in several possible locations:
+            #   1. ~/.sandbox/pptx_cache/node_modules   (installed by pptx_sandbox)
+            #   2. ~/.sandbox/docx_cache/node_modules   (installed by docx_sandbox)
+            #   3. /usr/{lib,local/lib}/node_modules    (global npm install -g)
+            # We set NODE_PATH so all of them are searched.
             env = dict(os.environ)
-            global_modules = "/usr/lib/node_modules:/usr/local/lib/node_modules"
+            sandbox_home = Path(os.environ.get("SANDBOX_DATA_DIR", Path.home() / ".sandbox"))
+            search_paths = [
+                str(sandbox_home / "pptx_cache" / "node_modules"),
+                str(sandbox_home / "docx_cache" / "node_modules"),
+                "/usr/lib/node_modules",
+                "/usr/local/lib/node_modules",
+            ]
             existing = env.get("NODE_PATH", "")
-            env["NODE_PATH"] = f"{existing}:{global_modules}" if existing else global_modules
+            joined = ":".join(p for p in search_paths if p)
+            env["NODE_PATH"] = f"{existing}:{joined}" if existing else joined
+
+            # Eagerly install both packages so the worker has them on first
+            # require — calling these is a no-op if already cached.
+            try:
+                from core.sandbox.pptx_sandbox import _ensure_pptxgenjs_modules
+                _ensure_pptxgenjs_modules()
+            except Exception:
+                pass
+            try:
+                from core.sandbox.docx_sandbox import _ensure_docx_modules
+                _ensure_docx_modules()
+            except Exception:
+                pass
+
 
             self.proc = await asyncio.create_subprocess_exec(
                 "node",
