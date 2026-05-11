@@ -1606,11 +1606,21 @@ async def chat_agent(
                                         pending_tool_calls[-1]["input"] += event.delta.partial_json
 
                         elif event.type == "content_block_stop":
-                            if pending_tool_calls and pending_tool_calls[-1].get("input"):
+                            # CRITICAL: do NOT gate on truthiness of "input".
+                            # Zero-argument tools (e.g. get_afl_syntax_reference,
+                            # get_yang_capabilities, get_genui_card_schema) emit
+                            # a tool_use block with NO input_json_delta events,
+                            # so input stays as "". Previously we skipped these
+                            # entirely, which left the loop with stop_reason
+                            # == "tool_use" but no tool_results to feed back,
+                            # producing an empty assistant response and a dead
+                            # conversation. Treat empty input as {}.
+                            if pending_tool_calls and pending_tool_calls[-1].get("id"):
                                 tool_call = pending_tool_calls[-1]
 
+                                _raw_input = tool_call.get("input") or ""
                                 try:
-                                    tool_input = json.loads(tool_call["input"]) if tool_call["input"] else {}
+                                    tool_input = json.loads(_raw_input) if _raw_input.strip() else {}
                                 except json.JSONDecodeError:
                                     tool_input = {}
 
