@@ -168,6 +168,50 @@ async def _get_or_create_conversation(
     return conversation_id
 
 
+def _merge_consecutive_same_role(messages: list) -> list:
+    """Collapse runs of same-role messages into one.
+
+    Anthropic requires strict user/assistant alternation. When a previous turn
+    fails to persist an assistant message (rare but happens on streaming errors),
+    the next history load contains back-to-back user rows — Claude responds
+    with an empty 42-token message because the conversation is malformed.
+
+    This helper merges consecutive same-role messages by concatenating their
+    text content (and preserving any structured content blocks).  No data is
+    lost; the user just sees a single composite turn instead of being silently
+    ignored by the model.
+    """
+    if not messages:
+        return messages
+    out: list = []
+    for m in messages:
+        role = m.get("role")
+        content = m.get("content")
+        if out and out[-1].get("role") == role:
+            prev = out[-1]
+            prev_c = prev.get("content")
+
+            def _to_blocks(c):
+                if isinstance(c, list):
+                    return list(c)
+                if isinstance(c, str):
+                    return [{"type": "text", "text": c}] if c else []
+                return []
+
+            merged = _to_blocks(prev_c) + _to_blocks(content)
+            # If everything is plain text, collapse back to a single string
+            if all(
+                isinstance(b, dict) and b.get("type") == "text" and isinstance(b.get("text"), str)
+                for b in merged
+            ):
+                prev["content"] = "\n\n".join(b["text"] for b in merged if b.get("text"))
+            else:
+                prev["content"] = merged
+        else:
+            out.append(dict(m))
+    return out
+
+
 def sanitize_message_history(messages: list) -> list:
     """
     Ensure every tool_use block in an assistant message has a matching
@@ -178,7 +222,13 @@ def sanitize_message_history(messages: list) -> list:
 
     When orphaned tool_use blocks are detected, we remove the assistant message
     entirely rather than injecting dummy results, as this is more robust.
+
+    Also collapses consecutive same-role messages so Claude never sees
+    malformed history (which silently produces empty 42-token responses).
     """
+    # Step 1: collapse consecutive same-role runs (e.g. user, user, user)
+    messages = _merge_consecutive_same_role(messages)
+
     sanitized = []
     i = 0
 
