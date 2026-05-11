@@ -10,7 +10,9 @@ nixPkgs = ["...", "python311", "gcc", "poppler_utils", "tesseract5"]
 cmds = ["pip install --upgrade pip", "pip install -r requirements.txt"]
 
 [start]
-cmd = "python -m uvicorn main:app --host 0.0.0.0 --port ${PORT:-8000} --timeout-keep-alive 120"
+cmd = "python main.py"
+
+
 
 [variables]
 PYTHONUNBUFFERED = "1"

@@ -11,7 +11,9 @@ gunicorn
 # AI
 anthropic>=0.84.0
 openai>=1.0.0
-httpx[http2]            # http2 enables connection multiplexing for LLM calls
+httpx                   # http2 optional via core/http_client.py (auto-fallback)
+h2                      # enables httpx HTTP/2 multiplexing for LLM calls
+
 
 
 # Database

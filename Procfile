@@ -1,1 +1,1 @@
-web: gunicorn main:app --worker-class uvicorn.workers.UvicornWorker --workers ${WEB_CONCURRENCY:-2} --bind 0.0.0.0:${PORT:-8000} --timeout 300 --keep-alive 120 --graceful-timeout 60 --worker-connections 1000
+web: python main.py

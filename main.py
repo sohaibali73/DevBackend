@@ -45,29 +45,43 @@ app.add_middleware(GZipMiddleware, minimum_size=1024)
 # ── Performance infra: async DB pool, Redis cache, shared HTTP client ────────
 @app.on_event("startup")
 async def startup_perf_infra():
-    """Eagerly initialize the asyncpg pool, Redis cache, and shared HTTP client.
+    """LAZILY initialize the asyncpg pool, Redis cache, and shared HTTP client.
 
-    Doing this on startup (rather than lazily on first request) means the
-    first authenticated request doesn't pay for pool creation (~150–400 ms).
-    All three are no-ops when their corresponding env vars are missing.
+    Each block is wrapped in asyncio.wait_for so a slow/failed external service
+    (Redis DNS, Supabase pooler) NEVER blocks the healthcheck. The healthcheck
+    must return within Railway's window — if any of these hang, the deploy
+    fails.
+
+    All three are no-ops when their corresponding env vars are missing, and
+    swallow every exception so startup is guaranteed to complete.
     """
-    try:
-        from db.async_db import init_pool as _init_db_pool
-        await _init_db_pool()
-    except Exception as e:
-        logger.warning("asyncpg pool init failed (non-fatal): %s", e)
+    import asyncio as _aio
 
-    try:
-        from core.cache import cache as _cache
-        await _cache._ensure_redis()  # noqa: SLF001 — explicit warm
-    except Exception as e:
-        logger.warning("Redis warm-up failed (non-fatal): %s", e)
+    async def _safe(name: str, coro_factory, timeout: float = 5.0):
+        try:
+            await _aio.wait_for(coro_factory(), timeout=timeout)
+            logger.info("✓ %s ready", name)
+        except _aio.TimeoutError:
+            logger.warning("%s init timed out after %.1fs — continuing without it", name, timeout)
+        except Exception as e:
+            logger.warning("%s init failed (non-fatal): %s", name, e)
 
-    try:
-        from core.http_client import get_http_client as _get_http
-        await _get_http()
-    except Exception as e:
-        logger.warning("Shared HTTP client init failed (non-fatal): %s", e)
+    async def _db():
+        from db.async_db import init_pool as _init
+        await _init()
+
+    async def _redis():
+        from core.cache import cache as _c
+        await _c._ensure_redis()  # noqa: SLF001
+
+    async def _http():
+        from core.http_client import get_http_client as _get
+        await _get()
+
+    await _safe("asyncpg pool", _db, timeout=8.0)
+    await _safe("Redis cache", _redis, timeout=4.0)
+    await _safe("shared HTTP client", _http, timeout=2.0)
+
 
 
 @app.on_event("shutdown")
