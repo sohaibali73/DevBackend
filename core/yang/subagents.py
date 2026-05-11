@@ -270,6 +270,12 @@ async def _run_one_subagent(
         }
 
 
+# Max tool-execution rounds inside a single subagent call.
+# Subagents are meant to be focused, so a small cap is fine — but it must be
+# > 0, otherwise the model can only ever return tool_use blocks (empty text).
+_SUBAGENT_MAX_TOOL_ROUNDS = 4
+
+
 def _call_subagent(
     api_key: str,
     model: str,
@@ -279,44 +285,124 @@ def _call_subagent(
 ) -> str:
     """
     Synchronous subagent call (runs in thread-pool via asyncio.to_thread).
-    Uses tools filtered to the role's allowed set.
-    Returns the assistant's response text.
+    Runs a small tool-use loop so the subagent can actually execute its tools
+    (web_search, get_stock_data, etc.) and report back the findings.
+
+    Returns the assistant's final response text.
     """
     import anthropic as _anth
-    from core.tools import get_all_tools
+    from core.tools import get_all_tools, handle_tool_call
 
     # Filter tools to role's allowed set
     allowed = _ROLE_TOOLS.get(role, frozenset())
     role_tools = [t for t in get_all_tools() if t.get("name", "") in allowed]
 
+    # Anthropic's server-side web_search has type "web_search_20250305" not name.
+    # Include it for the researcher role by matching on type prefix as well.
+    if "web_search" in allowed:
+        for t in get_all_tools():
+            t_type = t.get("type", "")
+            if t_type.startswith("web_search") and t not in role_tools:
+                role_tools.append(t)
+
     client = _anth.Anthropic(api_key=api_key)
 
-    kwargs: Dict[str, Any] = {
-        "model": model,
-        "max_tokens": max_tokens,
-        "system": (
-            f"You are a focused {role} subagent. "
-            "Answer the task concisely using your available tools. "
-            "Be factual and precise. Return only the relevant findings."
-        ),
-        "messages": [{"role": "user", "content": prompt}],
-    }
-    if role_tools:
-        kwargs["tools"] = role_tools
+    system_prompt = (
+        f"You are a focused {role} subagent. "
+        "Answer the task concisely using your available tools. "
+        "Be factual and precise. Return only the relevant findings. "
+        "IMPORTANT: after using tools to gather data, you MUST emit a final "
+        "plain-text summary of what you found — do not end your turn on a "
+        "tool_use block. If you have no tools available or nothing to look up, "
+        "answer directly from your knowledge."
+    )
 
-    # Simple non-streaming call (subagent responses are short).
-    # Retry once with the fallback slug if the primary model 404s.
-    try:
-        response = client.messages.create(**kwargs)
-    except _anth.NotFoundError as e:
-        logger.warning("subagent model '%s' returned 404; retrying with fallback '%s'",
-                       model, _FALLBACK_SUBAGENT_MODEL)
-        kwargs["model"] = _FALLBACK_SUBAGENT_MODEL
-        response = client.messages.create(**kwargs)
-
-    # Extract text from response
-    text_parts = [
-        block.text for block in response.content
-        if hasattr(block, "text")
+    messages: List[Dict[str, Any]] = [
+        {"role": "user", "content": prompt}
     ]
-    return " ".join(text_parts).strip() or "(no text response)"
+
+    def _send(model_slug: str):
+        kw: Dict[str, Any] = {
+            "model": model_slug,
+            "max_tokens": max_tokens,
+            "system": system_prompt,
+            "messages": messages,
+        }
+        if role_tools:
+            kw["tools"] = role_tools
+        return client.messages.create(**kw)
+
+    # ── Tool-use loop ────────────────────────────────────────────────────────
+    current_model = model
+    text_collected: List[str] = []
+    for round_idx in range(_SUBAGENT_MAX_TOOL_ROUNDS + 1):
+        # Send the request, falling back on 404 (stale model slug)
+        try:
+            response = _send(current_model)
+        except _anth.NotFoundError:
+            logger.warning(
+                "subagent model '%s' returned 404; retrying with fallback '%s'",
+                current_model, _FALLBACK_SUBAGENT_MODEL,
+            )
+            current_model = _FALLBACK_SUBAGENT_MODEL
+            response = _send(current_model)
+        except Exception as call_err:
+            logger.warning("subagent[%s] API call failed: %s", role, call_err)
+            return f"(subagent error: {call_err})"
+
+        # Collect text from this turn
+        round_text: List[str] = []
+        tool_uses: List[Any] = []
+        for block in response.content:
+            btype = getattr(block, "type", None)
+            if btype == "text" and hasattr(block, "text"):
+                round_text.append(block.text)
+            elif btype == "tool_use":
+                tool_uses.append(block)
+
+        if round_text:
+            text_collected.extend(round_text)
+
+        # If the model stopped without requesting tools, we're done.
+        stop_reason = getattr(response, "stop_reason", None)
+        if stop_reason != "tool_use" or not tool_uses:
+            break
+
+        # We've hit the tool-round cap — bail and ask for a final answer next.
+        if round_idx >= _SUBAGENT_MAX_TOOL_ROUNDS:
+            logger.warning(
+                "subagent[%s] hit max tool rounds (%d) — collected text: %s",
+                role, _SUBAGENT_MAX_TOOL_ROUNDS, bool(text_collected),
+            )
+            break
+
+        # Append assistant turn (must mirror the content exactly so the API
+        # can match tool_use ↔ tool_result ids on the next round).
+        messages.append({"role": "assistant", "content": response.content})
+
+        # Execute each tool_use and build the matching tool_result content list.
+        tool_results: List[Dict[str, Any]] = []
+        for tu in tool_uses:
+            tu_name = getattr(tu, "name", "") or ""
+            tu_input = getattr(tu, "input", {}) or {}
+            tu_id = getattr(tu, "id", "")
+            try:
+                result_str = handle_tool_call(
+                    tool_name=tu_name,
+                    tool_input=tu_input,
+                    api_key=api_key,
+                )
+            except Exception as te:
+                result_str = f'{{"error": "subagent tool {tu_name} failed: {te}"}}'
+
+            tool_results.append({
+                "type": "tool_result",
+                "tool_use_id": tu_id,
+                "content": result_str,
+            })
+
+        messages.append({"role": "user", "content": tool_results})
+        # Loop back and send the follow-up call
+
+    return (" ".join(text_collected).strip()
+            or "(subagent produced no text after tool execution)")

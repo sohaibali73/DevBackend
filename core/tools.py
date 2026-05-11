@@ -4989,6 +4989,21 @@ def _invoke_skill(tool_input: Dict, api_key: str) -> Dict:
             context=tool_input.get("extra_context",""),
         ))
 
+        # ── Surface router-level failures instead of silently masking them
+        # The router returns {"success": False, "error": "..."} when the
+        # skill slug is unknown/disabled, or when the underlying executor
+        # raises. Previously we hardcoded "success": True which led the
+        # model to think it had a valid (but empty) response.
+        if isinstance(result, dict) and result.get("success") is False:
+            err = result.get("error") or "skill execution failed"
+            logger.warning("invoke_skill '%s' failed at router level: %s", skill_slug, err)
+            return {
+                "success": False,
+                "tool": "invoke_skill",
+                "skill": skill_slug,
+                "error": err,
+            }
+
         # Strip any Claude ephemeral file_xxx URLs from the skill text before
         # returning it as the tool result.  Claude will see the cleaned text and
         # will NOT repeat the bad URL in its final response.  The correct
@@ -5000,19 +5015,48 @@ def _invoke_skill(tool_input: Dict, api_key: str) -> Dict:
             skill_text = re_mod.sub(r'\bfile_[A-Za-z0-9]{20,}\b', '', skill_text)
             skill_text = re_mod.sub(r'\n{3,}', '\n\n', skill_text).strip()
 
+        # ── Detect "silent empty" responses: success-shaped result that has
+        # no text, no files, no usage. This usually means the executor
+        # returned an early-out stub (e.g. the LLM call yielded no content
+        # blocks, or the skill prompt was malformed). Telling the model the
+        # call was a no-op is much more useful than letting it think it
+        # succeeded with empty output.
+        files_returned = result.get("files") or result.get("documents") or []
+        usage_returned = result.get("usage") or {}
+        exec_time = result.get("execution_time", 0) or 0
+        if not skill_text and not files_returned and not usage_returned and exec_time == 0:
+            logger.warning(
+                "invoke_skill '%s' returned a silent-empty response — treating as failure",
+                skill_slug,
+            )
+            return {
+                "success": False,
+                "tool": "invoke_skill",
+                "skill": skill_slug,
+                "error": (
+                    f"Skill '{skill_slug}' returned an empty response. "
+                    "The skill is registered but produced no output. "
+                    "Try a different skill, retry with a more detailed prompt, "
+                    "or gather the data directly using other tools."
+                ),
+            }
+
         base_response = {
             "success":        True,
             "tool":           "invoke_skill",
             "skill":          result.get("skill", skill_slug),
             "skill_name":     result.get("skill_name",""),
             "text":           skill_text,
-            "execution_time": result.get("execution_time", 0),
-            "usage":          result.get("usage", {}),
+            "execution_time": exec_time,
+            "usage":          usage_returned,
         }
+        if files_returned:
+            base_response["files"] = files_returned
 
         # Files are handled locally by the SkillRouter/SandboxManager
         logger.info("invoke_skill '%s' completed successfully", skill_slug)
         return base_response
+
     except Exception as e:
         logger.error("invoke_skill failed for slug '%s': %s", tool_input.get("skill_slug", "?"), e, exc_info=True)
         return {"success": False, "error": f"Skill invocation failed: {str(e)}", "tool": "invoke_skill"}
