@@ -46,9 +46,13 @@ class YangConfig:
     compact_message_min:   int   = 20       # min messages before compaction
     compact_debounce_min:  int   = 10       # minutes between compactions
     focus_llm_every_n:     int   = 5        # turns between LLM focus polish
-    double_check_model:    str   = "claude-sonnet-4-6"
-    compact_model:         str   = "claude-sonnet-4-6"
-    focus_model:           str   = "claude-sonnet-4-6"
+    # Sub-models for trivial yang side-tasks — Haiku is 3–4× faster and ~10×
+    # cheaper than Sonnet, and the quality is fine for these jobs.
+    # Users can still override via the UI / advanced settings JSON.
+    double_check_model:    str   = "claude-haiku-4-5-20251001"
+    compact_model:         str   = "claude-haiku-4-5-20251001"
+    focus_model:           str   = "claude-haiku-4-5-20251001"
+
 
 
     @classmethod
@@ -142,9 +146,10 @@ def _build_config(row: Dict[str, Any]) -> YangConfig:
         focus_llm_every_n=adv_int("focus_llm_every_n", 5),
         # Use Anthropic model aliases — they auto-resolve to the latest published
         # version, so we never 404 on a stale dated slug.
-        double_check_model=adv_str("double_check_model", "claude-sonnet-4-6"),
-        compact_model=adv_str("compact_model", "claude-sonnet-4-6"),
-        focus_model=adv_str("focus_model", "claude-sonnet-4-6"),
+        double_check_model=adv_str("double_check_model", "claude-haiku-4-5-20251001"),
+        compact_model=adv_str("compact_model", "claude-haiku-4-5-20251001"),
+        focus_model=adv_str("focus_model", "claude-haiku-4-5-20251001"),
+
 
     )
 

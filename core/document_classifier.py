@@ -21,7 +21,15 @@ from typing import Dict, List, Tuple, Optional, Union, Any
 
 logger = logging.getLogger(__name__)
 
-DEFAULT_MODEL = "claude-sonnet-4-20250514"
+# Use Haiku for classification — a perfect fast/cheap candidate. Sonnet was
+# overkill for this task. Override at the call site or via env var
+# ``LLM_MODEL_CLASSIFICATION`` (see core/llm/router.py) if needed.
+try:
+    from core.llm.router import pick_model, Task
+    DEFAULT_MODEL = pick_model(Task.CLASSIFICATION)
+except Exception:  # pragma: no cover — fallback if router import fails
+    DEFAULT_MODEL = "claude-haiku-4-5-20251001"
+
 MAX_CONTENT_SAMPLE = 12000          # Claude Sonnet-4 handles this easily
 CACHE_MAX_SIZE = 500                # prevents memory bloat in long-running apps
 
