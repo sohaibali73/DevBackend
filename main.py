@@ -855,15 +855,21 @@ if __name__ == "__main__":
     import uvicorn
 
     port = int(os.environ.get("PORT", 8080))
+    # Multiple workers — async-friendly, doubles throughput on Railway's 2 vCPU box.
+    workers = int(os.environ.get("WEB_CONCURRENCY", "2"))
 
-    logger.info(f"Starting Analyst by Potomac API server on port {port}")
+    logger.info(f"Starting Analyst by Potomac API server on port {port} (workers={workers})")
     logger.info(f"Environment: {os.getenv('ENVIRONMENT', 'development')}")
     logger.info(f"Log level: {LOG_LEVEL}")
 
+    # Pass the import string ("main:app") rather than the app object so uvicorn
+    # can spawn workers and reload correctly.
     uvicorn.run(
-        app,
+        "main:app",
         host="0.0.0.0",
         port=port,
         log_level=LOG_LEVEL.lower(),
         timeout_keep_alive=120,
+        workers=workers,
     )
+
