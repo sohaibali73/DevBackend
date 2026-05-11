@@ -12,6 +12,24 @@ class Settings(BaseSettings):
     supabase_url: str = ""
     supabase_key: str = ""  # anon/public key
     supabase_service_key: str = ""  # service_role key (required for backend operations with RLS)
+    supabase_jwt_secret: str = ""   # JWT secret from Supabase (Settings → API → JWT Settings)
+                                    # When set, JWTs are verified locally (no round-trip per request)
+
+    # Direct Postgres connection (asyncpg) — Supabase pooler URL on port 6543
+    # Settings → Database → Connection string → "Transaction" pooler (port 6543)
+    supabase_db_url: str = ""
+    async_db_pool_min: int = 2
+    async_db_pool_max: int = 20
+
+    # Redis cache
+    redis_url: str = ""             # e.g. redis://default:pwd@host.railway.internal:6379
+    enable_redis_cache: bool = True
+    enable_prompt_cache: bool = True
+
+    # HTTP / worker pool sizing
+    llm_http_pool_size: int = 50
+    node_worker_pool_size: int = 4
+
 
     # Data Encryption at Rest - MUST be set via environment variable
     # Generate a secure 32-byte key: python -c "import secrets; print(secrets.token_urlsafe(32))"

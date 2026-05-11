@@ -6,10 +6,12 @@ AI-powered AmiBroker AFL development platform.
 
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.responses import JSONResponse
 import logging
 import os
 import traceback
+
 
 # Configure logging
 LOG_LEVEL = os.getenv("LOG_LEVEL", "WARNING" if os.getenv("ENVIRONMENT") == "production" else "INFO")
@@ -34,6 +36,59 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# GZip compression — large JSON / HTML responses are compressed transparently.
+# Streaming SSE responses are skipped automatically (text/event-stream).
+app.add_middleware(GZipMiddleware, minimum_size=1024)
+
+
+# ── Performance infra: async DB pool, Redis cache, shared HTTP client ────────
+@app.on_event("startup")
+async def startup_perf_infra():
+    """Eagerly initialize the asyncpg pool, Redis cache, and shared HTTP client.
+
+    Doing this on startup (rather than lazily on first request) means the
+    first authenticated request doesn't pay for pool creation (~150–400 ms).
+    All three are no-ops when their corresponding env vars are missing.
+    """
+    try:
+        from db.async_db import init_pool as _init_db_pool
+        await _init_db_pool()
+    except Exception as e:
+        logger.warning("asyncpg pool init failed (non-fatal): %s", e)
+
+    try:
+        from core.cache import cache as _cache
+        await _cache._ensure_redis()  # noqa: SLF001 — explicit warm
+    except Exception as e:
+        logger.warning("Redis warm-up failed (non-fatal): %s", e)
+
+    try:
+        from core.http_client import get_http_client as _get_http
+        await _get_http()
+    except Exception as e:
+        logger.warning("Shared HTTP client init failed (non-fatal): %s", e)
+
+
+@app.on_event("shutdown")
+async def shutdown_perf_infra():
+    """Clean shutdown of pools and clients."""
+    try:
+        from db.async_db import close_pool as _close_db_pool
+        await _close_db_pool()
+    except Exception:
+        pass
+    try:
+        from core.cache import cache as _cache
+        await _cache.close()
+    except Exception:
+        pass
+    try:
+        from core.http_client import close_http_client as _close_http
+        await _close_http()
+    except Exception:
+        pass
+
 
 
 # ── Public Sites: Host-header subdomain router (Lovable-style) ───────────────

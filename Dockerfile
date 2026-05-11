@@ -82,15 +82,15 @@ COPY main.py .
 EXPOSE 8000
 
 # Gunicorn with UvicornWorker for production-grade async handling
+# WEB_CONCURRENCY env var (set in Railway) controls worker count; defaults to 2.
 # --timeout 300: background tasks (PPTX parsing, OCR, slide rendering) can take
 #   several minutes on large files; this prevents gunicorn from killing workers.
-#   Railway's proxy timeout is ~120 s for synchronous requests, but background
-#   tasks run AFTER the HTTP response is sent so they are not proxy-limited.
-# --workers 2 is safe for Railway's default memory limits
-CMD ["gunicorn", "main:app", \
-     "--worker-class", "uvicorn.workers.UvicornWorker", \
-     "--workers", "2", \
-     "--bind", "0.0.0.0:8000", \
-     "--timeout", "300", \
-     "--keep-alive", "120", \
-     "--graceful-timeout", "60"]
+# --worker-connections 1000: allow many concurrent async streams per worker.
+CMD ["sh", "-c", "gunicorn main:app \
+     --worker-class uvicorn.workers.UvicornWorker \
+     --workers ${WEB_CONCURRENCY:-2} \
+     --bind 0.0.0.0:${PORT:-8000} \
+     --timeout 300 \
+     --keep-alive 120 \
+     --graceful-timeout 60 \
+     --worker-connections 1000"]

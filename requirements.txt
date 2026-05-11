@@ -11,10 +11,18 @@ gunicorn
 # AI
 anthropic>=0.84.0
 openai>=1.0.0
-httpx
+httpx[http2]            # http2 enables connection multiplexing for LLM calls
+
 
 # Database
 supabase
+asyncpg>=0.29.0          # direct async Postgres driver for hot-path queries
+
+# Cache
+redis>=5.0.0             # async Redis client (uses redis.asyncio)
+
+# JWT (local decode for fast auth — avoids round-trip to Supabase on every request)
+PyJWT[crypto]>=2.8.0
 
 # Research
 tavily-python
