@@ -56,9 +56,20 @@ async def _startup_perf_infra():
         from core.http_client import get_http_client as _get
         await _get()
 
+    async def _node_pool():
+        from core.sandbox import node_worker_pool as _nwp
+        if _nwp.is_enabled():
+            pool = await _nwp.get_pool()
+            if pool is not None:
+                # Force lazy init now so the first doc-gen call doesn't pay
+                # the spawn cost (~500-1500 ms warming pptxgenjs+docx).
+                await pool._ensure()  # noqa: SLF001
+
     await _safe("asyncpg pool", _db, timeout=8.0)
     await _safe("Redis cache", _redis, timeout=4.0)
     await _safe("shared HTTP client", _http, timeout=2.0)
+    await _safe("Node worker pool", _node_pool, timeout=15.0)
+
 
 
 async def _startup_task_manager():
@@ -239,6 +250,12 @@ async def _shutdown_perf_infra():
         await _close_http()
     except Exception:
         pass
+    try:
+        from core.sandbox.node_worker_pool import shutdown_pool as _close_node
+        await _close_node()
+    except Exception:
+        pass
+
 
 
 @asynccontextmanager

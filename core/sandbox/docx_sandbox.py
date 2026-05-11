@@ -990,22 +990,42 @@ class DocxSandbox:
                 shutil.copytree(str(modules_path), str(nm_link))
 
             # ── 6. Execute Node.js ─────────────────────────────────────────
-            proc = subprocess.run(
-                ["node", "document_builder.js"],
-                cwd=str(temp_dir),
-                capture_output=True,
-                timeout=timeout,
-            )
+            # Use the long-lived worker pool when available; this avoids a
+            # ~500-1500 ms cold-spawn + ``require('docx')`` cost per call.
+            stdout, stderr = "", ""
+            pool_used = False
+            try:
+                from core.sandbox import node_worker_pool as _nwp
+                if _nwp.is_enabled():
+                    resp = _nwp.submit_sync("docx", spec, str(temp_dir), timeout=timeout)
+                    pool_used = True
+                    if not resp.get("ok"):
+                        return DocxResult(
+                            False,
+                            error=f"Node worker failed: {resp.get('error') or 'unknown'}",
+                            exec_time_ms=round((time.time() - start) * 1000, 2),
+                        )
+            except Exception as exc:
+                logger.warning("Node worker pool failed, falling back to subprocess: %s", exc)
+                pool_used = False
 
-            stdout = proc.stdout.decode(errors="replace").strip()
-            stderr = proc.stderr.decode(errors="replace").strip()
-
-            if proc.returncode != 0:
-                return DocxResult(
-                    False,
-                    error=f"Node.js builder failed: {stderr or stdout}",
-                    exec_time_ms=round((time.time() - start) * 1000, 2),
+            if not pool_used:
+                proc = subprocess.run(
+                    ["node", "document_builder.js"],
+                    cwd=str(temp_dir),
+                    capture_output=True,
+                    timeout=timeout,
                 )
+                stdout = proc.stdout.decode(errors="replace").strip()
+                stderr = proc.stderr.decode(errors="replace").strip()
+
+                if proc.returncode != 0:
+                    return DocxResult(
+                        False,
+                        error=f"Node.js builder failed: {stderr or stdout}",
+                        exec_time_ms=round((time.time() - start) * 1000, 2),
+                    )
+
 
             # ── 7. Retrieve generated file ─────────────────────────────────
             filename = spec.get("filename") or "output.docx"

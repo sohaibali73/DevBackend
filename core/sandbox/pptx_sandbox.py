@@ -324,24 +324,46 @@ class PptxSandbox:
             except (OSError, NotImplementedError):
                 shutil.copytree(str(modules), str(nm_link))
 
-            # Run node
-            proc = subprocess.run(
-                ["node", "js/runtime.js", "spec.json"],
-                cwd=str(tmp),
-                capture_output=True,
-                timeout=timeout,
-            )
-            stdout = proc.stdout.decode(errors="replace").strip()
-            stderr = proc.stderr.decode(errors="replace").strip()
+            # Run node — use the long-lived worker pool when available (saves
+            # ~500-1500 ms per call). Fall back to subprocess.run if disabled
+            # or unavailable.
+            stdout, stderr = "", ""
+            pool_used = False
+            try:
+                from core.sandbox import node_worker_pool as _nwp
+                if _nwp.is_enabled():
+                    resp = _nwp.submit_sync("pptx", spec, str(tmp), timeout=timeout)
+                    pool_used = True
+                    if not resp.get("ok"):
+                        return PptxResult(
+                            False,
+                            error=f"Node worker failed: {resp.get('error') or 'unknown'}",
+                            exec_time_ms=self._ms(start),
+                            script=debug_script,
+                        )
+            except Exception as exc:
+                logger.warning("Node worker pool failed, falling back to subprocess: %s", exc)
+                pool_used = False
 
-            if proc.returncode != 0:
-                return PptxResult(
-                    False,
-                    error=f"Node.js runtime failed: {stderr or stdout}",
-                    warnings=self._collect_warnings(stderr),
-                    exec_time_ms=self._ms(start),
-                    script=debug_script,
+            if not pool_used:
+                proc = subprocess.run(
+                    ["node", "js/runtime.js", "spec.json"],
+                    cwd=str(tmp),
+                    capture_output=True,
+                    timeout=timeout,
                 )
+                stdout = proc.stdout.decode(errors="replace").strip()
+                stderr = proc.stderr.decode(errors="replace").strip()
+
+                if proc.returncode != 0:
+                    return PptxResult(
+                        False,
+                        error=f"Node.js runtime failed: {stderr or stdout}",
+                        warnings=self._collect_warnings(stderr),
+                        exec_time_ms=self._ms(start),
+                        script=debug_script,
+                    )
+
 
             # Parse stdout JSON ack
             meta = {}
