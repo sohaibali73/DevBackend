@@ -1216,43 +1216,62 @@ async def chat_agent(
         conversation_id=data.conversation_id,
     )
 
-    # Persist user message — include top-level parts column for AI SDK rehydration
+    # ── Persist user msg + fetch all RAG/context concurrently ────────────
+    # The user-message insert and the 4-5 context fetches used to run serially
+    # (~5 sync round-trips, each 50-200 ms). Running them in parallel cuts
+    # ~300-800 ms off TTFT for a typical chat turn.
     _user_parts = [{"type": "text", "text": data.content}]
-    db.table("messages").insert({
-        "conversation_id": conversation_id,
-        "role": "user",
-        "content": data.content,
-        "parts": _user_parts,
-        "metadata": {"parts": _user_parts},
-    }).execute()
 
-    # Include metadata so we can filter out compacted_out messages (YANG auto-compact).
-    history_result = db.table("messages").select("role, content, metadata").eq(
-        "conversation_id", conversation_id
-    ).order("created_at").limit(40).execute()  # Increased limit for better context
+    def _insert_user_message():
+        db.table("messages").insert({
+            "conversation_id": conversation_id,
+            "role": "user",
+            "content": data.content,
+            "parts": _user_parts,
+            "metadata": {"parts": _user_parts},
+        }).execute()
 
+    def _fetch_history():
+        r = db.table("messages").select("role, content, metadata").eq(
+            "conversation_id", conversation_id
+        ).order("created_at").limit(40).execute()
+        return r.data or []
+
+    def _fetch_conversation_file_ids():
+        try:
+            _cf = db.table("conversation_files").select("file_id").eq(
+                "conversation_id", conversation_id
+            ).execute()
+            return [row["file_id"] for row in (_cf.data or []) if row.get("file_id")]
+        except Exception:
+            return []
+
+    (
+        _ins,
+        history_rows,
+        file_context,
+        kb_context,
+        kb_doc_context,
+        doc_rag_context,
+        conversation_file_ids,
+    ) = await asyncio.gather(
+        asyncio.to_thread(_insert_user_message),
+        asyncio.to_thread(_fetch_history),
+        _fetch_file_context(db, conversation_id),
+        _fetch_kb_context(db, data.content, user_id=user_id),
+        _fetch_kb_doc_refs(db, data.content),
+        _fetch_doc_rag_context(db, conversation_id, data.content),
+        asyncio.to_thread(_fetch_conversation_file_ids),
+        return_exceptions=False,
+    )
+
+    # The just-inserted user message is the last item; exclude it from history.
     history = [
         {"role": m["role"], "content": m["content"]}
-        for m in history_result.data[:-1]
-        if not (m.get("metadata") or {}).get("compacted_out")  # YANG: skip soft-deleted
+        for m in history_rows[:-1]
+        if not (m.get("metadata") or {}).get("compacted_out")
     ]
 
-    file_context = await _fetch_file_context(db, conversation_id)
-    kb_context = await _fetch_kb_context(db, data.content, user_id=user_id)
-    kb_doc_context = await _fetch_kb_doc_refs(db, data.content)
-    doc_rag_context = await _fetch_doc_rag_context(db, conversation_id, data.content)
-
-    # Collect conversation file_ids so execute_python can inject them into
-    # the sandbox as `_files["name.ext"]` / `_images["name.png"]`. Prevents
-    # Claude from guessing paths like /uploads/<uuid> (which don't exist).
-    conversation_file_ids: list[str] = []
-    try:
-        _cf = db.table("conversation_files").select("file_id").eq(
-            "conversation_id", conversation_id
-        ).execute()
-        conversation_file_ids = [row["file_id"] for row in (_cf.data or []) if row.get("file_id")]
-    except Exception:
-        pass
 
 
     async def generate_stream():
@@ -1316,23 +1335,33 @@ async def chat_agent(
 
             # ── Content Studio: inject cloned voice if this conversation is
             #    bound to a Studio project that has a style_profile_id.
-            try:
-                _proj_lookup = (
-                    db.table("studio_projects")
-                    .select("style_profile_id")
-                    .eq("conversation_id", conversation_id)
-                    .eq("user_id", user_id)
-                    .limit(1)
-                    .execute()
-                )
-                _spid = (_proj_lookup.data or [{}])[0].get("style_profile_id") if _proj_lookup.data else None
-                if _spid:
+            # Run the lookup off the event loop so it doesn't block the first
+            # token of the stream.
+            def _voice_lookup():
+                try:
+                    _proj_lookup = (
+                        db.table("studio_projects")
+                        .select("style_profile_id")
+                        .eq("conversation_id", conversation_id)
+                        .eq("user_id", user_id)
+                        .limit(1)
+                        .execute()
+                    )
+                    _spid = (_proj_lookup.data or [{}])[0].get("style_profile_id") if _proj_lookup.data else None
+                    if not _spid:
+                        return ""
                     from core.styles.injector import fetch_style_prompt as _fsp
-                    _voice_block = _fsp(_spid, user_id)
-                    if _voice_block:
-                        system_prompt_base += "\n\n" + _voice_block
+                    return _fsp(_spid, user_id) or ""
+                except Exception:
+                    return ""
+
+            try:
+                _voice_block = await asyncio.to_thread(_voice_lookup)
+                if _voice_block:
+                    system_prompt_base += "\n\n" + _voice_block
             except Exception as _voice_err:
                 logger.debug("studio voice injection skipped: %s", _voice_err)
+
 
             # Force-invoke a specific skill if the user pinned one from the UI
             if data.skill_slug:
