@@ -993,8 +993,26 @@ async def get_conversation_messages(
             })
 
     # Transform messages to match frontend Message type
+    # YANG: skip messages that have been soft-deleted by auto_compact
+    # (metadata.compacted_out=true). The compaction summary itself is KEPT
+    # — it's the single user message that replaced the older history.
     messages = []
     for m in (result.data or []):
+        if (m.get("metadata") or {}).get("compacted_out"):
+            continue  # silently drop — these would render as blank bubbles
+        # Skip the synthesized compaction summary too — it's an internal
+        # context-window aid, not a real user/assistant turn the UI should show.
+        if (m.get("metadata") or {}).get("compacted"):
+            continue
+        # Defensive: skip totally empty rows so they never render as
+        # ghost bubbles (e.g. an assistant message whose content failed
+        # to save). content can be either a string or a list of blocks.
+        _raw_content = m.get("content")
+        if not _raw_content:
+            _has_parts = bool(m.get("parts")) or bool(((m.get("metadata") or {}).get("parts")))
+            _has_tools = bool(((m.get("metadata") or {}).get("tools_used")))
+            if not _has_parts and not _has_tools:
+                continue
         msg = {
             "id": m["id"],
             "conversation_id": m["conversation_id"],
