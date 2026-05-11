@@ -212,10 +212,28 @@ class XlsxAnalyzer:
             for _, row in df.head(min(5, row_count)).iterrows():
                 row_values: List[Any] = []
                 for val in row:
-                    if isinstance(val, (int, float, bool)):
-                        row_values.append(val)
-                    elif pd.isna(val):
+                    # CRITICAL: check NaN/None FIRST. NaN is technically a
+                    # float, so the isinstance() branch below would otherwise
+                    # capture it and emit it raw — Python's json.dumps then
+                    # serialises NaN as the literal token "NaN", which is not
+                    # valid JSON and crashes the frontend's JSON.parse with
+                    # "unexpected character" at the first sample row.
+                    try:
+                        _is_nan = pd.isna(val)
+                    except (TypeError, ValueError):
+                        _is_nan = False
+                    if _is_nan:
                         row_values.append(None)
+                    elif isinstance(val, bool):
+                        row_values.append(val)
+                    elif isinstance(val, (int, float)):
+                        # Also guard against +/-inf, which json.dumps would
+                        # emit as Infinity / -Infinity (likewise invalid JSON).
+                        import math as _math
+                        if isinstance(val, float) and not _math.isfinite(val):
+                            row_values.append(None)
+                        else:
+                            row_values.append(val)
                     else:
                         s = str(val).strip()
                         row_values.append(s[:80] + ("..." if len(s) > 80 else ""))
