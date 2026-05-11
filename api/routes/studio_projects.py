@@ -97,7 +97,8 @@ async def create_project(
 
 @router.get("")
 async def list_projects(
-    kind: Optional[str] = Query(None, regex="^(pptx|docx|chat|site)$"),
+    kind: Optional[str] = Query(None, pattern="^(pptx|docx|chat|site)$"),
+
     include_archived: bool = Query(False),
     limit: int = Query(100, ge=1, le=500),
     offset: int = Query(0, ge=0),

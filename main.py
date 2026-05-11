@@ -4,6 +4,8 @@ Analyst by Potomac - API Server
 AI-powered AmiBroker AFL development platform.
 """
 
+from contextlib import asynccontextmanager
+
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.gzip import GZipMiddleware
@@ -21,39 +23,15 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# Create FastAPI app
-app = FastAPI(
-    title="Analyst by Potomac API",
-    description="AI-powered AmiBroker AFL development platform with streaming support",
-    version="3.6",
-)
 
-# CORS middleware — open to all origins
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=False,  # must be False when allow_origins=["*"]
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
+# ── Startup / shutdown handlers (lifespan-managed) ────────────────────────────
 
-# GZip compression — large JSON / HTML responses are compressed transparently.
-# Streaming SSE responses are skipped automatically (text/event-stream).
-app.add_middleware(GZipMiddleware, minimum_size=1024)
+async def _startup_perf_infra():
+    """LAZILY initialize asyncpg pool, Redis cache, shared HTTP client.
 
-
-# ── Performance infra: async DB pool, Redis cache, shared HTTP client ────────
-@app.on_event("startup")
-async def startup_perf_infra():
-    """LAZILY initialize the asyncpg pool, Redis cache, and shared HTTP client.
-
-    Each block is wrapped in asyncio.wait_for so a slow/failed external service
-    (Redis DNS, Supabase pooler) NEVER blocks the healthcheck. The healthcheck
-    must return within Railway's window — if any of these hang, the deploy
-    fails.
-
-    All three are no-ops when their corresponding env vars are missing, and
-    swallow every exception so startup is guaranteed to complete.
+    Each is wrapped in ``asyncio.wait_for`` so a slow/failed external service
+    can NEVER block the healthcheck. All swallow exceptions — startup
+    completes regardless of whether the deps are reachable.
     """
     import asyncio as _aio
 
@@ -83,10 +61,169 @@ async def startup_perf_infra():
     await _safe("shared HTTP client", _http, timeout=2.0)
 
 
+async def _startup_task_manager():
+    try:
+        from core.task_manager import get_task_manager
+        manager = get_task_manager()
+        manager.start_cleanup_loop()
+        logger.info("✓ Background task manager initialized")
+    except Exception as e:
+        logger.error(f"✗ Failed to start task manager: {e}")
 
-@app.on_event("shutdown")
-async def shutdown_perf_infra():
-    """Clean shutdown of pools and clients."""
+
+async def _startup_copy_docx_assets():
+    import shutil as _shutil
+    from pathlib import Path as _Path
+
+    src = _Path(__file__).parent / "ClaudeSkills" / "potomac-docx" / "assets"
+    storage_root = os.getenv("STORAGE_ROOT", "/data")
+    dst = _Path(storage_root) / "docx_assets"
+
+    if not src.exists():
+        logger.warning("startup_copy_docx_assets: source assets not found at %s", src)
+        return
+    try:
+        dst.mkdir(parents=True, exist_ok=True)
+        copied = 0
+        for png in src.glob("*.png"):
+            _shutil.copy2(png, dst / png.name)
+            copied += 1
+        logger.info("✓ Copied %d Potomac logo assets → %s", copied, dst)
+    except Exception as e:
+        logger.warning("startup_copy_docx_assets: could not copy assets: %s", e)
+
+
+async def _startup_copy_pptx_assets():
+    import shutil as _shutil
+    from pathlib import Path as _Path
+
+    src = _Path(__file__).parent / "ClaudeSkills" / "potomac-pptx" / "brand-assets" / "logos"
+    storage_root = os.getenv("STORAGE_ROOT", "/data")
+    dst = _Path(storage_root) / "pptx_assets"
+
+    if not src.exists():
+        logger.warning("startup_copy_pptx_assets: source logos not found at %s", src)
+        return
+    try:
+        dst.mkdir(parents=True, exist_ok=True)
+        copied = 0
+        for png in src.glob("*.png"):
+            _shutil.copy2(png, dst / png.name)
+            copied += 1
+        logger.info("✓ Copied %d Potomac PPTX logo assets → %s", copied, dst)
+    except Exception as e:
+        logger.warning("startup_copy_pptx_assets: could not copy assets: %s", e)
+
+
+async def _startup_reconcile_user_skills():
+    """Re-extract user skills missing from disk after a redeploy."""
+    try:
+        from pathlib import Path as _Path
+        from db.supabase_client import get_supabase
+        from core.skills import skill_storage, invalidate_cache
+        from core.skills.uploads import (
+            extract_and_validate, materialize, decide_storage_kind,
+            LIGHTWEIGHT_ROOT, BUNDLE_ROOT, delete_on_disk,
+        )
+
+        sb = get_supabase()
+        rows = sb.table("user_skills").select(
+            "slug, storage_kind, storage_path, source"
+        ).execute().data or []
+
+        rehydrated, missing = 0, 0
+        for row in rows:
+            slug = row.get("slug")
+            sp = _Path(row.get("storage_path") or "")
+            if sp.exists() and sp.is_dir():
+                continue
+            if (row.get("source") or "system") == "system":
+                missing += 1
+                try:
+                    sb.table("user_skills").update({"enabled": False}).eq("slug", slug).execute()
+                except Exception:
+                    pass
+                continue
+            zip_bytes = skill_storage.download_zip(slug)
+            if zip_bytes is None:
+                logger.warning("Skill '%s' folder missing and no archive in Storage", slug)
+                missing += 1
+                continue
+            try:
+                parsed = extract_and_validate(zip_bytes, metadata_overrides={"slug": slug})
+                kind = decide_storage_kind(parsed)
+                try:
+                    delete_on_disk(slug)
+                except Exception:
+                    pass
+                target = materialize(parsed, kind)
+                sb.table("user_skills").update({
+                    "storage_path": str(target),
+                    "storage_kind": kind,
+                    "enabled": True,
+                }).eq("slug", slug).execute()
+                rehydrated += 1
+                try:
+                    sb.table("user_skill_audit").insert({
+                        "slug": slug, "actor_id": None,
+                        "action": "rehydrate",
+                        "detail": {"kind": kind},
+                    }).execute()
+                except Exception:
+                    pass
+            except Exception as e:
+                logger.warning("Rehydrate failed for '%s': %s", slug, e)
+                missing += 1
+
+        known = {r["slug"] for r in rows}
+        added_system = 0
+        for root, kind in ((LIGHTWEIGHT_ROOT, "lightweight"),
+                           (BUNDLE_ROOT, "bundle")):
+            if not root.exists():
+                continue
+            for folder in root.iterdir():
+                if not folder.is_dir() or folder.name.startswith((".", "_")):
+                    continue
+                if folder.name in known:
+                    continue
+                try:
+                    sb.table("user_skills").insert({
+                        "slug": folder.name,
+                        "name": folder.name,
+                        "description": "",
+                        "category": "general",
+                        "tags": [],
+                        "storage_kind": kind,
+                        "storage_path": str(folder),
+                        "bundle_size": 0,
+                        "file_count": sum(1 for _ in folder.rglob("*") if _.is_file()),
+                        "enabled": True,
+                        "source": "system",
+                        "created_by": None,
+                    }).execute()
+                    added_system += 1
+                except Exception as e:
+                    logger.debug("System row insert skipped for %s: %s", folder.name, e)
+
+        invalidate_cache()
+        logger.info(
+            "✓ user_skills reconciled: %d rehydrated, %d missing/disabled, %d new system rows",
+            rehydrated, missing, added_system,
+        )
+    except Exception as e:
+        logger.warning("startup_reconcile_user_skills failed: %s", e)
+
+
+async def _startup_seed_pptx_global_assets():
+    try:
+        from core.sandbox import pptx_assets as _pa
+        _pa.ensure_global_seed()
+        logger.info("✓ Global pptx_assets seed ensured")
+    except Exception as e:
+        logger.warning("startup_seed_pptx_global_assets failed: %s", e)
+
+
+async def _shutdown_perf_infra():
     try:
         from db.async_db import close_pool as _close_db_pool
         await _close_db_pool()
@@ -104,8 +241,59 @@ async def shutdown_perf_infra():
         pass
 
 
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """Single lifespan for the entire app (replaces deprecated on_event hooks).
+
+    All startup hooks run sequentially before the app accepts requests; if any
+    one of them throws it is logged but does NOT block boot.
+    """
+    for name, fn in (
+        ("perf_infra", _startup_perf_infra),
+        ("task_manager", _startup_task_manager),
+        ("copy_docx_assets", _startup_copy_docx_assets),
+        ("copy_pptx_assets", _startup_copy_pptx_assets),
+        ("reconcile_user_skills", _startup_reconcile_user_skills),
+        ("seed_pptx_global_assets", _startup_seed_pptx_global_assets),
+    ):
+        try:
+            await fn()
+        except Exception as e:
+            logger.error("startup hook '%s' raised: %s", name, e, exc_info=True)
+
+    yield
+
+    try:
+        await _shutdown_perf_infra()
+    except Exception:
+        pass
+
+
+# Create FastAPI app
+app = FastAPI(
+    title="Analyst by Potomac API",
+    description="AI-powered AmiBroker AFL development platform with streaming support",
+    version="3.6",
+    lifespan=lifespan,
+)
+
+
+# CORS middleware — open to all origins
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=False,  # must be False when allow_origins=["*"]
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+# GZip compression — large JSON / HTML responses are compressed transparently.
+# Streaming SSE responses are skipped automatically (text/event-stream).
+app.add_middleware(GZipMiddleware, minimum_size=1024)
+
 
 # ── Public Sites: Host-header subdomain router (Lovable-style) ───────────────
+
 # Runs BEFORE the rate limiter so a request like
 #   Host: my-portfolio.sites.potomacai.com  →  /index.html
 # is served straight from the published bundle without traversing the
@@ -636,220 +824,8 @@ except Exception as e:
     logger.error(f"✗ Failed to load public_sites router: {e}")
     logger.debug(traceback.format_exc())
 
-# Start background task cleanup loop on app startup
-@app.on_event("startup")
-async def startup_task_manager():
-    """Initialize the background task manager cleanup loop."""
-    try:
-        from core.task_manager import get_task_manager
-        manager = get_task_manager()
-        manager.start_cleanup_loop()
-        logger.info("✓ Background task manager initialized")
-    except Exception as e:
-        logger.error(f"✗ Failed to start task manager: {e}")
-
-
-@app.on_event("startup")
-async def startup_copy_docx_assets():
-    """
-    Copy Potomac logo assets to the Railway persistent volume on startup.
-
-    This ensures logos survive a container restart/redeploy even if the image
-    filesystem is ephemeral.  The primary path (Dockerfile COPY) is always
-    available; this gives an extra durable copy on the mounted volume.
-
-    Source  : ClaudeSkills/potomac-docx/assets/*.png (baked into image)
-    Dest    : $STORAGE_ROOT/docx_assets/*.png         (Railway volume)
-    """
-    import shutil as _shutil
-    from pathlib import Path as _Path
-
-    src = _Path(__file__).parent / "ClaudeSkills" / "potomac-docx" / "assets"
-    storage_root = os.getenv("STORAGE_ROOT", "/data")
-    dst = _Path(storage_root) / "docx_assets"
-
-    if not src.exists():
-        logger.warning("startup_copy_docx_assets: source assets not found at %s", src)
-        return
-
-    try:
-        dst.mkdir(parents=True, exist_ok=True)
-        copied = 0
-        for png in src.glob("*.png"):
-            target = dst / png.name
-            _shutil.copy2(png, target)
-            copied += 1
-        logger.info("✓ Copied %d Potomac logo assets → %s", copied, dst)
-    except Exception as e:
-        logger.warning("startup_copy_docx_assets: could not copy assets: %s", e)
-
-
-@app.on_event("startup")
-async def startup_copy_pptx_assets():
-    """
-    Copy Potomac PPTX logo assets to the Railway persistent volume on startup.
-
-    Source  : ClaudeSkills/potomac-pptx/brand-assets/logos/*.png (baked into image)
-    Dest    : $STORAGE_ROOT/pptx_assets/*.png                     (Railway volume)
-    """
-    import shutil as _shutil
-    from pathlib import Path as _Path
-
-    src = _Path(__file__).parent / "ClaudeSkills" / "potomac-pptx" / "brand-assets" / "logos"
-    storage_root = os.getenv("STORAGE_ROOT", "/data")
-    dst = _Path(storage_root) / "pptx_assets"
-
-    if not src.exists():
-        logger.warning("startup_copy_pptx_assets: source logos not found at %s", src)
-        return
-
-    try:
-        dst.mkdir(parents=True, exist_ok=True)
-        copied = 0
-        for png in src.glob("*.png"):
-            target = dst / png.name
-            _shutil.copy2(png, target)
-            copied += 1
-        logger.info("✓ Copied %d Potomac PPTX logo assets → %s", copied, dst)
-    except Exception as e:
-        logger.warning("startup_copy_pptx_assets: could not copy assets: %s", e)
-
-
-@app.on_event("startup")
-async def startup_reconcile_user_skills():
-    """
-    Reconcile uploaded skills on boot:
-
-      1. For every row in `user_skills` whose folder is missing on disk
-         (typical after Railway redeploys ephemeral FS), download the
-         archived zip from Supabase Storage and re-extract it.
-      2. For every folder under core/skills/ and ClaudeSkills/ that lacks
-         a DB row, insert one with source='system' so the registry stays
-         consistent.
-
-    Failures are logged but never block startup.
-    """
-    try:
-        import io
-        import zipfile
-        from pathlib import Path as _Path
-        from db.supabase_client import get_supabase
-        from core.skills import skill_storage, invalidate_cache
-        from core.skills.uploads import (
-            extract_and_validate, materialize, decide_storage_kind,
-            LIGHTWEIGHT_ROOT, BUNDLE_ROOT, delete_on_disk,
-        )
-
-        sb = get_supabase()
-        rows = sb.table("user_skills").select(
-            "slug, storage_kind, storage_path, source"
-        ).execute().data or []
-
-        rehydrated, missing = 0, 0
-        for row in rows:
-            slug = row.get("slug")
-            sp = _Path(row.get("storage_path") or "")
-            if sp.exists() and sp.is_dir():
-                continue
-            if (row.get("source") or "system") == "system":
-                # Repo-shipped folders that vanished — just mark disabled
-                missing += 1
-                try:
-                    sb.table("user_skills").update({"enabled": False}).eq("slug", slug).execute()
-                except Exception:
-                    pass
-                continue
-            zip_bytes = skill_storage.download_zip(slug)
-            if zip_bytes is None:
-                logger.warning("Skill '%s' folder missing and no archive in Storage", slug)
-                missing += 1
-                continue
-            try:
-                # Re-extract from archive
-                parsed = extract_and_validate(
-                    zip_bytes, metadata_overrides={"slug": slug},
-                )
-                kind = decide_storage_kind(parsed)
-                # Defensive cleanup if a partial folder somehow exists
-                try:
-                    delete_on_disk(slug)
-                except Exception:
-                    pass
-                target = materialize(parsed, kind)
-                sb.table("user_skills").update({
-                    "storage_path": str(target),
-                    "storage_kind": kind,
-                    "enabled": True,
-                }).eq("slug", slug).execute()
-                rehydrated += 1
-                try:
-                    sb.table("user_skill_audit").insert({
-                        "slug": slug, "actor_id": None,
-                        "action": "rehydrate",
-                        "detail": {"kind": kind},
-                    }).execute()
-                except Exception:
-                    pass
-            except Exception as e:
-                logger.warning("Rehydrate failed for '%s': %s", slug, e)
-                missing += 1
-
-        # Insert system rows for repo-shipped folders that aren't tracked
-        known = {r["slug"] for r in rows}
-        added_system = 0
-        for root, kind in ((LIGHTWEIGHT_ROOT, "lightweight"),
-                           (BUNDLE_ROOT, "bundle")):
-            if not root.exists():
-                continue
-            for folder in root.iterdir():
-                if not folder.is_dir() or folder.name.startswith((".", "_")):
-                    continue
-                if folder.name in known:
-                    continue
-                try:
-                    sb.table("user_skills").insert({
-                        "slug": folder.name,
-                        "name": folder.name,
-                        "description": "",
-                        "category": "general",
-                        "tags": [],
-                        "storage_kind": kind,
-                        "storage_path": str(folder),
-                        "bundle_size": 0,
-                        "file_count": sum(1 for _ in folder.rglob("*") if _.is_file()),
-                        "enabled": True,
-                        "source": "system",
-                        "created_by": None,
-                    }).execute()
-                    added_system += 1
-                except Exception as e:
-                    logger.debug("System row insert skipped for %s: %s", folder.name, e)
-
-        invalidate_cache()
-        logger.info(
-            "✓ user_skills reconciled: %d rehydrated, %d missing/disabled, %d new system rows",
-            rehydrated, missing, added_system,
-        )
-    except Exception as e:
-        logger.warning("startup_reconcile_user_skills failed: %s", e)
-
-
-@app.on_event("startup")
-async def startup_seed_pptx_global_assets():
-    """
-    Seed the global pptx_assets table rows (service_role bypasses RLS).
-    Copies repo brand logos into /data/pptx_assets/global/ and registers
-    one DB row per key, so all users see the Potomac logos in their manifest.
-    """
-    try:
-        from core.sandbox import pptx_assets as _pa
-        _pa.ensure_global_seed()
-        logger.info("✓ Global pptx_assets seed ensured")
-    except Exception as e:
-        logger.warning("startup_seed_pptx_global_assets failed: %s", e)
-
-
 # Log summary
+
 logger.info(f"Router loading complete: {len(routers_loaded)} loaded, {len(routers_failed)} failed")
 if routers_failed:
     logger.warning(f"Failed routers: {[name for name, _ in routers_failed]}")
