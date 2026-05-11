@@ -2302,7 +2302,36 @@ def execute_python(
         # Use __new__ to skip __init__ (which schedules an async task).
         # _execute_sync is fully synchronous and safe to call directly.
         sandbox = object.__new__(PythonSandbox)
-        result, _namespace = sandbox._execute_sync(code, context=ctx, persisted_namespace=_ns_in)
+        result, _namespace = sandbox._execute_sync(
+            code,
+            context=ctx,
+            persisted_namespace=_ns_in,
+            session_id=_sid or None,
+        )
+
+        # ── List persistent workspace files (so the model knows what carries
+        # over from previous turns instead of regenerating from scratch).
+        _workspace_files: List[Dict[str, Any]] = []
+        if _sid:
+            try:
+                from pathlib import Path as _P
+                from core.sandbox.db import _SANDBOX_HOME as _SBHOME
+                _wsdir = _P(_SBHOME) / "conversations" / str(_sid)
+                if _wsdir.exists():
+                    for fp in sorted(_wsdir.rglob("*")):
+                        if fp.is_file():
+                            try:
+                                _workspace_files.append({
+                                    "path": str(fp.relative_to(_wsdir)).replace("\\", "/"),
+                                    "size_bytes": fp.stat().st_size,
+                                })
+                            except Exception:
+                                pass
+                        if len(_workspace_files) >= 50:
+                            break
+            except Exception:
+                pass
+
 
         # _execute_sync mutated _ns_in in-place when __inproc__ was set, so we
         # don't need to reassign — _SESSION_NAMESPACES already points at it.
@@ -2375,6 +2404,19 @@ def execute_python(
             "output": result.output,
             "variables": result.variables,
         }
+        # Surface persistent workspace contents so the agent knows the files
+        # it wrote earlier are still on disk (sandbox_dir is reused across
+        # turns when session_id is set). Without this hint the model often
+        # re-generates the same code/data on every follow-up turn.
+        if _workspace_files:
+            out["workspace_files"] = _workspace_files
+            out["workspace_hint"] = (
+                "These files PERSIST across turns in this conversation's sandbox "
+                "(in the current working directory). You can re-open / re-read / "
+                "modify them with normal Python open()/pandas.read_csv()/etc. — "
+                "no need to regenerate them."
+            )
+
         if not result.success:
             out["error"] = result.error
             out["traceback"] = result.output  # _execute_sync puts tb in output on failure

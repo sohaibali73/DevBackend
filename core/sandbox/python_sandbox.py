@@ -936,7 +936,7 @@ class PythonSandbox(BaseSandbox):
         try:
             result, new_namespace = await asyncio.wait_for(
                 asyncio.to_thread(
-                    self._execute_sync, code, context, persisted_namespace, execution_id
+                    self._execute_sync, code, context, persisted_namespace, execution_id, session_id
                 ),
                 timeout=timeout,
             )
@@ -1017,12 +1017,18 @@ class PythonSandbox(BaseSandbox):
         context: Optional[Dict] = None,
         persisted_namespace: Optional[Dict] = None,
         execution_id: Optional[str] = None,
+        session_id: Optional[str] = None,
     ) -> Tuple[SandboxResult, Dict[str, Any]]:
         """
         Synchronous execution (runs in a thread via asyncio.to_thread).
         Returns (SandboxResult, serializable_namespace_for_db).
 
-        • Creates a per-execution temp directory for file I/O.
+        • Creates a per-execution temp directory for file I/O — OR, when
+          ``session_id`` is provided, reuses a persistent per-conversation
+          working dir (``$SANDBOX_DATA_DIR/conversations/<session_id>``).
+          Persistent dirs are NOT rmtree'd at the end, so files the agent
+          wrote in a previous turn (modules, datasets, generated assets)
+          remain available for subsequent execute_python() calls.
         • Auto-installs missing approved packages via pip.
         • Captures plotly fig.show() + matplotlib plt.show() as artifacts.
         • Converts files written by the code into downloadable FileArtifacts.
@@ -1031,7 +1037,24 @@ class PythonSandbox(BaseSandbox):
 
         # ---- Per-execution sandbox directory for file I/O ----
         exec_id = execution_id or str(uuid.uuid4())
-        sandbox_dir = Path(_tempfile_mod.mkdtemp(prefix=f"sbx_{exec_id[:8]}_"))
+        _persistent_dir = False
+        if session_id:
+            # Persistent per-conversation workspace: files survive between
+            # successive execute_python() calls so the agent doesn't have to
+            # regenerate code/data from scratch on every follow-up turn.
+            try:
+                from core.sandbox.db import _SANDBOX_HOME as _SBHOME
+                _base = Path(_SBHOME) / "conversations" / str(session_id)
+            except Exception:
+                _base = Path(_os_real.environ.get(
+                    "SANDBOX_DATA_DIR",
+                    str(Path.home() / ".sandbox"),
+                )) / "conversations" / str(session_id)
+            _base.mkdir(parents=True, exist_ok=True)
+            sandbox_dir = _base
+            _persistent_dir = True
+        else:
+            sandbox_dir = Path(_tempfile_mod.mkdtemp(prefix=f"sbx_{exec_id[:8]}_"))
         _exec_started_at = time.time()
 
         # ---- Captures ----
@@ -1301,11 +1324,15 @@ class PythonSandbox(BaseSandbox):
                     _pio_restore.show = _plotly_show_orig
                 except Exception:
                     pass
-            # Clean up temp directory (artifacts already captured in memory)
-            try:
-                _shutil.rmtree(str(sandbox_dir), ignore_errors=True)
-            except Exception:
-                pass
+            # Clean up temp directory (artifacts already captured in memory).
+            # IMPORTANT: when we used a persistent per-conversation workspace
+            # (session_id was provided), do NOT rmtree — those files are the
+            # whole point of the persistent sandbox.
+            if not _persistent_dir:
+                try:
+                    _shutil.rmtree(str(sandbox_dir), ignore_errors=True)
+                except Exception:
+                    pass
 
     # -------------------------------------------------------------------------
     # Fix 2c — AST-based validation
