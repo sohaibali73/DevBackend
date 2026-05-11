@@ -304,9 +304,36 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# GZip compression — large JSON / HTML responses are compressed transparently.
-# Streaming SSE responses are skipped automatically (text/event-stream).
-app.add_middleware(GZipMiddleware, minimum_size=1024)
+# GZip compression — only applied to large NON-streaming responses.
+# Streaming responses (chat, agent, AI SDK) MUST NOT be wrapped in GZip:
+# the middleware buffers the entire response while gzipping, which can add
+# 5-10 s to time-to-first-token for SSE/text streams. We use a tiny
+# pass-through middleware to skip any path that returns text/plain or
+# text/event-stream, then apply GZip to the rest.
+
+class _SmartGZipMiddleware(GZipMiddleware):
+    async def __call__(self, scope, receive, send):
+        # Only apply to HTTP requests.
+        if scope.get("type") != "http":
+            return await super().__call__(scope, receive, send)
+
+        path = scope.get("path", "")
+        # Skip GZip entirely on known streaming routes — they emit tiny
+        # chunks and any buffering shows up as multi-second TTFT delay.
+        STREAM_PATHS = (
+            "/chat/agent", "/chat/stream", "/chat/sse",
+            "/ai/", "/agent/", "/researcher/stream",
+            "/skills/execute/stream", "/consensus/stream",
+        )
+        if any(path.startswith(p) for p in STREAM_PATHS):
+            from starlette.types import ASGIApp
+            # Bypass: forward unchanged to the next app.
+            return await self.app(scope, receive, send)
+        return await super().__call__(scope, receive, send)
+
+
+app.add_middleware(_SmartGZipMiddleware, minimum_size=1024)
+
 
 
 # ── Public Sites: Host-header subdomain router (Lovable-style) ───────────────
