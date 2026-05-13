@@ -617,50 +617,125 @@ def _step_kind_to_role(kind: str) -> Optional[str]:
 
 def _build_history_from_steps(steps: list[dict]) -> list[dict]:
     """
-    Rebuild a minimal Claude message history from previously persisted steps.
+    Rebuild a Claude-valid message history from persisted goal_steps.
 
-    We render each prior assistant note / plan as a plain assistant message and
-    every tool-call/tool-result pair as Anthropic-shape blocks so the model can
-    resume cleanly.  Stops at the most recent ``note`` to avoid replaying tools
-    that already finished.
+    Anthropic enforces two rules our raw step log violates on replay:
+
+    1. Every ``tool_use`` block must be IMMEDIATELY followed by a user
+       message whose first block is a matching ``tool_result``.  If even one
+       ``tool_use`` is missing its result (because the tick crashed between
+       persisting the call and persisting the result), the API returns
+       ``messages.N: tool_use ids were found without tool_result blocks``
+       (400) and the goal hangs forever.
+    2. Roles must alternate strictly — two consecutive ``assistant`` rows
+       (a ``note`` immediately followed by a ``tool-call``, for example)
+       silently produce empty 42-token replies.
+
+    To honour both rules we collapse contiguous runs of plan/note/thought +
+    tool-call steps into a SINGLE assistant message whose ``content`` is a
+    list of blocks (text + tool_use…) and then emit a SINGLE user message
+    containing one ``tool_result`` block per ``tool_use`` in that assistant
+    message.  Any ``tool_use`` without a matching ``tool-result`` step gets a
+    synthesised error result so the API doesn't reject the call.
     """
     msgs: list[dict] = []
-    pending_tool_uses: dict[str, dict] = {}
+
+    # Quick lookup: which tool_use_ids have a persisted tool-result row?
+    results_by_id: dict[str, Any] = {}
     for s in steps:
+        if s.get("kind") == "tool-result":
+            c = s.get("content") or {}
+            tid = c.get("id") or c.get("tool_call_id")
+            if tid:
+                results_by_id[tid] = c.get("result")
+
+    i = 0
+    while i < len(steps):
+        s = steps[i]
         kind = s.get("kind")
         content = s.get("content") or {}
-        if kind == "plan":
-            text = (
-                content.get("plan") if isinstance(content, dict) else str(content)
-            )
-            if text:
-                msgs.append({"role": "assistant", "content": f"Plan:\n{text}"})
-        elif kind in ("thought", "note"):
-            text = content.get("text") if isinstance(content, dict) else str(content)
-            if text:
-                msgs.append({"role": "assistant", "content": text})
-        elif kind == "tool-call":
-            tu_id = content.get("id") or content.get("tool_call_id")
-            name = content.get("name", "")
-            args = content.get("args") or content.get("input") or {}
-            if tu_id and name:
-                pending_tool_uses[tu_id] = {"name": name, "input": args}
-                msgs.append({
-                    "role": "assistant",
-                    "content": [{"type": "tool_use", "id": tu_id, "name": name, "input": args}],
-                })
-        elif kind == "tool-result":
-            tu_id = content.get("id") or content.get("tool_call_id")
-            result = content.get("result")
-            if tu_id:
-                msgs.append({
-                    "role": "user",
-                    "content": [{
-                        "type": "tool_result",
-                        "tool_use_id": tu_id,
-                        "content": json.dumps(result) if not isinstance(result, str) else result,
-                    }],
-                })
+
+        # ── plan / note / thought / tool-call → build one assistant turn ──
+        if kind in ("plan", "note", "thought", "tool-call"):
+            assistant_blocks: list[dict] = []
+            tool_use_ids_in_turn: list[str] = []
+            # Greedily consume every consecutive same-turn step.
+            while i < len(steps) and steps[i].get("kind") in (
+                "plan", "note", "thought", "tool-call"
+            ):
+                inner = steps[i].get("content") or {}
+                ikind = steps[i].get("kind")
+                if ikind == "plan":
+                    text = inner.get("plan") if isinstance(inner, dict) else str(inner)
+                    if text:
+                        assistant_blocks.append({
+                            "type": "text", "text": f"Plan:\n{text}",
+                        })
+                elif ikind in ("note", "thought"):
+                    text = inner.get("text") if isinstance(inner, dict) else str(inner)
+                    if text:
+                        assistant_blocks.append({"type": "text", "text": text})
+                elif ikind == "tool-call":
+                    tu_id = inner.get("id") or inner.get("tool_call_id")
+                    name = inner.get("name", "")
+                    args = inner.get("args") or inner.get("input") or {}
+                    if tu_id and name:
+                        assistant_blocks.append({
+                            "type":  "tool_use",
+                            "id":    tu_id,
+                            "name":  name,
+                            "input": args,
+                        })
+                        tool_use_ids_in_turn.append(tu_id)
+                i += 1
+
+            if assistant_blocks:
+                msgs.append({"role": "assistant", "content": assistant_blocks})
+
+            # Pair every tool_use with its tool_result. Synthesise an error
+            # result for orphans so the Anthropic call doesn't 400.
+            if tool_use_ids_in_turn:
+                tr_blocks: list[dict] = []
+                for tu_id in tool_use_ids_in_turn:
+                    if tu_id in results_by_id:
+                        r = results_by_id[tu_id]
+                        tr_blocks.append({
+                            "type":        "tool_result",
+                            "tool_use_id": tu_id,
+                            "content":     (
+                                json.dumps(r) if not isinstance(r, str) else r
+                            ),
+                        })
+                    else:
+                        tr_blocks.append({
+                            "type":         "tool_result",
+                            "tool_use_id":  tu_id,
+                            "is_error":     True,
+                            "content": json.dumps({
+                                "error": (
+                                    "tool result missing — previous tick "
+                                    "failed before persisting the result. "
+                                    "Try again or pick a different approach."
+                                ),
+                            }),
+                        })
+                msgs.append({"role": "user", "content": tr_blocks})
+
+            # Skip any standalone tool-result rows we already consumed above.
+            while i < len(steps) and steps[i].get("kind") == "tool-result":
+                i += 1
+            continue
+
+        # ── tool-result without preceding tool-call (defensive) ───────────
+        if kind == "tool-result":
+            # Shouldn't happen with the loop above, but if it does we just
+            # drop the orphan so the API doesn't reject the call.
+            i += 1
+            continue
+
+        # Unknown kind (e.g. "done", "error") — ignore for history rebuild.
+        i += 1
+
     return msgs
 
 
