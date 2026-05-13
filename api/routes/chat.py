@@ -1903,11 +1903,64 @@ async def chat_agent(
 
                                     yield encoder.encode_tool_result(tool_call_id, result)
 
-                                    tool_results_for_next_call.append({
-                                        "type":        "tool_result",
-                                        "tool_use_id": tool_call_id,
-                                        "content":     result,
-                                    })
+                                    # Slim older screenshot tool_results in the running
+                                    # message history before we add the new one. A single
+                                    # 1080p PNG base64 is ~70-150K tokens — accumulating
+                                    # them blows past Anthropic's context window after a
+                                    # handful of screenshots. We keep ONLY the most-recent
+                                    # screenshot as a full image block; older screenshot
+                                    # results in `messages` are downgraded to a small
+                                    # text placeholder.
+                                    _SCREEN_TOOLS_CHAT = {"cu_screenshot", "computer_screenshot"}
+                                    if tool_name in _SCREEN_TOOLS_CHAT:
+                                        try:
+                                            for _m in messages:
+                                                _c = _m.get("content")
+                                                if not isinstance(_c, list):
+                                                    continue
+                                                for _blk in _c:
+                                                    if (
+                                                        isinstance(_blk, dict)
+                                                        and _blk.get("type") == "tool_result"
+                                                        and isinstance(_blk.get("content"), list)
+                                                    ):
+                                                        _has_img = any(
+                                                            isinstance(_x, dict) and _x.get("type") == "image"
+                                                            for _x in _blk["content"]
+                                                        )
+                                                        if _has_img:
+                                                            _blk["content"] = (
+                                                                "[previous screenshot omitted to save "
+                                                                "context — only the most recent screenshot "
+                                                                "is shown as an image]"
+                                                            )
+                                        except Exception as _slim_err:
+                                            print(f"[chat/agent] ⚠ screenshot slim failed (non-fatal): {_slim_err}")
+
+                                    # Build the tool_result block that goes back to Claude.
+                                    # Screenshots get wrapped as image content blocks so the
+                                    # model can SEE the screen on the next turn instead of
+                                    # parsing base64 noise.
+                                    if tool_name in _SCREEN_TOOLS_CHAT:
+                                        try:
+                                            from core.yang_autopilot import _wrap_tool_result_for_replay
+                                            _wrapped = _wrap_tool_result_for_replay(
+                                                tool_call_id, tool_name, result_data,
+                                            )
+                                            tool_results_for_next_call.append(_wrapped)
+                                        except Exception as _wrap_err:
+                                            print(f"[chat/agent] ⚠ screenshot wrap failed (non-fatal): {_wrap_err}")
+                                            tool_results_for_next_call.append({
+                                                "type":        "tool_result",
+                                                "tool_use_id": tool_call_id,
+                                                "content":     "[screenshot result omitted — wrap failed]",
+                                            })
+                                    else:
+                                        tool_results_for_next_call.append({
+                                            "type":        "tool_result",
+                                            "tool_use_id": tool_call_id,
+                                            "content":     result,
+                                        })
                                     assistant_content_blocks.append({
                                         "type":  "tool_use",
                                         "id":    tool_call_id,

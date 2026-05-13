@@ -786,6 +786,20 @@ def _build_history_from_steps(steps: list[dict]) -> list[dict]:
             if tid:
                 results_by_id[tid] = c.get("result")
 
+    # Identify the LATEST screenshot tool_use_id — only that one gets its
+    # full image payload in history. Older screenshots are replaced with a
+    # tiny text placeholder so we don't blow the model's context window
+    # (a single 1080p PNG base64 is ~70-150K tokens).
+    latest_screenshot_tu_id: Optional[str] = None
+    _screen_names = _screenshot_tool_names()
+    for s in steps:
+        if s.get("kind") == "tool-call":
+            c = s.get("content") or {}
+            if c.get("name") in _screen_names:
+                tid = c.get("id") or c.get("tool_call_id")
+                if tid:
+                    latest_screenshot_tu_id = tid  # later iterations overwrite
+
     i = 0
     while i < len(steps):
         s = steps[i]
@@ -845,9 +859,25 @@ def _build_history_from_steps(steps: list[dict]) -> list[dict]:
                 for tu_id in tool_use_ids_in_turn:
                     tname = tu_id_to_name.get(tu_id, "")
                     if tu_id in results_by_id:
-                        tr_blocks.append(_wrap_tool_result_for_replay(
-                            tu_id, tname, results_by_id[tu_id],
-                        ))
+                        raw_result = results_by_id[tu_id]
+                        # Older screenshots → placeholder text instead of the
+                        # full image to keep the context window manageable.
+                        is_screen = tname in _screen_names
+                        if is_screen and tu_id != latest_screenshot_tu_id:
+                            tr_blocks.append({
+                                "type":        "tool_result",
+                                "tool_use_id": tu_id,
+                                "is_error":    False,
+                                "content": (
+                                    "[previous screenshot omitted to save "
+                                    "context — only the most recent screenshot "
+                                    "is shown as an image]"
+                                ),
+                            })
+                        else:
+                            tr_blocks.append(_wrap_tool_result_for_replay(
+                                tu_id, tname, raw_result,
+                            ))
                     else:
                         tr_blocks.append({
                             "type":         "tool_result",
