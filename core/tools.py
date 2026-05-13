@@ -90,6 +90,7 @@ TOOL_SEARCH_NON_DEFERRED: frozenset = frozenset({
     "search_knowledge_base",
     "get_stock_data",
     "technical_analysis",
+    "calculate_performance",  # MANDATORY whenever a performance metric is needed
     "invoke_skill",         # REQUIRED: All skill routing goes through this tool
 })
 
@@ -648,6 +649,28 @@ TOOL_DEFINITIONS = [
             },
             "required": ["symbol"]
         }
+    },
+    # Custom: Performance Engine — MANDATORY for any performance/risk metric
+    {
+        "name": "calculate_performance",
+        "description": (
+            "MANDATORY tool for ANY performance, return, drawdown, or risk metric on a ticker. "
+            "Fetches live Yahoo Finance price history and computes a full quant suite from real data: "
+            "CAGR, total return, net profit, max drawdown (% and $, peak/trough/recovery dates), "
+            "Sharpe, annualised volatility, recovery factor, CAR/MaxDD (MAR), RAR/MaxDD, "
+            "Ulcer Index, UPI, K-Ratio, std error, win rate, profit factor, win/loss ratio. "
+            "ALWAYS call this BEFORE quoting any performance number — NEVER estimate or fabricate. "
+            "All percentages are plain floats (7.35 means 7.35%). Returns null for undefined values."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "ticker":  {"type": "string", "description": "Yahoo Finance ticker symbol (e.g. 'SIVR', 'SPY', 'PHYS')"},
+                "freq":    {"type": "string", "enum": ["daily", "weekly", "monthly"], "default": "daily", "description": "Bar frequency for computation. Default 'daily'."},
+                "initial": {"type": "number", "default": 100000, "description": "Hypothetical starting capital for $ figures (default 100,000)."},
+            },
+            "required": ["ticker"],
+        },
     },
     # Custom: Technical Analysis
     {
@@ -4691,6 +4714,38 @@ def _get_genui_card_schema(_ti: Dict[str, Any]) -> Dict[str, Any]:
         return {"success": False, "tool": "get_genui_card_schema", "error": str(e)}
 
 
+def _calculate_performance(ti: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    MANDATORY tool for any performance / risk metric on market data.
+
+    Wraps core.performance_engine.calculate_performance() so the LLM can never
+    fabricate Sharpe / CAGR / drawdown / etc. — every number is computed from
+    live Yahoo Finance data.
+    """
+    try:
+        from core.performance_engine import calculate_performance
+        result = calculate_performance(
+            ticker=ti.get("ticker", ""),
+            freq=ti.get("freq", "daily"),
+            initial=float(ti.get("initial", 100_000.0) or 100_000.0),
+        )
+        # Normalise to the {"success": bool, ...} shape used by handle_tool_call.
+        if isinstance(result, dict):
+            result["tool"] = "calculate_performance"
+            if result.get("status") == "ok":
+                result["success"] = True
+            elif result.get("status") == "error":
+                result["success"] = False
+        return result
+    except Exception as e:
+        logger.error("calculate_performance failed: %s", e, exc_info=True)
+        return {
+            "success": False,
+            "tool": "calculate_performance",
+            "error": f"Performance engine failed: {e}",
+        }
+
+
 _STATIC_DISPATCH: Dict[str, Any] = {
     # Each entry: tool_name → lambda tool_input: handler(...)
     # ── Reference / documentation tools (slim system prompt → load on demand) ──
@@ -4705,6 +4760,7 @@ _STATIC_DISPATCH: Dict[str, Any] = {
     "sanity_check_afl":       lambda ti: sanity_check_afl(code=ti.get("code",""), auto_fix=ti.get("auto_fix",True)),
     "get_stock_chart":        lambda ti: get_stock_chart(symbol=ti.get("symbol",""), period=ti.get("period","3mo"), interval=ti.get("interval","1d"), chart_type=ti.get("chart_type","candlestick")),
     "technical_analysis":     lambda ti: technical_analysis(symbol=ti.get("symbol",""), period=ti.get("period","3mo")),
+    "calculate_performance":  lambda ti: _calculate_performance(ti),
     "get_weather":            lambda ti: get_weather(location=ti.get("location",""), units=ti.get("units","imperial")),
     "get_news":               lambda ti: get_news(query=ti.get("query",""), category=ti.get("category","general"), max_results=ti.get("max_results",5)),
     "create_chart":           lambda ti: create_chart(chart_type=ti.get("chart_type","bar"), title=ti.get("title","Chart"), data=ti.get("data",[]), x_label=ti.get("x_label",""), y_label=ti.get("y_label",""), colors=ti.get("colors")),

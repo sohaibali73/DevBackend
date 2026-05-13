@@ -33,6 +33,7 @@ from typing import Any, Optional
 import anthropic
 import httpx
 
+from core import artifacts as _artifacts
 from core import desktop_pending
 from core.desktop_tools import DESKTOP_TOOL_NAMES, desktop_tools_for
 from core.yang_cu_tools import YANG_CU_TOOL_NAMES, yang_cu_tools_for
@@ -311,6 +312,23 @@ async def create_goal(
     return goal
 
 
+def _epoch_ms(value: Any) -> Optional[int]:
+    """Best-effort convert a Supabase timestamptz string to ms-since-epoch."""
+    if value is None:
+        return None
+    try:
+        if isinstance(value, (int, float)):
+            return int(value if value > 1e12 else value * 1000)
+        if isinstance(value, str):
+            dt = datetime.fromisoformat(value.replace("Z", "+00:00"))
+            return int(dt.timestamp() * 1000)
+        if isinstance(value, datetime):
+            return int(value.timestamp() * 1000)
+    except Exception:
+        return None
+    return None
+
+
 async def list_goals(user_id: str, limit: int = 100) -> list[dict]:
     def _q():
         return (
@@ -318,12 +336,23 @@ async def list_goals(user_id: str, limit: int = 100) -> list[dict]:
             .table("goals")
             .select("*")
             .eq("user_id", user_id)
-            .order("created_at", desc=True)
+            .order("updated_at", desc=True)
             .limit(limit)
             .execute()
         )
     r = await _to_thread(_q)
-    return r.data or []
+    rows = r.data or []
+    # Surface ``updatedAt`` (ms epoch) alongside the original ``updated_at``
+    # ISO string. The frontend dock uses it to sort/group by recency without
+    # parsing ISO strings on every render.
+    for row in rows:
+        ms = _epoch_ms(row.get("updated_at"))
+        if ms is not None:
+            row["updatedAt"] = ms
+        c_ms = _epoch_ms(row.get("created_at"))
+        if c_ms is not None:
+            row["createdAt"] = c_ms
+    return rows
 
 
 async def get_goal(user_id: str, goal_id: str) -> Optional[dict]:
@@ -417,6 +446,83 @@ async def _set_status(goal_id: str, status: str, user_id: Optional[str] = None) 
     _broadcast_nowait(goal_id, {"type": "status", "status": status})
     if status == "done":
         _broadcast_nowait(goal_id, {"type": "done"})
+
+
+async def _emit_status(
+    goal_id: str,
+    status: str,
+    *,
+    activity: Optional[str] = None,
+    current_step_idx: Optional[int] = None,
+    total_steps: Optional[int] = None,
+) -> None:
+    """
+    Push a richer status event (activity label + plan progress) to SSE
+    subscribers WITHOUT changing the persisted goal status. Used by the UI
+    to render "Drafting Q4 report (3/6)" instead of just "running".
+
+    Use :func:`_set_status` when you want to actually transition the goal
+    status in the DB; use this helper for purely informational pings.
+    """
+    evt: dict[str, Any] = {"type": "status", "status": status}
+    if activity:
+        evt["activity"] = activity
+    if current_step_idx is not None:
+        evt["currentStepIdx"] = int(current_step_idx)
+    if total_steps is not None:
+        evt["totalSteps"] = int(total_steps)
+    _broadcast_nowait(goal_id, evt)
+
+
+# Lightweight humaniser for activity labels. The full library lives in
+# :mod:`core.humanize`; keep this inline so the runner has zero new imports
+# on a hot path.
+def _humanize_activity(tool_name: str, args: dict[str, Any] | None = None) -> str:
+    args = args or {}
+    name = tool_name or ""
+    # File ops
+    if name == "fs_write_file":
+        return f"Saving {(args.get('path') or 'file').split('/')[-1]}"
+    if name == "fs_read_file":
+        return f"Reading {(args.get('path') or 'file').split('/')[-1]}"
+    if name == "fs_list_dir":
+        return f"Listing {args.get('path') or 'folder'}"
+    # Office tools
+    if name in ("generate_docx", "potomac_docx"):
+        return "Drafting Word document"
+    if name in ("generate_pptx", "potomac_pptx"):
+        return "Building presentation"
+    if name in ("generate_xlsx", "potomac_xlsx"):
+        return "Building spreadsheet"
+    # Web / research
+    if name in ("web_search", "research", "researcher"):
+        q = args.get("query") or args.get("q") or ""
+        return f"Researching {q}" if q else "Researching"
+    if name in ("fetch_url", "browser_navigate", "cu_open_target"):
+        url = args.get("url") or args.get("target") or ""
+        return f"Opening {url}" if url else "Opening browser"
+    if name in ("cu_screenshot", "computer_screenshot", "browser_screenshot"):
+        return "Inspecting screen"
+    # Outlook
+    if name == "outlook_status":
+        return "Checking Outlook connection"
+    if name == "outlook_send_email":
+        to = args.get("to") or []
+        first = to[0] if isinstance(to, list) and to else ""
+        return f"Sending email to {first}" if first else "Sending email"
+    if name == "outlook_create_draft":
+        return "Drafting email"
+    # Memory / shell / python — generic
+    if name == "memory_save":
+        return "Saving memory"
+    if name == "memory_search":
+        return "Searching memory"
+    if name == "shell_run":
+        return f"Running: {(args.get('command') or '')[:40]}"
+    if name == "execute_python":
+        return "Running Python"
+    # Fallback — clean the underscore-form into a readable phrase.
+    return name.replace("_", " ").capitalize() or "Working"
 
 
 async def _save_step(
@@ -1060,7 +1166,8 @@ async def _tick_goal_inner(goal_id: str) -> None:
     )
     # Describe the desktop/cu/workflow tool families up front so the model
     # doesn't fall back to "I don't have access to those tools" hallucinations.
-    _goal_caps = list(((goal.get("metadata") or {}).get("capabilities")) or [
+    goal_meta = goal.get("metadata") or {}
+    _goal_caps = list(goal_meta.get("capabilities") or [
         "fs", "shell", "computer", "yang_cu", "yang_workflow",
     ])
     try:
@@ -1080,6 +1187,44 @@ async def _tick_goal_inner(goal_id: str) -> None:
     if any(c in _goal_caps for c in ("computer", "yang_cu")):
         base_sys += "\n\n" + COMPUTER_USE_INSTRUCTIONS
 
+    # ── Outlook / completion-email nudges ────────────────────────────────
+    # When the desktop client has connected an Outlook account OR the user
+    # asked for an end-of-goal email, give the planner explicit guidance so
+    # it doesn't either forget to send the email or invent a fake tool.
+    _opts = goal_meta.get("options") or {}
+    _email_on_complete = (
+        isinstance(_opts.get("emailOnComplete"), dict)
+        and bool(_opts["emailOnComplete"].get("enabled"))
+    )
+    _outlook_available = "outlook" in _goal_caps
+    if _outlook_available or _email_on_complete:
+        _nudge = (
+            "\n\n## Outlook / Email\n"
+            "You have access to Outlook tools (outlook_status, "
+            "outlook_send_email, outlook_create_draft). When the goal "
+            "involves sending, emailing, or notifying someone:\n"
+            "  1. Call outlook_status FIRST to confirm an account is "
+            "connected and read the user's address.\n"
+            "  2. Compose a clean subject and a plain-text body. Only use "
+            "HTML when the user explicitly asks for it.\n"
+            "  3. Attach generated artifacts by their workspace path "
+            "(NEVER base64). The desktop client will read the file and "
+            "inline it as a Graph attachment.\n"
+            "  4. In your final summary, confirm the email was sent and to "
+            "whom (subject + recipient list).\n"
+            "  5. Never include API keys, tokens, or secrets in email "
+            "bodies unless the user explicitly asked for them."
+        )
+        if _email_on_complete:
+            _to = _opts["emailOnComplete"].get("to") or "the user's address"
+            _nudge += (
+                "\n\nThe user requested an EMAIL ON COMPLETION. Before "
+                f"finishing this goal, you MUST call outlook_send_email to "
+                f"`{_to}` with a short summary of what you did and any "
+                f"artifacts produced (attach them by workspace path)."
+            )
+        base_sys += _nudge
+
     sys_prompt = base_sys + (("\n\n" + memory_block) if memory_block else "")
 
     # ── Tool list (built BEFORE the plan step so the planner sees the real
@@ -1089,10 +1234,7 @@ async def _tick_goal_inner(goal_id: str) -> None:
     except Exception:
         server_tools = []
 
-    goal_meta = goal.get("metadata") or {}
-    caps: list[str] = list(goal_meta.get("capabilities") or [
-        "fs", "shell", "computer", "yang_cu", "yang_workflow",
-    ])
+    caps: list[str] = list(_goal_caps)
     try:
         desktop_defs   = desktop_tools_for(caps)
     except Exception:
@@ -1131,10 +1273,20 @@ async def _tick_goal_inner(goal_id: str) -> None:
             client, model, sys_prompt, goal["prompt"],
             available_tool_names=_all_tool_names,
         )
-        await _save_step(goal_id, user_id, next_idx, "plan", {"plan": plan_text})
+        # Parse the bullet plan into structured steps so the frontend can
+        # render a real progress bar instead of guessing from tool-call count.
+        # The ``plan`` key is preserved for backwards-compat with old clients.
+        plan_bullets = _parse_plan_bullets(plan_text)
+        plan_content: dict[str, Any] = {
+            "plan":       plan_text,
+            "summary":    plan_bullets[0] if plan_bullets else (plan_text.splitlines()[0] if plan_text else ""),
+            "steps":      plan_bullets,
+            "totalSteps": len(plan_bullets),
+        }
+        await _save_step(goal_id, user_id, next_idx, "plan", plan_content)
         next_idx += 1
-        def _u():
-            return _db().table("goals").update({"plan_jsonb": {"plan": plan_text}}).eq("id", goal_id).execute()
+        def _u(plan_content=plan_content):
+            return _db().table("goals").update({"plan_jsonb": plan_content}).eq("id", goal_id).execute()
         try:
             await _to_thread(_u)
         except Exception:
@@ -1143,7 +1295,7 @@ async def _tick_goal_inner(goal_id: str) -> None:
         # dict matches the DB. Without this a follow-up tick on the same
         # call would replan, although the set-membership guard usually
         # prevents that.
-        goal["plan_jsonb"] = {"plan": plan_text}
+        goal["plan_jsonb"] = plan_content
 
     # ── Single Claude turn (may stream multiple tool calls) ──────────────
     client = anthropic.AsyncAnthropic(
@@ -1183,7 +1335,7 @@ async def _tick_goal_inner(goal_id: str) -> None:
     try:
         resp = await client.messages.create(
             model=model,
-            max_tokens=8192,
+            max_tokens=20000,
             system=sys_prompt,
             messages=messages,
             tools=tools,
@@ -1223,8 +1375,29 @@ async def _tick_goal_inner(goal_id: str) -> None:
         return
 
     # ── Execute each tool ────────────────────────────────────────────────
-    for tu in tool_uses:
+    # Plan progress baseline for activity events.
+    _plan_total = 0
+    try:
+        _plan_jsonb = goal.get("plan_jsonb") or {}
+        if isinstance(_plan_jsonb, dict):
+            _plan_total = int(_plan_jsonb.get("totalSteps") or 0)
+    except Exception:
+        _plan_total = 0
+
+    for _tool_idx, tu in enumerate(tool_uses):
         name = tu["name"]; args = tu["input"]; tu_id = tu["id"]
+        # Surface a human-readable activity label BEFORE the tool runs so the
+        # dock can render "Drafting Q4 report (3/6)" rather than just "running".
+        try:
+            await _emit_status(
+                goal_id, "running",
+                activity=_humanize_activity(name, args),
+                current_step_idx=(_tool_idx + 1),
+                total_steps=(_plan_total or None),
+            )
+        except Exception:
+            pass
+
         await _save_step(goal_id, user_id, next_idx, "tool-call", {
             "id": tu_id, "name": name, "args": args,
         })
@@ -1291,6 +1464,26 @@ async def _tick_goal_inner(goal_id: str) -> None:
         })
         next_idx += 1
 
+        # ── Auto-extract artifacts from this tool's result ───────────────
+        # Any tool that returned a {path}, {file_id}, or charts[]/artifacts[]
+        # is auto-registered into goal_artifacts and an ``artifact`` step is
+        # emitted on the SSE stream. The frontend uses this to route files
+        # into the user's local workspace.
+        try:
+            cands = _artifacts.extract_artifact_candidates(name, result)
+            if cands:
+                entries = await _artifacts.register_from_candidates(
+                    goal_id=goal_id, user_id=user_id,
+                    candidates=cands, produced_by=name,
+                )
+                for entry in entries:
+                    await _save_step(
+                        goal_id, user_id, next_idx, "artifact", entry,
+                    )
+                    next_idx += 1
+        except Exception as _art_err:
+            logger.debug("yang_autopilot: artifact extract failed: %s", _art_err)
+
     # If the stop_reason was tool_use, schedule another tick to feed results
     # back to Claude.
     if stop_reason == "tool_use":
@@ -1300,6 +1493,38 @@ async def _tick_goal_inner(goal_id: str) -> None:
     else:
         await _set_status(goal_id, "done")
         await _save_step(goal_id, user_id, next_idx, "done", {})
+
+
+# ────────────────────────────────────────────────────────────────────────────
+# Plan parsing — split the bullet plan into individual phases so the
+# frontend can render a real progress bar.
+# ────────────────────────────────────────────────────────────────────────────
+
+_PLAN_BULLET_RE = re.compile(r"^\s*(?:[-*•]|\d+[\.\)])\s+(.+?)\s*$")
+
+
+def _parse_plan_bullets(plan_text: str) -> list[str]:
+    """
+    Extract individual bullet phases from a free-form plan response.
+
+    Accepts ``- bullet``, ``* bullet``, ``• bullet``, ``1. bullet`` and
+    ``1) bullet`` forms. If the model didn't bullet its plan we fall back to
+    non-empty lines (capped at 8) so the progress bar still has a number.
+    """
+    if not plan_text:
+        return []
+    bullets: list[str] = []
+    for line in plan_text.splitlines():
+        m = _PLAN_BULLET_RE.match(line)
+        if m:
+            txt = m.group(1).strip()
+            if txt:
+                bullets.append(txt)
+    if bullets:
+        return bullets[:12]
+    # Fallback: non-empty lines, capped.
+    lines = [ln.strip() for ln in plan_text.splitlines() if ln.strip()]
+    return lines[:8]
 
 
 def _memory_tool_defs() -> list[dict]:
@@ -1480,8 +1705,9 @@ async def goal_stream(user_id: str, goal_id: str):
             try:
                 evt = await asyncio.wait_for(queue.get(), timeout=15.0)
             except asyncio.TimeoutError:
-                # Heartbeat comment — keeps the SSE alive through proxies.
-                yield ": heartbeat\n\n"
+                # SSE keepalive comment — every ≤15s so the edge proxy
+                # doesn't kill the stream during long tool calls.
+                yield ": keepalive\n\n"
                 continue
             yield _sse(evt)
             if evt.get("type") == "done":

@@ -285,12 +285,25 @@ async def lifespan(app: FastAPI):
     except Exception as _ya_err:
         logger.error("yang_autopilot workers failed to start: %s", _ya_err, exc_info=True)
 
+    # ── YANG Artifacts: start retention GC loop (24h post-terminal) ────────
+    try:
+        from core.artifacts import start_gc_loop as _ya_art_start
+        _ya_art_start()
+    except Exception as _ya_art_err:
+        logger.error("yang_artifacts gc loop failed to start: %s", _ya_art_err, exc_info=True)
+
     yield
 
     # ── YANG Autopilot: cancel workers on shutdown ─────────────────────────
     try:
         from core.yang_autopilot import stop_background_workers as _ya_stop
         await _ya_stop()
+    except Exception:
+        pass
+
+    try:
+        from core.artifacts import stop_gc_loop as _ya_art_stop
+        await _ya_art_stop()
     except Exception:
         pass
 

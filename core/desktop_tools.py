@@ -143,6 +143,42 @@ class ComputerKey(BaseModel):
 
 
 # ────────────────────────────────────────────────────────────────────────────
+# Outlook (desktop-executed via Microsoft Graph + PKCE in the Electron client)
+# ────────────────────────────────────────────────────────────────────────────
+
+class _OutlookAttachment(BaseModel):
+    path:   Optional[str] = None
+    name:   Optional[str] = None
+    base64: Optional[str] = None
+    mime:   Optional[str] = None
+
+
+class OutlookSendEmail(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    to:               list[str] = Field(min_length=1)
+    cc:               Optional[list[str]] = None
+    bcc:              Optional[list[str]] = None
+    subject:          str
+    body:             str
+    isHtml:           Optional[bool] = False
+    attachments:      Optional[list[_OutlookAttachment]] = None
+    saveToSentItems:  Optional[bool] = True
+
+
+class OutlookListInbox(BaseModel):
+    folder: Optional[str] = None
+    top:    Optional[int] = None
+    query:  Optional[str] = None
+
+
+class OutlookReply(BaseModel):
+    messageId: str
+    body:      str
+    isHtml:    Optional[bool] = False
+
+
+# ────────────────────────────────────────────────────────────────────────────
 # Canonical tool-name set (kept in lock-step with the client bridge)
 # ────────────────────────────────────────────────────────────────────────────
 
@@ -158,6 +194,9 @@ DESKTOP_TOOL_NAMES: frozenset[str] = frozenset({
     "computer_move", "computer_click", "computer_double_click",
     "computer_right_click", "computer_drag", "computer_scroll",
     "computer_type", "computer_key",
+    # Outlook (Microsoft 365) — Electron client handles Graph OAuth locally
+    "outlook_status", "outlook_send_email", "outlook_create_draft",
+    "outlook_list_inbox", "outlook_reply",
 })
 
 
@@ -313,6 +352,44 @@ def desktop_tools_for(caps: list[str] | tuple[str, ...] | None) -> list[dict[str
             _tool("computer_key",
                   "Press a key combo like 'Ctrl+Shift+T' or 'Enter'.",
                   ComputerKey),
+        ]
+
+    # ── Outlook (Microsoft 365) ──────────────────────────────────────────
+    # Advertised only when the desktop client has connected an Outlook /
+    # Microsoft 365 account. The Electron client owns the Microsoft Graph
+    # OAuth tokens (PKCE loopback, refresh tokens stored via safeStorage) —
+    # the backend never sees them. Tool calls are short-circuited like any
+    # other client-executed tool.
+    if "outlook" in caps_set:
+        tools += [
+            _tool("outlook_status",
+                  "Returns whether the user has connected an Outlook / "
+                  "Microsoft 365 account and what their address is. Always "
+                  "call this first before attempting to send mail. Returns "
+                  "{connected: boolean, email?: string, scopes?: string[]}.",
+                  _Empty),
+            _tool("outlook_send_email",
+                  "Sends an email via the user's connected Outlook account. "
+                  "Use this to deliver reports, summaries, or attachments at "
+                  "the end of a goal. Attachments may be referenced by local "
+                  "workspace path; the desktop client will read and inline "
+                  "them. Never include secrets in the body unless explicitly "
+                  "asked. Returns {sent: true, messageId, sentAt}.",
+                  OutlookSendEmail),
+            _tool("outlook_create_draft",
+                  "Identical to outlook_send_email but creates a draft and "
+                  "does NOT send it. Use when the user said 'draft a reply' "
+                  "or wants to review before sending. Returns "
+                  "{draftId, savedAt}.",
+                  OutlookSendEmail),
+            _tool("outlook_list_inbox",
+                  "List recent messages from a folder (default: Inbox). "
+                  "Returns [{id, subject, from, receivedAt, preview}].",
+                  OutlookListInbox),
+            _tool("outlook_reply",
+                  "Reply to a specific message. Body may be plain text or "
+                  "HTML. Returns {sent: true, messageId, sentAt}.",
+                  OutlookReply),
         ]
 
     return tools

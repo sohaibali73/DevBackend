@@ -224,6 +224,12 @@ invoke_skill for any document request):
                                commentaries, proposals, SOPs, etc.)
 
 MARKET / TRADING TOOLS:
+  - calculate_performance — MANDATORY for ANY performance/risk metric
+    (CAGR, total return, drawdown, Sharpe, volatility, Ulcer, K-Ratio,
+    recovery factor, MAR, win rate, profit factor). NEVER quote these
+    numbers without calling this tool first. Fetches live Yahoo Finance
+    data and returns a full quant suite — no estimates, no fabrication.
+    Call once per ticker; for comparisons call multiple times.
   - get_stock_data, get_stock_chart, technical_analysis, screen_stocks,
     compare_stocks, get_sector_performance, sector_heatmap, get_watchlist,
     get_market_overview, get_market_sentiment, get_crypto_data,
