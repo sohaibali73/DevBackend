@@ -7,13 +7,13 @@ import re
 import asyncio
 import traceback
 import logging
-from typing import Optional, Dict, List
+from typing import Optional, Dict, List, Literal
 from datetime import datetime
 
 logger = logging.getLogger(__name__)
 
 from fastapi import APIRouter, HTTPException, Depends, Request, UploadFile, File, Form
-from fastapi.responses import StreamingResponse
+from fastapi.responses import StreamingResponse, Response
 from pydantic import BaseModel
 import anthropic
 import httpx
@@ -27,6 +27,12 @@ from core.artifact_parser import ArtifactParser
 from core.streaming import VercelAIStreamEncoder, GenerativeUIStreamBuilder
 from db.supabase_client import get_supabase
 from core.debug_transcript import DebugTranscript, is_debug_enabled, set_current_transcript as _dt_set_ctx
+from core import desktop_pending
+from core.desktop_tools import (
+    DESKTOP_TOOL_NAMES,
+    desktop_tools_for,
+    build_desktop_system_block,
+)
 
 router = APIRouter(prefix="/chat", tags=["Chat"])
 
@@ -555,6 +561,22 @@ class YangOverrides(BaseModel):
     double_check:    Optional[bool] = None  # verify completion before finish
 
 
+class ClientEnvelope(BaseModel):
+    """
+    Identifies the client that originated the chat request.
+
+    Set by the Electron desktop app (and **only** by it). When ``kind`` is
+    ``"desktop"`` the agent loop adds the desktop tool definitions advertised
+    in ``capabilities`` and routes those tool calls to the client instead of
+    executing them server-side. Absent / ``kind="web"`` requests behave
+    exactly as before.
+    """
+    kind: Literal["desktop", "web"] = "web"
+    version: Optional[str] = None
+    capabilities: list[str] = []   # subset of ["fs", "shell", "computer"]
+    platform: Optional[str] = None
+
+
 class ChatAgentRequest(BaseModel):
     content: str
     conversation_id: Optional[str] = None
@@ -567,6 +589,8 @@ class ChatAgentRequest(BaseModel):
     max_iterations: int = 10  # default raised: 5 was too low for data-heavy tasks
     pin_model_version: bool = False  # NEW: option to use pinned snapshots
     yang: Optional[YangOverrides] = None  # YANG per-request feature overrides
+    # Optional client envelope injected by the Electron desktop app.
+    client: Optional[ClientEnvelope] = None
 
 
 # ---------------------------------------------------------------------------
@@ -1333,6 +1357,27 @@ async def chat_agent(
                 f"{file_context}{kb_context}{kb_doc_context}{doc_rag_context}"
             )
 
+            # ── Desktop-agent: inject capabilities block into the prompt ──
+            # When the request comes from the Electron desktop client, append
+            # a block telling Claude it has access to fs/shell/computer tools
+            # on the user's machine.  Web users get no addition.
+            _desktop_caps: list[str] = (
+                list(data.client.capabilities)
+                if (data.client and data.client.kind == "desktop")
+                else []
+            )
+            if _desktop_caps:
+                _desktop_block = build_desktop_system_block(_desktop_caps)
+                if _desktop_block:
+                    system_prompt_base += "\n\n" + _desktop_block
+                # Make sure the in-process sweeper is running so abandoned
+                # pending calls (client disconnected, app crashed, etc.) don't
+                # leak forever.
+                try:
+                    desktop_pending.ensure_sweeper_running()
+                except Exception:
+                    pass
+
             # ── Content Studio: inject cloned voice if this conversation is
             #    bound to a Studio project that has a style_profile_id.
             # Run the lookup off the event loop so it doesn't block the first
@@ -1499,6 +1544,28 @@ async def chat_agent(
                 except Exception as _sa_import_err:
                     logger.warning("yang subagents: failed to add tool: %s", _sa_import_err)
 
+            # ── Desktop-agent: append the desktop tool definitions ────────────
+            # When the client advertised fs/shell/computer capabilities, expose
+            # the matching tool defs to Claude.  Tool calls hitting these names
+            # are short-circuited below — they execute on the client, not here.
+            if _desktop_caps:
+                try:
+                    _desktop_defs = desktop_tools_for(_desktop_caps)
+                    if _desktop_defs:
+                        tools = list(tools) + _desktop_defs
+                        yield encoder.encode_data({
+                            "desktop_agent": True,
+                            "capabilities":  _desktop_caps,
+                            "tool_count":    len(_desktop_defs),
+                            "message":       "Desktop tools active — fs/shell/computer routed to your machine.",
+                        })
+                        logger.info(
+                            "desktop_agent: %d tools enabled for caps=%s",
+                            len(_desktop_defs), _desktop_caps,
+                        )
+                except Exception as _dt_err:
+                    logger.warning("desktop_agent: failed to attach tools: %s", _dt_err)
+
             # ── YANG: focus chain — inject as un-cached system block ──────────
             # Loaded AFTER yang_cfg so feature flag is respected.
             # Appended to system_prompt (after the cached base block) so the
@@ -1647,6 +1714,104 @@ async def chat_agent(
                                     _slug = tool_input.get("skill_slug", "")
                                     _label = _SKILL_LABELS.get(_slug, f"Running {_slug} skill…")
                                     yield encoder.encode_data({"skill_status": _label, "skill_slug": _slug})
+
+                                # ── Desktop-agent: short-circuit fs/shell/computer tools ──
+                                # These tools cannot run server-side. Pause the loop on a
+                                # Future and wait for the Electron client to POST the
+                                # result to ``/chat/agent/tool-result``. Heartbeat every
+                                # 15 s so the SSE connection (and Railway's proxy) stay
+                                # alive; give up after 5 minutes.
+                                if tool_name in DESKTOP_TOOL_NAMES:
+                                    import time as _t
+                                    _fut = desktop_pending.register(
+                                        conversation_id, tool_call_id, tool_name=tool_name,
+                                    )
+                                    _started = _t.time()
+                                    _timeout_s = 300.0  # 5 minutes
+                                    yield encoder.encode_data({
+                                        "desktop_tool_pending": True,
+                                        "tool_call_id":         tool_call_id,
+                                        "tool_name":            tool_name,
+                                        "message":              f"Waiting for your machine to run {tool_name}…",
+                                    })
+
+                                    _timed_out = False
+                                    while True:
+                                        _waiter = asyncio.shield(_fut)
+                                        try:
+                                            _done_dt, _ = await asyncio.wait(
+                                                {_waiter}, timeout=15.0
+                                            )
+                                        except Exception:
+                                            _done_dt = None
+                                        if _done_dt:
+                                            try:
+                                                result_data = _fut.result()
+                                            except Exception as _f_err:
+                                                result_data = {"error": str(_f_err)}
+                                            break
+                                        if (_t.time() - _started) > _timeout_s:
+                                            desktop_pending.cancel(conversation_id, tool_call_id)
+                                            result_data = {
+                                                "error": (
+                                                    "client did not return tool result in "
+                                                    "5 minutes (desktop agent timeout)"
+                                                )
+                                            }
+                                            _timed_out = True
+                                            break
+                                        # Heartbeat so the SSE stream stays open.
+                                        yield encoder.encode_data({
+                                            "desktop_heartbeat":  True,
+                                            "tool_call_id":       tool_call_id,
+                                            "tool_name":          tool_name,
+                                            "elapsed_s":          int(_t.time() - _started),
+                                        })
+
+                                    if not isinstance(result_data, dict):
+                                        result_data = {"result": result_data}
+                                    result = json.dumps(result_data)
+
+                                    tools_used.append({
+                                        "tool":       tool_name,
+                                        "toolCallId": tool_call_id,
+                                        "input":      tool_input,
+                                        "result":     result_data,
+                                        "skill_slug": "",
+                                        "skill_name": "",
+                                    })
+
+                                    # Persist to tool_results for replay / audit.
+                                    try:
+                                        _dt_state = "error" if isinstance(result_data, dict) and result_data.get("error") else "completed"
+                                        db.table("tool_results").insert({
+                                            "user_id":         user_id,
+                                            "conversation_id": conversation_id,
+                                            "tool_call_id":    tool_call_id,
+                                            "tool_name":       tool_name,
+                                            "input":           tool_input,
+                                            "output":          result_data,
+                                            "state":           _dt_state,
+                                            "error_text":      result_data.get("error") if _dt_state == "error" else None,
+                                        }).execute()
+                                    except Exception as _dt_tr_err:
+                                        print(f"[chat/agent] ⚠ desktop tool_results insert failed (non-fatal): {_dt_tr_err}")
+
+                                    yield encoder.encode_tool_result(tool_call_id, result)
+
+                                    tool_results_for_next_call.append({
+                                        "type":        "tool_result",
+                                        "tool_use_id": tool_call_id,
+                                        "content":     result,
+                                    })
+                                    assistant_content_blocks.append({
+                                        "type":  "tool_use",
+                                        "id":    tool_call_id,
+                                        "name":  tool_name,
+                                        "input": tool_input,
+                                    })
+                                    pending_tool_calls.pop()
+                                    continue  # skip every server-side dispatch path
 
                                 # ── YANG subagents: spawn_subagents gets its own async path ──
                                 # Runs before parallel_tools check — always inline since
@@ -3171,3 +3336,65 @@ async def upload_chat_attachment(
         "size": len(content),
         "url": f"/files/{file_id}",
     }
+
+
+# ---------------------------------------------------------------------------
+# Desktop-agent: resume endpoint
+# ---------------------------------------------------------------------------
+#
+# The Electron client posts here with the result of a desktop tool call it
+# just executed (filesystem read, shell run, screenshot, etc.). We look up the
+# matching Future in the in-memory registry and complete it — that unblocks
+# the SSE generator in /chat/agent/ui-stream so the agent loop continues.
+
+class _DesktopToolResultRequest(_PydanticBase):
+    conversation_id: str
+    tool_call_id: str
+    tool_name: _Opt[str] = None
+    result: _Opt[_Any] = None
+    error: _Opt[str] = None
+
+
+@router.post("/agent/tool-result")
+async def chat_agent_tool_result(
+    payload: _DesktopToolResultRequest,
+    user_id: str = Depends(get_current_user_id),
+):
+    """
+    Resume the desktop-agent stream waiting on ``(conversation_id,
+    tool_call_id)``. Returns 204 on success, 410 if the pending entry has
+    already expired / been cancelled / never existed.
+    """
+    # Light ownership check — if the conversation exists, verify it belongs
+    # to this user. We don't 404 on missing conversations because the desktop
+    # client may post a result very shortly after the conversation was
+    # created in a separate replica.
+    try:
+        db = get_supabase()
+        conv = (
+            db.table("conversations")
+            .select("id, user_id")
+            .eq("id", payload.conversation_id)
+            .execute()
+        )
+        if conv.data and conv.data[0]["user_id"] != user_id:
+            raise HTTPException(status_code=403, detail="Access denied")
+    except HTTPException:
+        raise
+    except Exception:
+        # DB hiccup — don't block the resume on it
+        pass
+
+    ok = desktop_pending.resolve(
+        payload.conversation_id,
+        payload.tool_call_id,
+        payload.result,
+        payload.error,
+    )
+    if not ok:
+        return Response(
+            status_code=410,
+            content='{"error":"unknown or expired tool_call_id"}',
+            media_type="application/json",
+        )
+    return Response(status_code=204)

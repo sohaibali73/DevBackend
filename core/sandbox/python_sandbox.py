@@ -181,6 +181,28 @@ _try_inject("plotly", "plotly")
 _try_inject("networkx", "networkx")
 _try_inject("sklearn", "sklearn")
 
+# PDF libraries
+# pymupdf imports as `fitz` (legacy) AND `pymupdf` (modern) — inject both names
+try:
+    import pymupdf as _pymupdf_mod
+    _SANDBOX_GLOBALS["pymupdf"] = _pymupdf_mod
+    _SANDBOX_GLOBALS["fitz"] = _pymupdf_mod
+except ImportError:
+    try:
+        import fitz as _fitz_mod  # older standalone install
+        _SANDBOX_GLOBALS["fitz"] = _fitz_mod
+        _SANDBOX_GLOBALS["pymupdf"] = _fitz_mod
+    except ImportError:
+        pass
+_try_inject("pypdf", "pypdf")
+_try_inject("PyPDF2", "PyPDF2")
+_try_inject("pdfplumber", "pdfplumber")
+_try_inject("reportlab", "reportlab")
+_try_inject("pdfminer", "pdfminer")
+_try_inject("fpdf", "fpdf")
+_try_inject("pikepdf", "pikepdf")
+
+
 # faker — inject Faker class directly so Faker() works without import
 try:
     from faker import Faker as _Faker
@@ -253,7 +275,13 @@ PRE_APPROVED_PACKAGES = [
     "cffi", "pycparser", "markdown-it-py", "mdurl", "setuptools", "pip",
     "plotly", "networkx", "flask", "fastapi", "sqlalchemy",
     "faker",
+    # PDF libraries
+    "pymupdf", "PyMuPDF", "fitz",
+    "pypdf", "PyPDF2",
+    "pdfplumber", "pdfminer.six", "pdfminer",
+    "reportlab", "fpdf", "fpdf2", "pikepdf",
 ]
+
 
 
 # ---------------------------------------------------------------------------
