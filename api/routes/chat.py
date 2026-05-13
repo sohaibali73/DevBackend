@@ -1818,7 +1818,19 @@ async def chat_agent(
                                         conversation_id, tool_call_id, tool_name=tool_name,
                                     )
                                     _started = _t.time()
-                                    _timeout_s = 300.0  # 5 minutes
+                                    # Long-running tools (shell, terminal_run, ssh_exec, etc.) can
+                                    # legitimately take many minutes — especially when the user is
+                                    # consent-prompted. Bump their budget to 30 min so we don't
+                                    # surface a spurious "client did not return result within 300s"
+                                    # error for those. All other client tools keep the 5-min budget.
+                                    _LONG_TOOLS = {
+                                        "shell_run", "shell_open",
+                                        "terminal_run", "terminal_open", "terminal_read",
+                                        "ssh_exec", "ssh_upload", "ssh_download",
+                                        "github_clone", "github_push", "github_pull",
+                                        "browser_download", "browser_wait_for",
+                                    }
+                                    _timeout_s = 1800.0 if tool_name in _LONG_TOOLS else 300.0
                                     yield encoder.encode_data({
                                         "desktop_tool_pending": True,
                                         "tool_call_id":         tool_call_id,
@@ -1843,10 +1855,11 @@ async def chat_agent(
                                             break
                                         if (_t.time() - _started) > _timeout_s:
                                             desktop_pending.cancel(conversation_id, tool_call_id)
+                                            _mins = int(_timeout_s // 60)
                                             result_data = {
                                                 "error": (
-                                                    "client did not return tool result in "
-                                                    "5 minutes (desktop agent timeout)"
+                                                    f"client did not return result for {tool_name} "
+                                                    f"within {_mins} minutes (desktop agent timeout)"
                                                 )
                                             }
                                             _timed_out = True

@@ -103,6 +103,24 @@ class BrowserPinNote(BaseModel):
     text: str
 
 
+class BrowserFill(BaseModel):
+    targetId: str
+    selector: str
+    value: str
+
+
+class BrowserWaitFor(BaseModel):
+    targetId: str
+    selector: str
+    timeoutMs: Optional[int] = 15000
+
+
+class BrowserDownload(BaseModel):
+    targetId: str
+    url: str
+    filename: Optional[str] = None
+
+
 # ────────────────────────────────────────────────────────────────────────────
 # Canonical tool-name set (kept in lock-step with the client bridge)
 # ────────────────────────────────────────────────────────────────────────────
@@ -115,6 +133,7 @@ YANG_CU_TOOL_NAMES: frozenset[str] = frozenset({
     "cu_click", "cu_double_click", "cu_type", "cu_key", "cu_scroll",
     # Browser-only
     "browser_navigate", "browser_eval", "browser_pin_note", "browser_get_pins",
+    "browser_fill", "browser_wait_for", "browser_download", "browser_list_downloads",
 })
 
 
@@ -182,6 +201,27 @@ def yang_cu_tools_for(caps: list[str] | tuple[str, ...] | None) -> list[dict[str
             BrowserPinNote,
         ),
         _tool("browser_get_pins", "Read any pinned user notes attached to a browser target.", TargetId),
+        _tool(
+            "browser_fill",
+            "Fill an <input>/<textarea> by CSS selector (more reliable than coordinate typing).",
+            BrowserFill,
+        ),
+        _tool(
+            "browser_wait_for",
+            "Wait for a CSS selector to appear in the browser target (default 15s timeout).",
+            BrowserWaitFor,
+        ),
+        _tool(
+            "browser_download",
+            "Download a URL through the browser's session (cookies/auth carry over) "
+            "and save it to the user's <workspace>/Downloads/ folder. Returns the local path.",
+            BrowserDownload,
+        ),
+        _tool(
+            "browser_list_downloads",
+            "List all files downloaded by this browser session.",
+            TargetId,
+        ),
     ]
 
 
