@@ -127,7 +127,30 @@ Card types:
   stock | backtest | afl | portfolio | screener | news | watchlist
   economic_calendar | sectors | trade_signal | comparison | file_analysis
   knowledge_base | error | task_progress | flight | restaurant | rental_car
-  weather | hotel | directions | currency
+  weather | hotel | directions | currency | performance
+
+PERFORMANCE CARD — ALWAYS emit this card immediately after calling
+calculate_performance. Use the tool result VERBATIM (do NOT round or alter
+the numbers). One-line JSON envelope, then optional prose summary.
+
+  {"type":"data-card_performance","data":{
+    "ticker":"SIVR","frequency":"daily",
+    "start_date":"2010-07-22","end_date":"2026-05-12","years":15.81,
+    "start_price":16.84,"end_price":29.21,
+    "annual_return_pct":3.88,"total_return_pct":73.46,
+    "net_profit_usd":73456.70,"final_equity_usd":173456.70,
+    "max_drawdown_pct":-62.12,"max_drawdown_usd":24500.00,
+    "peak_date":"2011-04-28","trough_date":"2020-03-18","recovery_date":"2020-08-07",
+    "dd_duration_days":3247,
+    "sharpe_ratio":0.14,"ann_volatility_pct":28.44,
+    "recovery_factor":3.00,"car_maxdd":0.06,"rar_maxdd":0.06,
+    "ulcer_index":28.91,"ulcer_performance_index":0.13,"k_ratio":0.0023,
+    "win_rate_pct":61.0,"profit_factor":2.15,"win_loss_ratio":1.37,
+    "avg_win_pct":5.26,"avg_loss_pct":-3.83,
+    "initial_capital":100000,
+    "summary":"SIVR returned 3.88% CAGR with a -62.1% max drawdown since 2010."
+  }}
+
 
 Envelope format (valid JSON, one line, no markdown fences):
   {"type":"data-card_<type>","data":{...fields..., "summary":"..."}}
