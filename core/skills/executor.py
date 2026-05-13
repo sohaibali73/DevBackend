@@ -131,6 +131,20 @@ class SkillExecutor:
             for key in total_usage:
                 total_usage[key] += response.usage.get(key, 0)
 
+            # Detect provider-level errors (Anthropic provider returns
+            # finish_reason="error" with the error text embedded). Surface
+            # them as a real failure so callers don't treat the error
+            # message as legitimate skill output.
+            if getattr(response, "finish_reason", "") == "error":
+                err_text = (response.text or "").strip() or "LLM provider error"
+                logger.error("Skill LLM call failed: %s", err_text)
+                return {
+                    "success": False,
+                    "error": err_text,
+                    "usage": total_usage,
+                    "iterations": iteration + 1,
+                }
+
             # If text response, accumulate it
             if response.text:
                 accumulated_text += response.text
@@ -244,6 +258,23 @@ class SkillExecutor:
         ]
 
     def _get_default_model(self) -> str:
-        """Get a default model for the current provider."""
-        models = self.provider.supported_models
+        """Get a default model for the current provider.
+
+        Prefer a known-stable, broadly-available model rather than blindly
+        picking ``supported_models[0]`` — that used to return
+        ``claude-opus-4-6`` which 404s on accounts without Opus access,
+        which surfaced to users as a vague "API routing issue".
+        """
+        models = self.provider.supported_models or []
+        # Preferred defaults in order — pick the first one the provider actually
+        # advertises. Falls back to the legacy first-entry behavior.
+        preferred = (
+            "claude-sonnet-4-6",
+            "claude-sonnet-4-5",
+            "claude-sonnet-4-5-20250929",
+            "claude-haiku-4-5-20251001",
+        )
+        for m in preferred:
+            if m in models:
+                return m
         return models[0] if models else ""
