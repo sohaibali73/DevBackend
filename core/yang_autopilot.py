@@ -34,8 +34,12 @@ import anthropic
 import httpx
 
 from core import desktop_pending
-from core.desktop_tools import DESKTOP_TOOL_NAMES
-from core.yang_cu_tools import YANG_CU_TOOL_NAMES
+from core.desktop_tools import DESKTOP_TOOL_NAMES, desktop_tools_for
+from core.yang_cu_tools import YANG_CU_TOOL_NAMES, yang_cu_tools_for
+from core.yang_workflow_tools import (
+    YANG_WORKFLOW_TOOL_NAMES,
+    yang_workflow_tools_for,
+)
 from core.tools import get_tools_for_api, handle_tool_call
 from db.supabase_client import get_supabase
 
@@ -46,7 +50,24 @@ logger = logging.getLogger(__name__)
 # Shared constants
 # ────────────────────────────────────────────────────────────────────────────
 
-CLIENT_EXECUTED_TOOL_NAMES: frozenset[str] = DESKTOP_TOOL_NAMES | YANG_CU_TOOL_NAMES
+# Every tool name whose execution lives on the Electron client. The agent
+# loop short-circuits these and waits on a ``desktop_pending`` future for the
+# client to POST the result back to ``/chat/agent/tool-result``.
+CLIENT_EXECUTED_TOOL_NAMES: frozenset[str] = (
+    DESKTOP_TOOL_NAMES
+    | YANG_CU_TOOL_NAMES
+    | YANG_WORKFLOW_TOOL_NAMES
+)
+
+
+def is_client_executed(tool_name: str) -> bool:
+    """True if the named tool must be executed by the Electron client.
+
+    Also matches the ``mcp_*`` prefix so user-installed MCP tools are routed
+    through the same pause/resume pipeline (their schemas are advertised by
+    the client; the server just relays).
+    """
+    return tool_name in CLIENT_EXECUTED_TOOL_NAMES or tool_name.startswith("mcp_")
 
 GOAL_STATUSES = {
     "queued", "running", "waiting_for_input", "paused",
@@ -758,6 +779,20 @@ async def _tick_goal_inner(goal_id: str) -> None:
         "When the goal is fully complete, do not call any tool — just answer "
         "with a short summary."
     )
+    # Describe the desktop/cu/workflow tool families up front so the model
+    # doesn't fall back to "I don't have access to those tools" hallucinations.
+    _goal_caps = list(((goal.get("metadata") or {}).get("capabilities")) or [
+        "fs", "shell", "computer", "yang_cu", "yang_workflow",
+    ])
+    try:
+        from core.desktop_tools     import build_desktop_system_block as _dsb
+        from core.yang_cu_tools     import build_yang_cu_system_block as _cusb
+        from core.yang_workflow_tools import build_yang_workflow_system_block as _wsb
+        for _b in (_dsb(_goal_caps), _cusb(_goal_caps), _wsb(_goal_caps)):
+            if _b:
+                base_sys += "\n\n" + _b
+    except Exception as _sb_err:
+        logger.debug("yang_autopilot: system block injection skipped: %s", _sb_err)
     sys_prompt = base_sys + (("\n\n" + memory_block) if memory_block else "")
 
     # ── Plan once at idx=0 if not already planned ────────────────────────
@@ -790,12 +825,42 @@ async def _tick_goal_inner(goal_id: str) -> None:
     if not history:
         messages.append({"role": "user", "content": goal["prompt"]})
 
-    # Server-side tools + memory tools.
+    # ── Tool list ────────────────────────────────────────────────────────
+    # Goals reuse the chat server-side tool list + memory tools, AND when the
+    # source conversation came from the Electron desktop client (i.e. the
+    # goal carries client capabilities in metadata) we also expose the
+    # client-executed families so the model can drive the user's machine.
+    # Default caps = full desktop suite so a goal spawned from the dock works
+    # without the frontend needing to forward the envelope explicitly.
     try:
         server_tools = get_tools_for_api(tool_search=False)
     except Exception:
         server_tools = []
-    tools = list(server_tools) + _memory_tool_defs()
+
+    goal_meta = goal.get("metadata") or {}
+    caps: list[str] = list(goal_meta.get("capabilities") or [
+        "fs", "shell", "computer", "yang_cu", "yang_workflow",
+    ])
+    try:
+        desktop_defs   = desktop_tools_for(caps)
+    except Exception:
+        desktop_defs = []
+    try:
+        cu_defs        = yang_cu_tools_for(caps)
+    except Exception:
+        cu_defs = []
+    try:
+        workflow_defs  = yang_workflow_tools_for(caps)
+    except Exception:
+        workflow_defs = []
+
+    tools = (
+        list(server_tools)
+        + _memory_tool_defs()
+        + desktop_defs
+        + cu_defs
+        + workflow_defs
+    )
 
     try:
         resp = await client.messages.create(

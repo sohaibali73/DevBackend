@@ -38,6 +38,11 @@ from core.yang_cu_tools import (
     yang_cu_tools_for,
     build_yang_cu_system_block,
 )
+from core.yang_workflow_tools import (
+    YANG_WORKFLOW_TOOL_NAMES,
+    yang_workflow_tools_for,
+    build_yang_workflow_system_block,
+)
 
 router = APIRouter(prefix="/chat", tags=["Chat"])
 
@@ -1397,6 +1402,15 @@ async def chat_agent(
                         system_prompt_base += "\n\n" + _yang_cu_block
                 except Exception as _ycu_sys_err:
                     logger.debug("yang_cu system block skipped: %s", _ycu_sys_err)
+                # YANG Autopilot — Developer Workflow (Phase 5). Append the
+                # terminal/github/ssh system block when "yang_workflow" is
+                # advertised by the client.
+                try:
+                    _ywf_block = build_yang_workflow_system_block(_desktop_caps)
+                    if _ywf_block:
+                        system_prompt_base += "\n\n" + _ywf_block
+                except Exception as _ywf_sys_err:
+                    logger.debug("yang_workflow system block skipped: %s", _ywf_sys_err)
                 # Make sure the in-process sweeper is running so abandoned
                 # pending calls (client disconnected, app crashed, etc.) don't
                 # leak forever.
@@ -1618,6 +1632,26 @@ async def chat_agent(
                 except Exception as _ycu_err:
                     logger.warning("yang_cu: failed to attach tools: %s", _ycu_err)
 
+                # ── YANG Autopilot — Developer Workflow tools (Phase 5) ───────
+                try:
+                    _yang_wf_defs = yang_workflow_tools_for(_desktop_caps)
+                    if _yang_wf_defs:
+                        tools = list(tools) + _yang_wf_defs
+                        yield encoder.encode_data({
+                            "yang_workflow_agent": True,
+                            "tool_count":          len(_yang_wf_defs),
+                            "message": (
+                                "Developer Workflow tools active — terminal_*, "
+                                "github_*, ssh_* available."
+                            ),
+                        })
+                        logger.info(
+                            "yang_workflow: %d developer-workflow tools enabled",
+                            len(_yang_wf_defs),
+                        )
+                except Exception as _ywf_err:
+                    logger.warning("yang_workflow: failed to attach tools: %s", _ywf_err)
+
             # ── YANG: focus chain — inject as un-cached system block ──────────
             # Loaded AFTER yang_cfg so feature flag is respected.
             # Appended to system_prompt (after the cached base block) so the
@@ -1773,7 +1807,12 @@ async def chat_agent(
                                 # result to ``/chat/agent/tool-result``. Heartbeat every
                                 # 15 s so the SSE connection (and Railway's proxy) stay
                                 # alive; give up after 5 minutes.
-                                if tool_name in DESKTOP_TOOL_NAMES or tool_name in YANG_CU_TOOL_NAMES:
+                                if (
+                                    tool_name in DESKTOP_TOOL_NAMES
+                                    or tool_name in YANG_CU_TOOL_NAMES
+                                    or tool_name in YANG_WORKFLOW_TOOL_NAMES
+                                    or tool_name.startswith("mcp_")
+                                ):
                                     import time as _t
                                     _fut = desktop_pending.register(
                                         conversation_id, tool_call_id, tool_name=tool_name,
