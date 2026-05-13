@@ -351,4 +351,10 @@ def build_desktop_system_block(caps: list[str] | tuple[str, ...] | None) -> str:
     """
     if not caps:
         return ""
-    return _DESKTOP_SYSTEM_TEMPLATE.format(caps=", ".join(sorted(set(caps))))
+    # NOTE: ``str.format`` would choke on the literal ``{"error": "..."}``
+    # JSON example inside the template (interprets it as a named field and
+    # raises ``KeyError: '"error"'``). Use a plain string replacement so the
+    # template can contain arbitrary JSON snippets safely.
+    return _DESKTOP_SYSTEM_TEMPLATE.replace(
+        "{caps}", ", ".join(sorted(set(caps)))
+    )

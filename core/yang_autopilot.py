@@ -688,14 +688,35 @@ async def _claude_key_for(user_id: str) -> Optional[str]:
         return None
 
 
-async def _plan_step(client: anthropic.AsyncAnthropic, model: str, sys_prompt: str, prompt: str) -> str:
-    """Ask the model to produce a short bullet plan before any tool calls."""
+async def _plan_step(
+    client: anthropic.AsyncAnthropic,
+    model: str,
+    sys_prompt: str,
+    prompt: str,
+    available_tool_names: list[str] | None = None,
+) -> str:
+    """Ask the model to produce a short bullet plan before any tool calls.
+
+    The full real tool catalogue is named explicitly so the planner can't
+    hallucinate tools that don't exist (e.g. ``cu_launch_application`` when
+    the real entry point is ``cu_open_target``).
+    """
+    tool_recap = ""
+    if available_tool_names:
+        # Cap the recap so we don't blow the context if 50+ tools are loaded.
+        _shown = ", ".join(sorted(set(available_tool_names))[:80])
+        tool_recap = (
+            "\n\nThe ONLY tools you can use in this goal are the following "
+            f"(use these exact names — do NOT invent new ones):\n{_shown}"
+        )
     plan_sys = (
         sys_prompt
         + "\n\nYou are about to start a long-running autonomous goal. "
         "Reply with a short bullet plan (no more than 6 bullets) describing "
-        "how you intend to accomplish the goal. Do not call any tools yet. "
+        "how you intend to accomplish the goal, referring to the available "
+        "tools by their exact names. Do not call any tools yet. "
         "Reply with plain text only."
+        + tool_recap
     )
     try:
         resp = await client.messages.create(
@@ -806,43 +827,8 @@ async def _tick_goal_inner(goal_id: str) -> None:
         logger.debug("yang_autopilot: system block injection skipped: %s", _sb_err)
     sys_prompt = base_sys + (("\n\n" + memory_block) if memory_block else "")
 
-    # ── Plan once at idx=0 if not already planned ────────────────────────
-    if not goal.get("plan_jsonb"):
-        client = anthropic.AsyncAnthropic(
-            api_key=api_key,
-            timeout=httpx.Timeout(timeout=600.0, connect=30.0, read=600.0, write=60.0),
-        )
-        model = goal.get("metadata", {}).get("model") or "claude-sonnet-4-5"
-        plan_text = await _plan_step(client, model, sys_prompt, goal["prompt"])
-        await _save_step(goal_id, user_id, next_idx, "plan", {"plan": plan_text})
-        next_idx += 1
-        def _u():
-            return _db().table("goals").update({"plan_jsonb": {"plan": plan_text}}).eq("id", goal_id).execute()
-        try:
-            await _to_thread(_u)
-        except Exception:
-            pass
-
-    # ── Single Claude turn (may stream multiple tool calls) ──────────────
-    client = anthropic.AsyncAnthropic(
-        api_key=api_key,
-        timeout=httpx.Timeout(timeout=600.0, connect=30.0, read=600.0, write=60.0),
-    )
-    model = goal.get("metadata", {}).get("model") or "claude-sonnet-4-5"
-
-    # Build messages: history + the goal prompt as the seed user turn IF we
-    # have no history yet (first iteration after plan).
-    messages: list[dict] = list(history)
-    if not history:
-        messages.append({"role": "user", "content": goal["prompt"]})
-
-    # ── Tool list ────────────────────────────────────────────────────────
-    # Goals reuse the chat server-side tool list + memory tools, AND when the
-    # source conversation came from the Electron desktop client (i.e. the
-    # goal carries client capabilities in metadata) we also expose the
-    # client-executed families so the model can drive the user's machine.
-    # Default caps = full desktop suite so a goal spawned from the dock works
-    # without the frontend needing to forward the envelope explicitly.
+    # ── Tool list (built BEFORE the plan step so the planner sees the real
+    #    catalogue and stops hallucinating tool names like cu_launch_application). ─
     try:
         server_tools = get_tools_for_api(tool_search=False)
     except Exception:
@@ -872,6 +858,72 @@ async def _tick_goal_inner(goal_id: str) -> None:
         + cu_defs
         + workflow_defs
     )
+    _all_tool_names = [t.get("name", "") for t in tools if isinstance(t, dict) and t.get("name")]
+    logger.info(
+        "goal %s: assembled %d tools (server=%d, memory=2, desktop=%d, cu=%d, workflow=%d) caps=%s",
+        goal_id, len(tools), len(server_tools), len(desktop_defs), len(cu_defs),
+        len(workflow_defs), caps,
+    )
+
+    # ── Plan once at idx=0 if not already planned ────────────────────────
+    if not goal.get("plan_jsonb"):
+        client = anthropic.AsyncAnthropic(
+            api_key=api_key,
+            timeout=httpx.Timeout(timeout=600.0, connect=30.0, read=600.0, write=60.0),
+        )
+        model = goal.get("metadata", {}).get("model") or "claude-sonnet-4-5"
+        plan_text = await _plan_step(
+            client, model, sys_prompt, goal["prompt"],
+            available_tool_names=_all_tool_names,
+        )
+        await _save_step(goal_id, user_id, next_idx, "plan", {"plan": plan_text})
+        next_idx += 1
+        def _u():
+            return _db().table("goals").update({"plan_jsonb": {"plan": plan_text}}).eq("id", goal_id).execute()
+        try:
+            await _to_thread(_u)
+        except Exception:
+            pass
+        # Reflect the freshly-written plan locally so the in-memory ``goal``
+        # dict matches the DB. Without this a follow-up tick on the same
+        # call would replan, although the set-membership guard usually
+        # prevents that.
+        goal["plan_jsonb"] = {"plan": plan_text}
+
+    # ── Single Claude turn (may stream multiple tool calls) ──────────────
+    client = anthropic.AsyncAnthropic(
+        api_key=api_key,
+        timeout=httpx.Timeout(timeout=600.0, connect=30.0, read=600.0, write=60.0),
+    )
+    model = goal.get("metadata", {}).get("model") or "claude-sonnet-4-5"
+
+    # Build messages.
+    #
+    # Claude requires conversations to BEGIN with a `user` message. Our
+    # reconstructed history starts with the planner's assistant turn
+    # (``Plan:\n...``) — without re-seeding the user prompt the API
+    # rejects the call OR the model has no idea what it's being asked
+    # to do (causing the infinite "I don't have access to those tools"
+    # loop the user reported).
+    #
+    # Fix: always lead with the goal prompt, then append whatever
+    # history we reconstructed.
+    messages: list[dict] = [{"role": "user", "content": goal["prompt"]}]
+    if history:
+        messages.extend(history)
+        # After the rebuilt history we need another user message so the
+        # model has something to respond to (Anthropic requires the LAST
+        # message to be ``user`` for the next turn).
+        last = history[-1]
+        if last.get("role") != "user":
+            messages.append({
+                "role": "user",
+                "content": (
+                    "Continue working on the goal. Call the next tool needed, "
+                    "or if the goal is fully complete, summarise what you did "
+                    "and stop calling tools."
+                ),
+            })
 
     try:
         resp = await client.messages.create(
