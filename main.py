@@ -278,7 +278,21 @@ async def lifespan(app: FastAPI):
         except Exception as e:
             logger.error("startup hook '%s' raised: %s", name, e, exc_info=True)
 
+    # ── YANG Autopilot: start background ticker + scheduler ────────────────
+    try:
+        from core.yang_autopilot import start_background_workers as _ya_start
+        _ya_start()
+    except Exception as _ya_err:
+        logger.error("yang_autopilot workers failed to start: %s", _ya_err, exc_info=True)
+
     yield
+
+    # ── YANG Autopilot: cancel workers on shutdown ─────────────────────────
+    try:
+        from core.yang_autopilot import stop_background_workers as _ya_stop
+        await _ya_stop()
+    except Exception:
+        pass
 
     try:
         await _shutdown_perf_infra()
@@ -816,6 +830,16 @@ try:
 except Exception as e:
     routers_failed.append(("yang", str(e)))
     logger.error(f"✗ Failed to load yang router: {e}")
+    logger.debug(traceback.format_exc())
+
+try:
+    from api.routes import yang_autopilot
+    app.include_router(yang_autopilot.router)
+    routers_loaded.append("yang_autopilot")
+    logger.info("✓ Loaded yang_autopilot router (Goals, Memory, Schedules)")
+except Exception as e:
+    routers_failed.append(("yang_autopilot", str(e)))
+    logger.error(f"✗ Failed to load yang_autopilot router: {e}")
     logger.debug(traceback.format_exc())
 
 try:

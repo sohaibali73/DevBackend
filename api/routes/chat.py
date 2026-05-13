@@ -33,6 +33,11 @@ from core.desktop_tools import (
     desktop_tools_for,
     build_desktop_system_block,
 )
+from core.yang_cu_tools import (
+    YANG_CU_TOOL_NAMES,
+    yang_cu_tools_for,
+    build_yang_cu_system_block,
+)
 
 router = APIRouter(prefix="/chat", tags=["Chat"])
 
@@ -1357,6 +1362,18 @@ async def chat_agent(
                 f"{file_context}{kb_context}{kb_doc_context}{doc_rag_context}"
             )
 
+            # ── YANG Autopilot: inject user memories (Phase 4) ────────────
+            # Adds a <learned_preferences> block of the top-K semantically
+            # relevant memories so Claude honours the user's stated
+            # preferences. Best-effort — never blocks the stream.
+            try:
+                from core.yang_autopilot import build_memory_block as _build_mem
+                _mem_block = await _build_mem(user_id, data.content, limit=8)
+                if _mem_block:
+                    system_prompt_base += "\n\n" + _mem_block
+            except Exception as _mem_err:
+                logger.debug("yang_autopilot memory injection skipped: %s", _mem_err)
+
             # ── Desktop-agent: inject capabilities block into the prompt ──
             # When the request comes from the Electron desktop client, append
             # a block telling Claude it has access to fs/shell/computer tools
@@ -1370,6 +1387,16 @@ async def chat_agent(
                 _desktop_block = build_desktop_system_block(_desktop_caps)
                 if _desktop_block:
                     system_prompt_base += "\n\n" + _desktop_block
+                # YANG Autopilot — Background Computer Use (Phase 1/2). When
+                # the client also advertises "yang_cu", append the parallel-
+                # control-surface system block so Claude knows about cu_* and
+                # browser_* tools.
+                try:
+                    _yang_cu_block = build_yang_cu_system_block(_desktop_caps)
+                    if _yang_cu_block:
+                        system_prompt_base += "\n\n" + _yang_cu_block
+                except Exception as _ycu_sys_err:
+                    logger.debug("yang_cu system block skipped: %s", _ycu_sys_err)
                 # Make sure the in-process sweeper is running so abandoned
                 # pending calls (client disconnected, app crashed, etc.) don't
                 # leak forever.
@@ -1566,6 +1593,31 @@ async def chat_agent(
                 except Exception as _dt_err:
                     logger.warning("desktop_agent: failed to attach tools: %s", _dt_err)
 
+                # ── YANG Autopilot — Background Computer Use tools ────────────
+                # Phase 1/2: parallel browser / native UIA / virtual-desktop
+                # control surfaces.  Only attached when the client also
+                # advertised the "yang_cu" capability flag.  Tool calls hitting
+                # these names are routed through the same client-execute
+                # pause/resume path as the fs/shell/computer tools above.
+                try:
+                    _yang_cu_defs = yang_cu_tools_for(_desktop_caps)
+                    if _yang_cu_defs:
+                        tools = list(tools) + _yang_cu_defs
+                        yield encoder.encode_data({
+                            "yang_cu_agent":   True,
+                            "tool_count":      len(_yang_cu_defs),
+                            "message": (
+                                "Background Computer Use active — cu_* and "
+                                "browser_* tools available."
+                            ),
+                        })
+                        logger.info(
+                            "yang_cu: %d background-CU tools enabled",
+                            len(_yang_cu_defs),
+                        )
+                except Exception as _ycu_err:
+                    logger.warning("yang_cu: failed to attach tools: %s", _ycu_err)
+
             # ── YANG: focus chain — inject as un-cached system block ──────────
             # Loaded AFTER yang_cfg so feature flag is respected.
             # Appended to system_prompt (after the cached base block) so the
@@ -1721,7 +1773,7 @@ async def chat_agent(
                                 # result to ``/chat/agent/tool-result``. Heartbeat every
                                 # 15 s so the SSE connection (and Railway's proxy) stay
                                 # alive; give up after 5 minutes.
-                                if tool_name in DESKTOP_TOOL_NAMES:
+                                if tool_name in DESKTOP_TOOL_NAMES or tool_name in YANG_CU_TOOL_NAMES:
                                     import time as _t
                                     _fut = desktop_pending.register(
                                         conversation_id, tool_call_id, tool_name=tool_name,
