@@ -86,6 +86,143 @@ CLIENT_TOOL_TIMEOUT_S = 300.0
 
 
 # ────────────────────────────────────────────────────────────────────────────
+# Computer-use instructions — appended to the system prompt when the goal
+# advertises ``computer`` or ``yang_cu`` capabilities so the model knows it
+# must LOOP (screenshot → think → act → screenshot → repeat) instead of
+# stopping after the first tool call.  Without this Claude routinely calls
+# ``cu_open_target`` and then says ``end_turn`` thinking the job is done.
+# ────────────────────────────────────────────────────────────────────────────
+
+COMPUTER_USE_INSTRUCTIONS = """\
+## Background Computer-Use — The Iteration Loop
+
+You have access to background computer-use tools (cu_* and browser_*) that
+drive applications on the user's machine WITHOUT moving the real cursor.
+
+THE LOOP YOU MUST FOLLOW for any autonomous task:
+
+  1. CALL cu_open_target FIRST. Save the returned `id` — every subsequent
+     call needs it as `targetId`.
+
+  2. CALL cu_screenshot(targetId) to see the current state. Look at the
+     image returned in the next tool_result.
+
+  3. DECIDE the single next concrete action: click here, type this, scroll, etc.
+
+  4. EXECUTE that action via cu_click / cu_type / cu_key / browser_fill /
+     browser_navigate / etc.
+
+  5. CALL cu_screenshot AGAIN to verify the action worked.
+
+  6. REPEAT from step 3 until the goal is achieved or you hit a blocker.
+
+  7. ONLY when the task is complete (or definitively blocked), reply with a
+     plain-text summary of what you did and stop calling tools. Do NOT stop
+     after one tool call — step 1 only OPENS the surface, the work happens
+     in steps 2-N.
+
+CRITICAL RULES:
+  - NEVER call cu_open_target a second time for the same goal — re-use the
+    existing targetId.
+  - ALWAYS screenshot before AND after any action you're not 100% sure
+    about. Visual verification beats assumptions.
+  - For form inputs prefer browser_fill(selector, value) over coordinate
+    typing — it's far more reliable.
+  - For navigation prefer browser_navigate(targetId, url) over typing into
+    the URL bar.
+  - If two consecutive screenshots show the same state, the previous action
+    failed — try a different selector or coordinate, don't blindly retry.
+  - If you need page text, call cu_get_content(targetId) — the
+    accessibility tree is more reliable than reading pixels.
+
+EXAMPLE GOAL: "Research tactical real assets investing"
+  1. cu_open_target({kind:"browser", url:"https://www.google.com"})
+     → {id:"browser:1", ...}
+  2. cu_screenshot("browser:1") → image of Google
+  3. browser_fill("browser:1", "textarea[name='q']", "tactical real assets")
+  4. cu_key("browser:1", "Enter")
+  5. cu_screenshot("browser:1") → image of search results
+  6. cu_click("browser:1", x, y) on the most relevant result
+  7. cu_screenshot("browser:1") → image of the article
+  8. cu_get_content("browser:1") → article text
+  9. ... continue gathering, possibly fs_write_file for notes ...
+ 10. Reply: "I gathered N sources. Key takeaways: ..."
+
+Step 1 only OPENS the page — the work happens in steps 2-10. If you stop at
+step 1 you have not done the user's job.
+"""
+
+
+def _screenshot_tool_names() -> frozenset[str]:
+    """Tools whose result is a screenshot the model should *see* as an image."""
+    return frozenset({
+        "cu_screenshot",
+        "computer_screenshot",
+    })
+
+
+def _wrap_tool_result_for_replay(
+    tool_use_id: str,
+    tool_name: str,
+    raw_result: Any,
+) -> dict:
+    """
+    Build a single ``tool_result`` block for the next model turn, expanding
+    screenshot payloads into Anthropic image content blocks so the model can
+    visually ground its next action.  Falls back to a plain-text JSON content
+    block for non-screenshot tools and on any unexpected payload shape.
+    """
+    is_screenshot = tool_name in _screenshot_tool_names()
+    is_error = isinstance(raw_result, dict) and "error" in raw_result
+
+    if is_screenshot and isinstance(raw_result, dict) and not is_error:
+        # Common shapes we accept for the PNG: pngBase64 / data / image / base64
+        png_b64: Optional[str] = None
+        for k in ("pngBase64", "png_base64", "image", "data", "base64", "screenshot"):
+            v = raw_result.get(k)
+            if isinstance(v, str) and len(v) > 50:
+                # Strip data-URL prefix if present.
+                if v.startswith("data:image"):
+                    v = v.split(",", 1)[1]
+                png_b64 = v
+                break
+        if png_b64:
+            width = raw_result.get("width")
+            height = raw_result.get("height")
+            note = "Screenshot"
+            if width and height:
+                note = f"Screenshot {width}x{height}px"
+            return {
+                "type":        "tool_result",
+                "tool_use_id": tool_use_id,
+                "is_error":    False,
+                "content": [
+                    {
+                        "type": "image",
+                        "source": {
+                            "type":       "base64",
+                            "media_type": "image/png",
+                            "data":       png_b64,
+                        },
+                    },
+                    {"type": "text", "text": note},
+                ],
+            }
+
+    # Default path — JSON-stringified plain text.
+    text_content = (
+        raw_result if isinstance(raw_result, str)
+        else json.dumps(raw_result, default=str)
+    )
+    return {
+        "type":        "tool_result",
+        "tool_use_id": tool_use_id,
+        "is_error":    bool(is_error),
+        "content":     text_content,
+    }
+
+
+# ────────────────────────────────────────────────────────────────────────────
 # SSE fan-out
 # ────────────────────────────────────────────────────────────────────────────
 # Each running goal has a list of asyncio.Queue subscribers. The runner pushes
@@ -694,18 +831,23 @@ def _build_history_from_steps(steps: list[dict]) -> list[dict]:
 
             # Pair every tool_use with its tool_result. Synthesise an error
             # result for orphans so the Anthropic call doesn't 400.
+            # Screenshot tool results are wrapped as image content blocks so
+            # the model can SEE the screen on the next iteration instead of
+            # staring at a wall of base64 text.
             if tool_use_ids_in_turn:
+                # Map tu_id → tool_name from the assistant blocks we just emitted.
+                tu_id_to_name: dict[str, str] = {}
+                for b in assistant_blocks:
+                    if b.get("type") == "tool_use" and b.get("id"):
+                        tu_id_to_name[b["id"]] = b.get("name", "")
+
                 tr_blocks: list[dict] = []
                 for tu_id in tool_use_ids_in_turn:
+                    tname = tu_id_to_name.get(tu_id, "")
                     if tu_id in results_by_id:
-                        r = results_by_id[tu_id]
-                        tr_blocks.append({
-                            "type":        "tool_result",
-                            "tool_use_id": tu_id,
-                            "content":     (
-                                json.dumps(r) if not isinstance(r, str) else r
-                            ),
-                        })
+                        tr_blocks.append(_wrap_tool_result_for_replay(
+                            tu_id, tname, results_by_id[tu_id],
+                        ))
                     else:
                         tr_blocks.append({
                             "type":         "tool_result",
@@ -900,6 +1042,14 @@ async def _tick_goal_inner(goal_id: str) -> None:
                 base_sys += "\n\n" + _b
     except Exception as _sb_err:
         logger.debug("yang_autopilot: system block injection skipped: %s", _sb_err)
+
+    # Computer-use loop instructions — only appended when the goal has cu-style
+    # capabilities. This is what stops Claude from "opening the browser then
+    # silently ending the turn" — it explicitly tells the model the work is
+    # the loop after step 1, not step 1 itself.
+    if any(c in _goal_caps for c in ("computer", "yang_cu")):
+        base_sys += "\n\n" + COMPUTER_USE_INSTRUCTIONS
+
     sys_prompt = base_sys + (("\n\n" + memory_block) if memory_block else "")
 
     # ── Tool list (built BEFORE the plan step so the planner sees the real
