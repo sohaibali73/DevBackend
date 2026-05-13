@@ -597,7 +597,15 @@ async def delete_schedule(user_id: str, schedule_id: str) -> bool:
 # Goal runner
 # ────────────────────────────────────────────────────────────────────────────
 
-_running_locks: dict[str, asyncio.Lock] = {}
+# Goals currently being ticked. Using a set instead of an asyncio.Lock per
+# goal is necessary because the lock-based "is in flight?" check has a
+# TOCTOU race: multiple ticks can all observe `lock.locked() == False`
+# before any of them actually acquires the lock, then they serialize on
+# `async with lock:` and all run end-to-end — producing duplicate plans,
+# notes, and tool calls. ``set.add`` is atomic in single-threaded asyncio
+# (no await point between the membership check and the add), so it gives
+# us a true "first one wins" guarantee.
+_running_goals: set[str] = set()
 
 
 def _step_kind_to_role(kind: str) -> Optional[str]:
@@ -712,10 +720,11 @@ async def tick_goal(goal_id: str) -> None:
     when the model chains tools). Re-schedules itself if the goal is not
     yet finished.
     """
-    lock = _running_locks.setdefault(goal_id, asyncio.Lock())
-    if lock.locked():
+    # Set-membership guard (see _running_goals docstring above).
+    if goal_id in _running_goals:
         return  # another tick is already in flight
-    async with lock:
+    _running_goals.add(goal_id)
+    try:
         try:
             await _tick_goal_inner(goal_id)
         except Exception as e:
@@ -730,6 +739,8 @@ async def tick_goal(goal_id: str) -> None:
                 await _set_status(goal_id, "failed")
             except Exception:
                 pass
+    finally:
+        _running_goals.discard(goal_id)
 
 
 async def _tick_goal_inner(goal_id: str) -> None:
