@@ -1215,38 +1215,12 @@ TOOL_DEFINITIONS = [
             "required": ["market"]
         }
     },
-    {
-        "name": "generate_afl_with_skill",
-        "defer_loading": True,
-        "description": (
-            "Generates high-quality AmiBroker AFL code using the specialized AFL Developer skill. "
-            "Use this for COMPLEX AFL generation requests that require expert-level code with proper "
-            "Param/Optimize structure, multiple indicators, composite system design, or advanced AFL patterns. "
-            "For simple AFL requests, prefer generate_afl_code. This is the premium path for complex requests."
-        ),
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "request": {
-                    "type": "string",
-                    "description": "The AFL strategy to generate (be specific about indicators, parameters, entry/exit rules)"
-                },
-                "strategy_type": {
-                    "type": "string",
-                    "description": "standalone (complete with all sections) or composite (logic only)",
-                    "enum": ["standalone", "composite"],
-                    "default": "standalone"
-                },
-                "trade_timing": {
-                    "type": "string",
-                    "description": "open (execute on next bar open) or close (execute on bar close)",
-                    "enum": ["open", "close"],
-                    "default": "close"
-                }
-            },
-            "required": ["request"]
-        }
-    },
+    # NOTE: The legacy 'generate_afl_with_skill' chat tool has been removed.
+    # ALL AFL generation now flows through the single canonical tool
+    # 'generate_afl_code' (defined above), which delegates to
+    # ClaudeAFLEngine — the same engine the /afl/generate REST endpoint uses.
+    # If the model calls 'invoke_skill' with an AFL slug, _invoke_skill below
+    # also reroutes it to generate_afl_code.
     # Generic Skill Invocation — use for document/presentation/excel generation and specialist skills
     {
         "name": "invoke_skill",
@@ -2732,117 +2706,112 @@ def _extract_afl_code(raw_text: str) -> str:
     return raw_text.strip()
 
 
-def generate_afl_code(description: str, strategy_type: str = "standalone", api_key: str = None) -> Dict[str, Any]:
+def generate_afl_code(
+    description: str,
+    strategy_type: str = "standalone",
+    api_key: str = None,
+    trade_timing: str = "close",
+    extra_context: str = "",
+) -> Dict[str, Any]:
     """
-    Generate AFL code using a synchronous Anthropic client, then validate and auto-fix.
+    THE singular AFL generation entry point.
 
-    Flow:
-    1. Generate AFL code from description
-    2. Run comprehensive 19-phase validator on the generated code
-    3. If errors found, send errors + code back to LLM for fixing (up to 2 rounds)
-    4. Return the validated/fixed code with validation report
+    All AFL generation in the system funnels through this function:
+      • The chat tool 'generate_afl_code'
+      • The chat tool 'generate_afl_with_skill' (legacy alias — routes here)
+      • invoke_skill('afl-developer' / 'amibroker-afl-developer' / 'afl' / ...)
+      • The /afl/generate REST endpoint also uses the same ClaudeAFLEngine.
 
-    Called from handle_tool_call() which is synchronous, so we use the sync
-    anthropic.Anthropic client directly instead of the async ClaudeAFLEngine.
+    Internally delegates to ClaudeAFLEngine.generate_afl() — the proven path
+    with full system-prompt assembly, validation, auto-fix, quality scoring,
+    and training-context support. Previously this function used an inline
+    sync Anthropic client with a different (weaker) prompt, which is why
+    chat-tool AFL generation kept "falling back" while the REST endpoint
+    worked. Now they are one and the same.
     """
     if not api_key:
         return {"success": False, "error": "API key required for AFL generation"}
+
     try:
-        import anthropic as _anthropic
-        client = _anthropic.Anthropic(api_key=api_key)
-        system = (
-            "You are an expert AmiBroker AFL developer. Generate high-quality, production-ready AFL code. "
-            "CRITICAL RULES — follow exactly:\n"
-            "• Single-arg functions: RSI(14) / ATR(14) / ADX(14) / CCI(14) / MFI(14) / StochK(14) — NO array arg, period ONLY\n"
-            "• Double-arg functions: MA(Close,20) / EMA(Close,12) / HHV(High,20) / LLV(Low,20) / Sum(Volume,20) — REQUIRE array arg\n"
-            "• IIf(cond, trueVal, falseVal) — 3 args, all arrays. IIf CANNOT return strings.\n"
-            "• WriteIf(cond, \"text\", \"text\") — for string output in Title\n"
-            "• ExRem(Buy, Sell) and ExRem(Sell, Buy) — must use both to prevent duplicate signals\n"
-            "• if() conditions CANNOT contain arrays like Close, Open, MA(). Use IIf() for arrays.\n"
-            "• Plot() requires 3+ args: Plot(array, name, color, style)\n"
-            "• Always use Param(\"name\", default, min, max, step) for configurable parameters\n"
-            "• Always use SetPositionSize() or PositionSize for position sizing\n"
-            "• Wrap in _SECTION_BEGIN/_SECTION_END. Include all sections for standalone strategies.\n"
-            "• Use correct colors: colorGreen not color_green, styleLine not style_line\n"
-            "• Never use MA(20) — must be MA(Close, 20) or MA(Ref(Close,-1), 20)\n"
-            "• Return ONLY the AFL code inside a ```afl code block. No explanations outside the block."
+        import asyncio as _asyncio
+        from core.claude_engine import (
+            ClaudeAFLEngine,
+            BacktestSettings,
+            StrategyType,
         )
 
-        # ── Round 1: Generate ─────────────────────────────────────────────────
-        response = client.messages.create(
-            model="claude-opus-4-6",
-            max_tokens=150000,
-            system=system,
-            messages=[{"role": "user", "content": f"Generate {strategy_type} AFL code for: {description}"}],
-        )
-        raw_text = response.content[0].text if response.content else ""
-        afl_code = _extract_afl_code(raw_text)
+        # Map trade_timing → trade_delays (close = (0,0,0,0), open = (1,1,1,1))
+        _delays = (1, 1, 1, 1) if str(trade_timing).lower() == "open" else (0, 0, 0, 0)
+        settings = BacktestSettings(trade_delays=_delays)
 
-        # ── Round 2: Validate ─────────────────────────────────────────────────
-        validation_result = None
-        validation_report = ""
-        if _AFL_AVAILABLE and _AFL_VALIDATOR:
-            validation_result = _AFL_VALIDATOR.validate(afl_code)
-            error_count = validation_result.error_count
+        # Build a user_answers dict so the engine's system-prompt builder
+        # knows the user's standalone/composite + open/close choices.
+        user_answers = {
+            "strategy_type": strategy_type or "standalone",
+            "trade_timing":  trade_timing or "close",
+        }
 
-            # Build a concise error report for the fix prompt
-            error_lines = []
-            for issue in validation_result.issues:
-                if issue.severity == Severity.ERROR:
-                    error_lines.append(f"  L{issue.line}: [{issue.category}] {issue.message}")
-                    if issue.suggestion:
-                        error_lines.append(f"    → Fix: {issue.suggestion}")
+        engine = ClaudeAFLEngine(api_key=api_key)
 
-            if error_count > 0 and error_count <= 15:
-                # ── Round 3: Auto-fix via LLM ────────────────────────────────
-                error_report = "\n".join(error_lines[:15])
-                fix_prompt = (
-                    f"The AFL code below has {error_count} error(s) detected by the validator.\n\n"
-                    f"ERRORS:\n{error_report}\n\n"
-                    f"CURRENT CODE:\n```afl\n{afl_code}\n```\n\n"
-                    f"Fix ALL errors and return the corrected code in a ```afl block. "
-                    f"Do not add explanations — just the fixed code."
+        async def _run():
+            return await engine.generate_afl(
+                request=description,
+                settings=settings,
+                kb_context=extra_context or "",
+                user_answers=user_answers,
+                include_training=True,
+                stream=False,
+            )
+
+        # handle_tool_call is sync, so spin up an event loop.
+        try:
+            engine_result = _asyncio.run(_run())
+        except RuntimeError:
+            # Already inside a running loop (e.g. called from async context).
+            # Use a fresh loop in a worker thread.
+            import concurrent.futures
+            with concurrent.futures.ThreadPoolExecutor(max_workers=1) as _ex:
+                engine_result = _ex.submit(lambda: _asyncio.run(_run())).result()
+
+        afl_code      = engine_result.get("afl_code", "") or ""
+        explanation   = engine_result.get("explanation", "") or ""
+        stats         = engine_result.get("stats", {}) or {}
+        validation    = engine_result.get("validation") or {}
+
+        # Build a short human-readable validation report (used by the chat UI).
+        if validation:
+            if validation.get("is_valid"):
+                validation_report = (
+                    f"✅ Validation passed (0 errors, "
+                    f"{len(validation.get('warnings', []))} warnings)"
                 )
-                fix_response = client.messages.create(
-                    model="claude-opus-4-6",
-                    max_tokens=15000,
-                    system=system,
-                    messages=[{"role": "user", "content": fix_prompt}],
+            else:
+                _errs = validation.get("errors", [])[:10]
+                validation_report = (
+                    f"⚠️ {len(validation.get('errors', []))} error(s):\n  "
+                    + "\n  ".join(str(e) for e in _errs)
                 )
-                fix_raw = fix_response.content[0].text if fix_response.content else ""
-                fixed_code = _extract_afl_code(fix_raw)
-                if fixed_code and len(fixed_code) > 20:
-                    afl_code = fixed_code
-                    # Re-validate
-                    validation_result = _AFL_VALIDATOR.validate(afl_code)
-
-            # Build final report
-            if validation_result:
-                if validation_result.is_valid:
-                    validation_report = f"✅ Validation passed (0 errors, {validation_result.warning_count} warnings)"
-                else:
-                    remaining = []
-                    for issue in validation_result.issues:
-                        if issue.severity == Severity.ERROR:
-                            remaining.append(f"  L{issue.line}: [{issue.category}] {issue.message}")
-                    validation_report = (
-                        f"⚠️ {validation_result.error_count} error(s) remain after fix attempt:\n"
-                        + "\n".join(remaining[:10])
-                    )
+        else:
+            validation_report = ""
 
         return {
-            "success":           True,
-            "description":       description,
-            "strategy_type":     strategy_type,
-            "afl_code":          afl_code,
-            "validation_valid":  validation_result.is_valid if validation_result else None,
-            "validation_errors":  validation_result.error_count if validation_result else 0,
-            "validation_warnings": validation_result.warning_count if validation_result else 0,
-            "validation_report": validation_report,
-            "issues":            [i.to_dict() for i in validation_result.issues] if validation_result else [],
+            "success":             True,
+            "description":         description,
+            "strategy_type":       strategy_type,
+            "trade_timing":        trade_timing,
+            "afl_code":            afl_code,
+            "explanation":         explanation,
+            "validation_valid":    validation.get("is_valid"),
+            "validation_errors":   len(validation.get("errors", [])) if validation else 0,
+            "validation_warnings": len(validation.get("warnings", [])) if validation else 0,
+            "validation_report":   validation_report,
+            "quality_score":       stats.get("quality_score"),
+            "generation_time":     stats.get("generation_time"),
+            "issues":              validation.get("errors", []) if validation else [],
         }
     except Exception as e:
-        return {"success": False, "error": str(e)}
+        logger.exception("generate_afl_code failed")
+        return {"success": False, "error": str(e), "tool": "generate_afl_code"}
 
 
 def debug_afl_code(code: str, error_message: str = "", api_key: str = None) -> Dict[str, Any]:
@@ -4993,6 +4962,59 @@ def _invoke_skill(tool_input: Dict, api_key: str) -> Dict:
         import asyncio
         skill_slug = tool_input.get("skill_slug", "")
 
+        # ── AFL slugs → canonical generate_afl_code path ─────────────────────
+        # Every AFL request — whether the model uses generate_afl_code,
+        # generate_afl_with_skill, or invoke_skill('amibroker-afl-developer'/
+        # 'afl-developer'/'afl'/etc.) — must end up at the same engine, the
+        # same prompt, and the same validator. This is what the user calls
+        # "ONE singular tool". The old SkillRouter path produced different
+        # output (and often empty/failing output), causing the "always falls
+        # back" behavior.
+        _AFL_SLUGS = {
+            "afl-developer", "amibroker-afl-developer", "afl",
+            "amibroker", "afl-expert", "amibroker-developer",
+        }
+        if (skill_slug or "").lower() in _AFL_SLUGS:
+            _afl_msg = (
+                tool_input.get("message")
+                or tool_input.get("prompt")
+                or tool_input.get("request")
+                or tool_input.get("description")
+                or tool_input.get("instructions")
+                or ""
+            )
+            _afl_res = generate_afl_code(
+                description=_afl_msg,
+                strategy_type=tool_input.get("strategy_type", "standalone"),
+                trade_timing=tool_input.get("trade_timing", "close"),
+                extra_context=tool_input.get("extra_context", "") or "",
+                api_key=api_key,
+            )
+            # Shape it like an invoke_skill result so the chat layer can
+            # render it through the same code path as before.
+            _afl_text = ""
+            if _afl_res.get("afl_code"):
+                _afl_text = (
+                    "```afl\n" + _afl_res["afl_code"] + "\n```\n\n"
+                    + (_afl_res.get("explanation") or "")
+                ).strip()
+                if _afl_res.get("validation_report"):
+                    _afl_text += "\n\n" + _afl_res["validation_report"]
+            return {
+                "success":   bool(_afl_res.get("success")),
+                "tool":      "invoke_skill",
+                "skill":     "afl-developer",
+                "skill_name": "AmiBroker AFL Developer",
+                "text":      _afl_text or (_afl_res.get("error") or ""),
+                "afl_code":  _afl_res.get("afl_code", ""),
+                "validation_report": _afl_res.get("validation_report", ""),
+                "quality_score":     _afl_res.get("quality_score"),
+                "error":     None if _afl_res.get("success") else _afl_res.get("error"),
+                "execution_time": 0,
+                "usage": {},
+            }
+
+
         # Accept any reasonable field name for the user message — Claude sometimes
         # uses "instructions", "prompt", "request", "description", "task", "text",
         # "input", "task_description", or other variations instead of "message".
@@ -5540,14 +5562,15 @@ def handle_tool_call(
                 "extra_context": context,
             }, api_key)
         elif tool_name == "generate_afl_with_skill":
-            request = tool_input.get("request", "")
-            strategy_type = tool_input.get("strategy_type", "standalone")
-            trade_timing = tool_input.get("trade_timing", "close")
-            result = _invoke_skill({
-                "skill_slug": "amibroker-afl-developer",
-                "message": f"Generate AFL code:\n{request}\nStrategy type: {strategy_type}\nTrade timing: {trade_timing}",
-                "extra_context": f"Strategy type: {strategy_type}, Trade timing: {trade_timing}",
-            }, api_key)
+            # Legacy alias — reroute to the canonical generate_afl_code so all
+            # AFL generation flows through ClaudeAFLEngine (same path as
+            # /afl/generate REST endpoint).
+            result = generate_afl_code(
+                description=tool_input.get("request", "") or tool_input.get("description", ""),
+                strategy_type=tool_input.get("strategy_type", "standalone"),
+                trade_timing=tool_input.get("trade_timing", "close"),
+                api_key=api_key,
+            )
         # ── Document & Presentation generation tools ───────────────────────────
         elif tool_name == "generate_docx":
             # Server-side Potomac DOCX generation — no Claude Skills container.

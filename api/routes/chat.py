@@ -1367,17 +1367,11 @@ async def chat_agent(
                 f"{file_context}{kb_context}{kb_doc_context}{doc_rag_context}"
             )
 
-            # ── YANG Autopilot: inject user memories (Phase 4) ────────────
-            # Adds a <learned_preferences> block of the top-K semantically
-            # relevant memories so Claude honours the user's stated
-            # preferences. Best-effort — never blocks the stream.
-            try:
-                from core.yang_autopilot import build_memory_block as _build_mem
-                _mem_block = await _build_mem(user_id, data.content, limit=8)
-                if _mem_block:
-                    system_prompt_base += "\n\n" + _mem_block
-            except Exception as _mem_err:
-                logger.debug("yang_autopilot memory injection skipped: %s", _mem_err)
+            # ── YANG Autopilot: <learned_preferences> injection DISABLED ──
+            # Previously injected a <learned_preferences> block into the
+            # system prompt via core.yang_autopilot.build_memory_block.
+            # Disabled per request: do not include <learned_preferences>
+            # in the system prompt.
 
             # ── Desktop-agent: inject capabilities block into the prompt ──
             # When the request comes from the Electron desktop client, append
