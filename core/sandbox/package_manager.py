@@ -103,7 +103,7 @@ class SandboxPackageManager:
             "nest-asyncio", "numpy", "numpy-typing-compat", "openpyxl",
             "optype", "orjson", "packaging", "pandas",
             "peewee", "pillow", "pip", "platformdirs",
-            "playwright", "protobuf", "pyarrow", "pycparser",
+            "playwright", "protobuf","pymupdf", "PyMuPDF", "fitz", "pypdf", "PyPDF2", "pdfplumber", "pdfminer.six", "pdfminer", "reportlab", "fpdf", "fpdf2", "pikepdf" "pyarrow", "pycparser",
             "pydantic", "pydantic_core", "pyee", "Pygments",
             "pyparsing", "pyrate-limiter", "python-dateutil", "python-docx",
             "python-pptx", "pytz", "rank-bm25", "RapidFuzz",

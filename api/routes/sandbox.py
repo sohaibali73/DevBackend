@@ -32,7 +32,7 @@ router = APIRouter(prefix="/sandbox", tags=["sandbox"])
 class SandboxExecuteRequest(BaseModel):
     code: str
     language: str = "python"
-    timeout: int = 30
+    timeout: int = 300
     context: Optional[dict] = None
     session_id: Optional[str] = None          # Fix 5b — persist namespace across calls
     file_ids: Optional[List[str]] = None      # Fix 6a — uploaded file IDs to inject into sandbox

@@ -439,7 +439,7 @@ def _make_display_helpers(artifacts: List[DisplayArtifact]):
 # ---------------------------------------------------------------------------
 # Fix: File MIME types for downloadable artifacts
 # ---------------------------------------------------------------------------
-_MAX_FILE_ARTIFACT_BYTES = 50 * 1_000_000   # 50 MB
+_MAX_FILE_ARTIFACT_BYTES = 500 * 1_000_000   # 50 MB
 
 _FILE_MIME_TYPES: Dict[str, str] = {
     ".csv":     "text/csv",

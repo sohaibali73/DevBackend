@@ -178,7 +178,7 @@ class AgentTeam:
         agent_role: str,
         task: str,
         conversation: List[Dict],
-        max_tokens: int = 2048,
+        max_tokens: int = 10000,
     ) -> Dict[str, Any]:
         """Call a single agent and get its response."""
         member = self._get_member(agent_role)

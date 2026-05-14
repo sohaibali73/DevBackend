@@ -285,7 +285,7 @@ class ClaudeAFLEngine:
         self.client = anthropic.AsyncAnthropic(
             api_key=self.api_key,
             timeout=httpx.Timeout(
-                timeout=900.0,   # 15 min total — covers Opus + extended thinking + tool loops
+                timeout=9000.0,   # 15 min total — covers Opus + extended thinking + tool loops
                 connect=30.0,
                 read=900.0,
                 write=60.0,
