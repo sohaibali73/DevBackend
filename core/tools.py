@@ -92,7 +92,15 @@ TOOL_SEARCH_NON_DEFERRED: frozenset = frozenset({
     "technical_analysis",
     "calculate_performance",  # MANDATORY whenever a performance metric is needed
     "invoke_skill",         # REQUIRED: All skill routing goes through this tool
+    # AFL — must be visible upfront so Claude always uses it for any
+    # AmiBroker/AFL/AmiFormula request instead of writing AFL inline.
+    "generate_afl_code",
+    "debug_afl_code",
+    "explain_afl_code",
+    "validate_afl",
+    "sanity_check_afl",
 })
+
 
 # ── Optional heavy dependencies — guarded with try/except at use sites ────────
 try:
@@ -579,16 +587,49 @@ TOOL_DEFINITIONS = [
             "required": ["code"]
         }
     },
-    # Custom: Generate AFL
+    # Custom: Generate AFL — MANDATORY for any AFL/AmiBroker code request.
     {
         "name": "generate_afl_code",
-        "defer_loading": True,
-        "description": "Generate AmiBroker AFL code from a natural language description.",
+        "description": (
+            "MANDATORY tool for ANY AmiBroker / AFL / AmiFormula code request. "
+            "Generates production-quality AFL code from a natural-language description "
+            "using the Potomac ClaudeAFLEngine: full system prompt with the AFL syntax "
+            "reference, 19-phase AFLValidator, auto-fix retry loop, and quality scoring. "
+            "ALWAYS call this — NEVER write AFL code inline in the chat reply. "
+            "Inline-written AFL bypasses the validator and is strictly forbidden.\n\n"
+            "Trigger phrases that REQUIRE this tool (non-exhaustive): 'AFL', "
+            "'AmiBroker', 'AmiFormula', 'write me a strategy', 'trading strategy code', "
+            "'indicator code', 'exploration', 'buy/sell rules', '.afl file', "
+            "'RSI crossover', 'MA crossover', 'Bollinger strategy', 'MACD strategy', "
+            "'mean reversion', 'breakout strategy', 'Param/Optimize', 'standalone', "
+            "'composite system', and any code request that targets AmiBroker.\n\n"
+            "If the user's description is vague, DO NOT ask clarifying questions first — "
+            "call the tool with sensible defaults (strategy_type='standalone', "
+            "trade_timing='close'). The engine handles edge cases.\n\n"
+            "Returns: afl_code (the validated/fixed source), explanation (plain-English "
+            "summary), validation_report (✅/⚠️ with errors+warnings), validation_valid, "
+            "validation_errors, validation_warnings, quality_score (0-100), "
+            "generation_time, issues. The frontend renders this as the AFL card."
+        ),
         "input_schema": {
             "type": "object",
             "properties": {
-                "description":   {"type": "string", "description": "Natural language description of the trading strategy"},
-                "strategy_type": {"type": "string", "description": "Type of AFL code", "enum": ["standalone", "composite", "indicator", "exploration"], "default": "standalone"}
+                "description": {
+                    "type": "string",
+                    "description": "Natural-language description of the trading strategy. Be as specific as the user was — pass their request through; do NOT rephrase or shrink it."
+                },
+                "strategy_type": {
+                    "type": "string",
+                    "description": "AFL code type. 'standalone' = full self-contained strategy with backtest settings + plotting; 'composite' = logic-only module to be included in a master; 'indicator' = plot-only; 'exploration' = AmiBroker Exploration script.",
+                    "enum": ["standalone", "composite", "indicator", "exploration"],
+                    "default": "standalone"
+                },
+                "trade_timing": {
+                    "type": "string",
+                    "description": "Bar timing for entries/exits. 'close' = SetTradeDelays(0,0,0,0); 'open' = SetTradeDelays(1,1,1,1).",
+                    "enum": ["close", "open"],
+                    "default": "close"
+                }
             },
             "required": ["description"]
         }
