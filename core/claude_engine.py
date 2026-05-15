@@ -442,32 +442,128 @@ class ClaudeAFLEngine:
         """
         Extract the first fenced code block and the surrounding explanation.
 
+        Has a defensive fallback for transcript-format responses: when the
+        model (incorrectly, but it sometimes happens) hallucinates fake
+        tool-call narration like ``tool_use: x\\ntool_result: {"code": "..."}``,
+        the AFL source is buried inside an embedded JSON ``code`` field
+        rather than in a ```afl fence. The fallback pulls it out so the
+        engine still surfaces a populated `afl_code` instead of an empty
+        string.
+
         Returns
         ───────
         (code, explanation) — either part may be an empty string.
         """
-        if "```" not in text:
-            # No code fence at all — treat the whole response as explanation
-            return "", text.strip()
+        # ── Normal path: a real ```...``` fenced block ─────────────────
+        if "```" in text:
+            parts       = text.split("```")
+            code        = ""
+            explanation = []
 
-        parts       = text.split("```")
-        code        = ""
-        explanation = []
+            for i, part in enumerate(parts):
+                if i % 2 == 1:
+                    # Inside a code fence
+                    if not code:
+                        # Only capture the FIRST code block
+                        stripped = part.strip()
+                        # Strip the optional language tag
+                        code = _LANG_TAG_RE.sub("", stripped, count=1).strip()
+                else:
+                    # Outside a code fence (narrative text)
+                    if clean := part.strip():
+                        explanation.append(clean)
 
-        for i, part in enumerate(parts):
-            if i % 2 == 1:
-                # Inside a code fence
-                if not code:
-                    # Only capture the FIRST code block
-                    stripped = part.strip()
-                    # Strip the optional language tag
-                    code = _LANG_TAG_RE.sub("", stripped, count=1).strip()
-            else:
-                # Outside a code fence (narrative text)
-                if clean := part.strip():
-                    explanation.append(clean)
+            if code:
+                return code, "\n".join(explanation)
+            # else: fall through to transcript-extraction fallback
 
-        return code, "\n".join(explanation)
+        # ── Fallback path: transcript-format response with embedded
+        # tool_result JSON. Try to recover the AFL source from a
+        # `"code": "..."` field inside the embedded JSON object.
+        recovered = self._extract_code_from_transcript(text)
+        if recovered:
+            return recovered, text.strip()
+
+        # No code fence and no recoverable transcript — treat the whole
+        # response as explanation only.
+        return "", text.strip()
+
+    @staticmethod
+    def _extract_code_from_transcript(text: str) -> str:
+        """
+        Last-resort extractor for transcript-format hallucinations.
+
+        Looks for patterns like ``tool_result: {... "code": "..." ...}`` or
+        ``"afl_code": "..."`` inside the model's response text and returns
+        the value of the first ``code`` / ``afl_code`` string field it can
+        locate. JSON-unescapes the value before returning. Returns "" if
+        nothing extractable is found.
+        """
+        if not text:
+            return ""
+
+        # Try to locate every JSON object that starts with `{"status"` or
+        # similar tool-result-shaped opener, then walk braces to find its
+        # matching close. Parse it; if it has a `code` field, take that.
+        import re as _re, json as _json
+
+        for opener in ('{"status"', '{"validation_passed"', '{"code"', '{"afl_code"'):
+            idx = 0
+            while True:
+                start = text.find(opener, idx)
+                if start == -1:
+                    break
+                # Walk forward, counting braces, skipping inside strings.
+                depth = 0
+                j = start
+                in_str = False
+                escape = False
+                end = -1
+                while j < len(text):
+                    ch = text[j]
+                    if in_str:
+                        if escape:
+                            escape = False
+                        elif ch == '\\':
+                            escape = True
+                        elif ch == '"':
+                            in_str = False
+                    else:
+                        if ch == '"':
+                            in_str = True
+                        elif ch == '{':
+                            depth += 1
+                        elif ch == '}':
+                            depth -= 1
+                            if depth == 0:
+                                end = j
+                                break
+                    j += 1
+                if end == -1:
+                    break
+                blob = text[start:end + 1]
+                try:
+                    parsed = _json.loads(blob)
+                except Exception:
+                    idx = start + 1
+                    continue
+                if isinstance(parsed, dict):
+                    for key in ("code", "afl_code"):
+                        v = parsed.get(key)
+                        if isinstance(v, str) and v.strip():
+                            return v
+                idx = end + 1
+
+        # Even simpler regex fallback for naked `"code": "..."` pairs
+        # that aren't part of a parseable JSON object (e.g. truncated).
+        m = _re.search(r'"(?:afl_)?code"\s*:\s*"((?:\\.|[^"\\])*)"', text)
+        if m:
+            try:
+                return _json.loads(f'"{m.group(1)}"')
+            except Exception:
+                return m.group(1).encode().decode("unicode_escape", errors="ignore")
+
+        return ""
 
     # =========================================================================
     # Prompt building helpers

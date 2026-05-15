@@ -2727,6 +2727,28 @@ def _build_validation_summary(validation, line_count: int) -> str:
     )
 
 
+def _normalize_quality_score(value: Any) -> Optional[int]:
+    """
+    Normalise the AFL engine's quality score to a 0-100 integer for the UI.
+
+    The engine historically returns a 0-1 float (0.95) or a 0-100 number
+    depending on the code path. The frontend's QualityRing always treats
+    the field as 0-100, so a raw 0.95 would render as "1 / Critical".
+    Scale anything that looks fractional up to the 0-100 range, clamp to
+    [0, 100], and return as an int. Returns None on missing/invalid input.
+    """
+    if value is None:
+        return None
+    try:
+        f = float(value)
+    except (TypeError, ValueError):
+        return None
+    if 0.0 <= f <= 1.0:
+        f *= 100.0
+    f = max(0.0, min(100.0, f))
+    return int(round(f))
+
+
 def validate_afl(code: str) -> Dict[str, Any]:
     """Validate AFL code using the comprehensive 19-phase validator."""
     if not _AFL_AVAILABLE or _AFL_VALIDATOR is None:
@@ -2930,7 +2952,7 @@ def generate_afl_code(
             "validation_errors":   len(v_errors),
             "validation_warnings": len(v_warnings),
             "validation_report":   validation_report,
-            "quality_score":       stats.get("quality_score"),
+            "quality_score":       _normalize_quality_score(stats.get("quality_score")),
             "generation_time":     stats.get("generation_time"),
             "line_count":          line_count,
             "has_buy_sell":        has_buy_sell,
@@ -2958,7 +2980,7 @@ def generate_afl_code(
                     "warnings": len(v_warnings),
                     "suggestions": validation.get("suggestion_count", 0) if validation else 0,
                     "info": validation.get("info_count", 0) if validation else 0,
-                    "quality_score": stats.get("quality_score"),
+                    "quality_score": _normalize_quality_score(stats.get("quality_score")),
                     "issues": issues_capped,
                 },
                 "stats": {
