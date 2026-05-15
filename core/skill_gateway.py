@@ -29,6 +29,14 @@ logger = logging.getLogger(__name__)
 
 DEFAULT_MODEL = "claude-sonnet-4-6"
 
+# AFL is handled exclusively by ClaudeAFLEngine. Every skill-system pathway
+# (gateway, router, /skills/{slug}/execute) refuses these slugs so AFL can
+# never bypass the canonical engine + AFLValidator.
+_AFL_SLUGS = frozenset({
+    "afl-developer", "amibroker-afl-developer", "afl",
+    "amibroker", "afl-expert", "amibroker-developer",
+})
+
 
 class SkillGateway:
     """Execute any registered skill via the standard Claude API."""
@@ -293,6 +301,13 @@ class SkillGateway:
     @staticmethod
     def _resolve_skill(slug: str) -> SkillDefinition:
         """Look up a skill or raise ValueError."""
+        # AFL block — must go through ClaudeAFLEngine, never the skill system.
+        if (slug or "").lower() in _AFL_SLUGS:
+            raise ValueError(
+                "AFL generation is handled exclusively by ClaudeAFLEngine. "
+                "Use POST /afl/generate or the generate_afl_code chat tool. "
+                "The skill pathway is disabled for AFL."
+            )
         skill = get_skill(slug)
         if skill is None:
             available = ", ".join(sorted(s.slug for s in list_skills(enabled_only=False)))

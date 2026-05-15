@@ -20,6 +20,13 @@ from core.sandbox.manager import SandboxManager
 
 logger = logging.getLogger(__name__)
 
+# AFL is handled exclusively by ClaudeAFLEngine. The skill router refuses
+# these slugs so AFL can never bypass the canonical engine + AFLValidator.
+_AFL_SLUGS = frozenset({
+    "afl-developer", "amibroker-afl-developer", "afl",
+    "amibroker", "afl-expert", "amibroker-developer",
+})
+
 
 class SkillRouter:
     """
@@ -71,6 +78,22 @@ class SkillRouter:
         dict
             {success, text, usage, execution_time_ms, skill, skill_name, ...}
         """
+        # AFL block — must go through ClaudeAFLEngine, never the skill system.
+        if (skill_slug or "").lower() in _AFL_SLUGS:
+            logger.warning(
+                "SkillRouter: AFL slug '%s' blocked — must use POST /afl/generate "
+                "or the generate_afl_code chat tool.",
+                skill_slug,
+            )
+            return {
+                "success": False,
+                "error": (
+                    "AFL generation is handled exclusively by ClaudeAFLEngine. "
+                    "Use POST /afl/generate or the generate_afl_code chat tool. "
+                    "The skill pathway is disabled for AFL."
+                ),
+            }
+
         # Resolve skill
         skill = get_skill(skill_slug)
         if skill is None:

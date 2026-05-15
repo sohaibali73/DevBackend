@@ -22,6 +22,13 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/skills", tags=["Skills Execute"])
 
+# AFL is handled exclusively by ClaudeAFLEngine. The /skills/{slug}/execute
+# endpoint refuses these slugs so AFL never bypasses the canonical engine.
+_AFL_SLUGS = frozenset({
+    "afl-developer", "amibroker-afl-developer", "afl",
+    "amibroker", "afl-expert", "amibroker-developer",
+})
+
 
 class SkillExecuteRequest(BaseModel):
     """Request body for skill execution."""
@@ -44,6 +51,17 @@ async def execute_skill(
     Supports both streaming and non-streaming responses.
     When stream=True, returns Vercel AI SDK Data Stream Protocol format.
     """
+    # AFL block — must use POST /afl/generate or the generate_afl_code chat tool.
+    if slug.lower() in _AFL_SLUGS:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "AFL generation is handled exclusively by ClaudeAFLEngine. "
+                "Use POST /afl/generate or the generate_afl_code chat tool. "
+                "The skill pathway is disabled for AFL."
+            ),
+        )
+
     if not api_keys or not api_keys.get("claude"):
         raise HTTPException(
             status_code=401,

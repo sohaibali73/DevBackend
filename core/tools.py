@@ -5016,6 +5016,11 @@ def _invoke_skill(tool_input: Dict, api_key: str) -> Dict:
             "amibroker", "afl-expert", "amibroker-developer",
         }
         if (skill_slug or "").lower() in _AFL_SLUGS:
+            logger.warning(
+                "_invoke_skill: AFL slug '%s' intercepted → rerouting to generate_afl_code "
+                "(ClaudeAFLEngine + AFLValidator). All AFL must go through the canonical engine.",
+                skill_slug,
+            )
             _afl_msg = (
                 tool_input.get("message")
                 or tool_input.get("prompt")
