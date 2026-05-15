@@ -489,6 +489,87 @@ class ClaudeAFLEngine:
         return "", text.strip()
 
     @staticmethod
+    def _parse_multi_file_response(text: str) -> Tuple[List[Dict[str, Any]], str]:
+        """
+        Parse a composite response containing multiple AFL files.
+
+        Recognised input shape — repeated blocks of:
+
+            === FILE: <path> ===
+            ```afl
+            <code>
+            ```
+
+        Returns
+        ───────
+        (files, narrative) where:
+          - files is a list of {"name", "path", "code", "is_main"} dicts in
+            the order they appeared in the response. The first file (or
+            the one whose path equals 'main.afl' case-insensitively) is
+            marked is_main=True. Empty list if no FILE markers found.
+          - narrative is the leftover prose after all blocks (best-effort).
+        """
+        import re as _re
+        if not text:
+            return [], ""
+
+        marker_re = _re.compile(r'^[ \t]*===[ \t]*FILE:[ \t]*(.+?)[ \t]*===[ \t]*$', _re.MULTILINE)
+        markers = list(marker_re.finditer(text))
+        if not markers:
+            return [], text.strip()
+
+        files: List[Dict[str, Any]] = []
+        for i, m in enumerate(markers):
+            path = m.group(1).strip()
+            # The block body is from end-of-marker up to the next marker
+            # (or end of text).
+            body_start = m.end()
+            body_end = markers[i + 1].start() if (i + 1) < len(markers) else len(text)
+            body = text[body_start:body_end]
+
+            # Extract the first ```...``` fenced block from this body
+            code = ""
+            if "```" in body:
+                parts = body.split("```")
+                if len(parts) >= 3:
+                    raw = parts[1]
+                    code = _LANG_TAG_RE.sub("", raw, count=1).strip()
+            else:
+                # No fence — take the body verbatim (model sometimes
+                # forgets the fence after a FILE marker).
+                code = body.strip()
+
+            if not code:
+                continue
+
+            name = path.split("/")[-1].split("\\")[-1] or path
+            files.append({
+                "name": name,
+                "path": path,
+                "code": code,
+                "is_main": False,
+            })
+
+        if not files:
+            return [], text.strip()
+
+        # Mark the main file: prefer one literally named main.afl, else first.
+        main_idx = 0
+        for i, f in enumerate(files):
+            if (f["name"] or "").lower() == "main.afl":
+                main_idx = i
+                break
+        files[main_idx]["is_main"] = True
+
+        # Narrative = whatever comes AFTER the final closing fence of the
+        # last marker's block. Best-effort: take text after the last "```".
+        last = text.rfind("```")
+        narrative = text[last + 3:].strip() if last != -1 else ""
+        # Strip a stray closing-language-tag if the response wrapped narrative
+        # with a fence that we mis-split (rare).
+        return files, narrative
+
+    @staticmethod
     def _extract_code_from_transcript(text: str) -> str:
         """
         Last-resort extractor for transcript-format hallucinations.
@@ -686,8 +767,13 @@ class ClaudeAFLEngine:
 
         kb_trunc = truncate_context(kb_context, max_tokens=600) if kb_context else ""
 
+        # Pass strategy_type into the base prompt so the writer is told to
+        # emit either ONE ```afl block (standalone) or MULTIPLE blocks with
+        # `=== FILE: path ===` markers (composite).
+        _strategy_type = (user_answers or {}).get("strategy_type", "standalone")
+
         system = self._build_system_prompt(
-            base=get_base_prompt(),
+            base=get_base_prompt(_strategy_type),
             training=training_text,
             user_answers=user_answers,
             kb=kb_trunc,
@@ -710,9 +796,29 @@ class ClaudeAFLEngine:
             # this tool call so the caller sees a single tool result with the
             # final corrected code, never a stack of validation cards.
             MAX_INTERNAL_RETRIES = 2
+            _is_composite = (_strategy_type or "").strip().lower() == "composite"
 
             raw       = await self._call_claude(system, messages)
-            code, explanation = self._parse_response(raw)
+
+            # For composite mode, try multi-file extraction first. The
+            # returned `files` is a list of {name, path, code, is_main}
+            # dicts in source-order; we keep `code` pointed at the main
+            # file so the existing validator / repair loop operates on
+            # the entry-point only.
+            files: List[Dict[str, Any]] = []
+            if _is_composite:
+                files, narrative = self._parse_multi_file_response(raw)
+                if files:
+                    main = next((f for f in files if f.get("is_main")), files[0])
+                    code = main.get("code", "") or ""
+                    explanation = narrative
+                else:
+                    # Model didn't honour the FILE-marker contract — fall
+                    # back to single-block extraction so we don't lose
+                    # the response entirely.
+                    code, explanation = self._parse_response(raw)
+            else:
+                code, explanation = self._parse_response(raw)
             code, errors, warnings = self._validate_and_fix(code)
 
             validation_dict: Dict[str, Any] = {}
@@ -761,13 +867,28 @@ class ClaudeAFLEngine:
                     logger.warning(f"AFL repair attempt {_attempt + 1} failed: {repair_err}")
                     break
 
+                # Repair responses are constrained to a single ```afl
+                # block (see the repair instruction above), so even in
+                # composite mode the repair only re-emits the main file.
+                # Update main file's code; preserve the rest of the bundle.
                 new_code, new_explanation = self._parse_response(raw)
                 if not new_code.strip():
                     break
                 code = new_code
                 if new_explanation:
                     explanation = new_explanation
+                if files:
+                    for f in files:
+                        if f.get("is_main"):
+                            f["code"] = new_code
+                            break
                 code, errors, warnings = self._validate_and_fix(code)
+                # Reflect post-validate-and-fix tweaks back into the main file.
+                if files:
+                    for f in files:
+                        if f.get("is_main"):
+                            f["code"] = code
+                            break
                 try:
                     validation_dict = validate_afl_code(code) if AFL_VALIDATOR_AVAILABLE else {}
                 except Exception as e:
@@ -776,6 +897,16 @@ class ClaudeAFLEngine:
 
             quality = self._calculate_quality(code, errors, warnings)
             elapsed = time.time() - start
+
+            # Sync the main file's code with any tweaks made by
+            # _validate_and_fix on the initial draft (only relevant when
+            # the no-repair-needed path was taken, since the repair branch
+            # already syncs above).
+            if files:
+                for f in files:
+                    if f.get("is_main"):
+                        f["code"] = code
+                        break
 
             result = {
                 "afl_code":    code,
@@ -788,6 +919,11 @@ class ClaudeAFLEngine:
                     "model":             self.model,
                 },
             }
+
+            # Composite bundle — surface the full multi-file list so the
+            # tool layer can populate genui_card.data.files for the UI.
+            if files:
+                result["files"] = files
 
             # Surface the final validation details to the caller. Derives the
             # `errors`/`warnings` lists from `issues` because the convenience

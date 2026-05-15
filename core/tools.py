@@ -2894,6 +2894,9 @@ def generate_afl_code(
         explanation   = engine_result.get("explanation", "") or ""
         stats         = engine_result.get("stats", {}) or {}
         validation    = engine_result.get("validation") or {}
+        # Composite mode: engine returns a list of file dicts. Empty list
+        # / missing key means single-file output and the UI renders one tab.
+        files_list    = engine_result.get("files") or []
 
         # Build a short human-readable validation report (used by the chat UI).
         v_errors   = validation.get("errors", []) if validation else []
@@ -2947,6 +2950,7 @@ def generate_afl_code(
             "strategy_type":       strategy_type,
             "trade_timing":        trade_timing,
             "afl_code":            afl_code,
+            "files":               files_list,
             "explanation":         explanation,
             "validation_valid":    validation.get("is_valid"),
             "validation_errors":   len(v_errors),
@@ -2973,6 +2977,12 @@ def generate_afl_code(
                 "strategy_type": strategy_type,
                 "trade_timing": trade_timing,
                 "afl_code": afl_code,
+                # Composite bundle: every file the writer emitted, in source
+                # order, with the main file flagged. The card renders a
+                # file-tab strip and a "Download all (.zip)" button when
+                # this list has more than one entry. Pass through the
+                # engine's normalised shape verbatim.
+                "files": files_list,
                 "explanation": explanation,
                 "validation": {
                     "is_valid": bool(validation.get("is_valid")) if validation else None,
@@ -2993,6 +3003,10 @@ def generate_afl_code(
                 },
                 "actions": ["copy", "download_afl", "debug", "explain"],
                 "summary": (
+                    f"AFL strategy generated ({len(files_list)} files, {line_count} lines, "
+                    f"{len(v_errors)} error(s), {len(v_warnings)} warning(s))"
+                    if files_list and len(files_list) > 1
+                    else
                     f"AFL strategy generated ({line_count} lines, "
                     f"{len(v_errors)} error(s), {len(v_warnings)} warning(s))"
                 ),

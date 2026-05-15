@@ -145,7 +145,7 @@ synthesize a card envelope to compensate.
 # Slim system prompts
 # =============================================================================
 
-def get_base_prompt() -> str:
+def get_base_prompt(strategy_type: str = "standalone") -> str:
     """System prompt for the inner AFL writer call inside ClaudeAFLEngine.generate_afl().
 
     IMPORTANT: this prompt is used by a Claude call that is invoked WITHOUT
@@ -154,23 +154,84 @@ def get_base_prompt() -> str:
     text (e.g. "tool_use: foo\\ntool_result: {...}"), which the engine's
     `_parse_response` cannot extract into a real `afl_code` field.
 
-    Keep this prompt focused on a single instruction: write AFL code inside
-    one ```afl fenced block. The validator runs server-side after the LLM
-    returns — the model does NOT need to call it.
-    """
-    return '''You are an expert AmiBroker Formula Language (AFL) developer with 20+ years of experience.
+    Two output contracts depending on the requested strategy_type:
 
-Your task: write a complete AFL strategy in ONE fenced code block, like:
+      "standalone" (default)
+          ONE ```afl fenced block with the complete strategy.
+
+      "composite"
+          MULTIPLE ```afl blocks, each preceded by a `=== FILE: path ===`
+          marker on its own line. The main entry-point file is named
+          `main.afl`; helper files live under `Include/` (matching the
+          AmiBroker on-disk convention). The main file should
+          `#include <Include/helper.afl>` each helper.
+    """
+    composite = (strategy_type or "").strip().lower() == "composite"
+
+    if composite:
+        output_section = '''COMPOSITE OUTPUT FORMAT — MULTIPLE FILES:
+
+For composite strategies, produce SEVERAL ```afl fenced blocks. Each
+block is one file in the bundle. Precede every block with a single line
+marking the file path, exactly in this form:
+
+=== FILE: main.afl ===
+```afl
+// main strategy here
+#include <Include/momentum.afl>
+#include <Include/trend.afl>
+#include <Include/risk.afl>
+
+// Pull signals from include files (they expose Buy/Sell/Short/Cover or
+// helper arrays). Combine them here. Apply ExRem and emit Plots.
+```
+
+=== FILE: Include/momentum.afl ===
+```afl
+// momentum signals — exposes _Mom_Buy / _Mom_Sell arrays
+```
+
+=== FILE: Include/trend.afl ===
+```afl
+// trend confirmation — exposes _Trend_Up / _Trend_Down
+```
+
+=== FILE: Include/risk.afl ===
+```afl
+// stops / position sizing helpers
+```
+
+Rules:
+- Exactly ONE main.afl. Helpers go under `Include/` (Windows-style
+  forward slash; case-sensitive `Include`).
+- The main file must `#include <Include/xxx.afl>` for every helper.
+- Each helper file is self-contained AFL — no markdown, no prose.
+- Do NOT repeat code across files. Helpers expose named arrays /
+  conditions; main composes them.
+- Three to six files total is the sweet spot for most composites.
+
+After the LAST ```afl block, write a short prose paragraph describing
+the bundle (one sentence per file). No tool-call transcripts.
+'''
+    else:
+        output_section = '''OUTPUT FORMAT — SINGLE FILE:
+
+Write the strategy in ONE ```afl fenced block, like:
 
 ```afl
 // strategy code here
 ```
 
+A short prose paragraph AFTER the code block describes what it does.
+'''
+
+    return f'''You are an expert AmiBroker Formula Language (AFL) developer with 20+ years of experience.
+
 Do not narrate which tools you are using. Do not write transcripts of tool
 calls. Do not output any text that looks like "tool_use:" or "tool_result:".
 There are no tools available in this turn — you write the code yourself,
-inline, in a single fenced block. A server-side validator will check the
-output after you return; you do not need to validate it yourself.
+inline, in fenced blocks. A server-side validator will check the output
+after you return; you do not need to validate it yourself.
 
 MANDATORY CODE QUALITY:
 1. Realistic strategy parameters producing many trades, high returns, low drawdown.
@@ -183,13 +244,15 @@ MANDATORY CODE QUALITY:
 8. Include Plot() statements for visualisation.
 9. When mixing timeframes, wrap higher-TF variables in TimeFrameExpand().
 
-CODE STRUCTURE: parameters -> backtest settings -> indicators -> trading
-logic -> ExRem cleanup -> Plot statements.
+CODE STRUCTURE (single-file or main-file of a composite):
+parameters -> backtest settings -> indicators -> trading logic ->
+ExRem cleanup -> Plot statements.
+
+{output_section}
 
 OUTPUT RULES:
-- One ```afl fenced block containing the FULL strategy code.
-- A short prose paragraph AFTER the code block describing what it does.
 - No emojis, no markdown headers (## / ###), no tool-call transcripts.
+- Plain prose narration AFTER the code block(s), not interleaved.
 '''
 
 
