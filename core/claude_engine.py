@@ -58,12 +58,18 @@ except ImportError:
     TRAINING_ENABLED = False
     get_training_manager = None
 
-# Comprehensive AFL validator — used for post-generation validation
+# Comprehensive AFL validator — used for post-generation validation.
+# fix_afl_code is optional; older afl_validator.py versions don't expose it.
 try:
-    from core.afl_validator import AFLValidator, validate_afl_code, fix_afl_code
+    from core.afl_validator import AFLValidator, validate_afl_code
     AFL_VALIDATOR_AVAILABLE = True
+    try:
+        from core.afl_validator import fix_afl_code  # type: ignore
+    except ImportError:
+        fix_afl_code = None  # type: ignore[assignment]
 except ImportError:
     AFL_VALIDATOR_AVAILABLE = False
+    fix_afl_code = None  # type: ignore[assignment]
     logger.warning("core.afl_validator not available — using basic inline validation only")
 
 # ── Strategy type enumeration ─────────────────────────────────────────────────
@@ -603,12 +609,77 @@ class ClaudeAFLEngine:
             if stream:
                 return await self._call_claude(system, messages, stream=True)
 
-            # Non-streaming: get text, parse, validate, score
+            # Non-streaming path: draft -> validate -> (silent) repair loop.
+            # Up to MAX_INTERNAL_RETRIES extra LLM round-trips happen *inside*
+            # this tool call so the caller sees a single tool result with the
+            # final corrected code, never a stack of validation cards.
+            MAX_INTERNAL_RETRIES = 2
+
             raw       = await self._call_claude(system, messages)
             code, explanation = self._parse_response(raw)
             code, errors, warnings = self._validate_and_fix(code)
-            quality   = self._calculate_quality(code, errors, warnings)
-            elapsed   = time.time() - start
+
+            validation_dict: Dict[str, Any] = {}
+            if AFL_VALIDATOR_AVAILABLE and code:
+                try:
+                    validation_dict = validate_afl_code(code)
+                except Exception as e:
+                    logger.warning(f"Initial validation failed: {e}")
+                    validation_dict = {}
+
+            for _attempt in range(MAX_INTERNAL_RETRIES):
+                if not validation_dict:
+                    break
+                issues_list = validation_dict.get("issues", []) or []
+                error_issues = [i for i in issues_list if str(i.get("severity", "")).lower() == "error"]
+                if validation_dict.get("is_valid", True) and not error_issues:
+                    break
+
+                feedback_lines = []
+                for it in error_issues[:15]:
+                    line = it.get("line", "?")
+                    cat = it.get("category", "")
+                    msg = it.get("message", "")
+                    sug = it.get("suggestion", "")
+                    entry = f"  L{line} [{cat}] {msg}"
+                    if sug:
+                        entry += f"  -- fix: {sug}"
+                    feedback_lines.append(entry)
+                feedback = "\n".join(feedback_lines) or "(see validator output)"
+
+                repair_messages = list(messages) + [
+                    {"role": "assistant", "content": raw},
+                    {
+                        "role": "user",
+                        "content": (
+                            "The AFL code above failed validation. Errors:\n"
+                            f"{feedback}\n\n"
+                            "Return ONLY the corrected, complete AFL code in a single ```afl block. "
+                            "Do not explain — only emit the fixed code."
+                        ),
+                    },
+                ]
+                try:
+                    raw = await self._call_claude(system, repair_messages)
+                except Exception as repair_err:
+                    logger.warning(f"AFL repair attempt {_attempt + 1} failed: {repair_err}")
+                    break
+
+                new_code, new_explanation = self._parse_response(raw)
+                if not new_code.strip():
+                    break
+                code = new_code
+                if new_explanation:
+                    explanation = new_explanation
+                code, errors, warnings = self._validate_and_fix(code)
+                try:
+                    validation_dict = validate_afl_code(code) if AFL_VALIDATOR_AVAILABLE else {}
+                except Exception as e:
+                    logger.warning(f"Re-validation failed: {e}")
+                    validation_dict = {}
+
+            quality = self._calculate_quality(code, errors, warnings)
+            elapsed = time.time() - start
 
             result = {
                 "afl_code":    code,
@@ -618,26 +689,32 @@ class ClaudeAFLEngine:
                     "generation_time":   f"{elapsed:.2f}s",
                     "errors_fixed":      errors,
                     "warnings":          warnings,
+                    "model":             self.model,
                 },
             }
 
-            # Add comprehensive validation details when available
-            if AFL_VALIDATOR_AVAILABLE and code:
-                try:
-                    validation = validate_afl_code(code)
-                    result["validation"] = {
-                        "is_valid": validation.get("is_valid", True),
-                        "errors": validation.get("errors", []),
-                        "warnings": validation.get("warnings", []),
-                        "color_issues": validation.get("color_issues", []),
-                        "function_issues": validation.get("function_issues", []),
-                        "reserved_word_issues": validation.get("reserved_word_issues", []),
-                        "style_issues": validation.get("style_issues", []),
-                        "suggestions": validation.get("suggestions", []),
-                        "total_issues": validation.get("total_issues", 0),
-                    }
-                except Exception as e:
-                    logger.warning(f"Failed to add validation details to result: {e}")
+            # Surface the final validation details to the caller. Derives the
+            # `errors`/`warnings` lists from `issues` because the convenience
+            # validate_afl_code result only exposes counts + issues, never
+            # category-split lists.
+            if validation_dict:
+                final_issues = validation_dict.get("issues", []) or []
+                err_msgs  = [i.get("message", "") for i in final_issues if str(i.get("severity", "")).lower() == "error"]
+                warn_msgs = [i.get("message", "") for i in final_issues if str(i.get("severity", "")).lower() == "warning"]
+                sugg_msgs = [i.get("message", "") for i in final_issues if str(i.get("severity", "")).lower() == "suggestion"]
+                result["validation"] = {
+                    "is_valid": validation_dict.get("is_valid", True),
+                    "errors": err_msgs,
+                    "warnings": warn_msgs,
+                    "suggestions": sugg_msgs,
+                    "total_issues": validation_dict.get("total_issues", len(final_issues)),
+                    "error_count": validation_dict.get("error_count", len(err_msgs)),
+                    "warning_count": validation_dict.get("warning_count", len(warn_msgs)),
+                    "suggestion_count": validation_dict.get("suggestion_count", len(sugg_msgs)),
+                    "info_count": validation_dict.get("info_count", 0),
+                    "cascade_count": validation_dict.get("cascade_count", 0),
+                    "issues": final_issues,
+                }
 
             # Write to LRU cache
             self._request_cache[cache_key] = result
@@ -785,14 +862,14 @@ class ClaudeAFLEngine:
         # Use comprehensive AFLValidator if available
         if AFL_VALIDATOR_AVAILABLE and code:
             try:
-                if fix:
+                if fix and fix_afl_code is not None:
                     # Run auto-fix first, then validate the fixed code
                     fix_result = fix_afl_code(code)
                     code = fix_result.get("fixed_code", code)
                     fix_applied = fix_result.get("fixes_applied", [])
                     validation = fix_result.get("validation", {})
                 else:
-                    # Just validate without fixing
+                    # Just validate without fixing (no auto-fix function available)
                     validation = validate_afl_code(code)
                     fix_applied = []
 

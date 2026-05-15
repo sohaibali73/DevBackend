@@ -2714,6 +2714,19 @@ def get_stock_data(symbol: str, period: str = "1mo", info_type: str = "price") -
         return {"success": False, "error": str(e)}
 
 
+def _build_validation_summary(validation, line_count: int) -> str:
+    """One-line human summary for an AFL validation card."""
+    if validation.is_valid and validation.error_count == 0:
+        return (
+            f"AFL code is valid ({line_count} lines, "
+            f"{validation.warning_count} warning(s))"
+        )
+    return (
+        f"{validation.error_count} error(s), "
+        f"{validation.warning_count} warning(s) across {line_count} lines"
+    )
+
+
 def validate_afl(code: str) -> Dict[str, Any]:
     """Validate AFL code using the comprehensive 19-phase validator."""
     if not _AFL_AVAILABLE or _AFL_VALIDATOR is None:
@@ -2722,12 +2735,18 @@ def validate_afl(code: str) -> Dict[str, Any]:
     validation = _AFL_VALIDATOR.validate(code)
     lines      = code.split("\n")
     code_upper = code.upper()
+    line_count = len(lines)
+    has_buy_sell = "BUY" in code_upper or "SELL" in code_upper
+    has_plot = "PLOT" in code_upper
+    has_section_markers = "_SECTION_BEGIN" in code_upper
 
     # Separate issues by severity for backward-compatible output
     errors   = [i.message for i in validation.issues if i.severity == Severity.ERROR]
     warnings = [i.message for i in validation.issues if i.severity == Severity.WARNING]
     infos    = [i.message for i in validation.issues if i.severity == Severity.INFO]
     suggs    = [i.message for i in validation.issues if i.severity == Severity.SUGGESTION]
+
+    issue_dicts = [i.to_dict() for i in validation.issues]
 
     return {
         "success":          validation.is_valid,
@@ -2740,10 +2759,31 @@ def validate_afl(code: str) -> Dict[str, Any]:
         "errors":           errors,
         "warnings":         warnings,
         "suggestions":      suggs,
-        "issues":           [i.to_dict() for i in validation.issues],
-        "line_count":       len(lines),
-        "has_buy_sell":     "BUY" in code_upper or "SELL" in code_upper,
-        "has_plot":         "PLOT" in code_upper,
+        "issues":           issue_dicts,
+        "line_count":       line_count,
+        "has_buy_sell":     has_buy_sell,
+        "has_plot":         has_plot,
+        "genui_card": {
+            "type": "data-card_afl_validation",
+            "data": {
+                "valid": validation.is_valid,
+                "line_count": line_count,
+                "counts": {
+                    "errors": validation.error_count,
+                    "warnings": validation.warning_count,
+                    "suggestions": validation.suggestion_count,
+                    "info": validation.info_count,
+                    "cascades": validation.cascade_count,
+                },
+                "structure": {
+                    "has_buy_sell": has_buy_sell,
+                    "has_plot": has_plot,
+                    "has_section_markers": has_section_markers,
+                },
+                "issues": issue_dicts[:50],
+                "summary": _build_validation_summary(validation, line_count),
+            },
+        },
     }
 
 
@@ -2834,22 +2874,52 @@ def generate_afl_code(
         validation    = engine_result.get("validation") or {}
 
         # Build a short human-readable validation report (used by the chat UI).
+        v_errors   = validation.get("errors", []) if validation else []
+        v_warnings = validation.get("warnings", []) if validation else []
         if validation:
             if validation.get("is_valid"):
                 validation_report = (
-                    f"✅ Validation passed (0 errors, "
-                    f"{len(validation.get('warnings', []))} warnings)"
+                    f"Validation passed (0 errors, "
+                    f"{len(v_warnings)} warnings)"
                 )
             else:
-                _errs = validation.get("errors", [])[:10]
+                _errs = v_errors[:10]
                 validation_report = (
-                    f"⚠️ {len(validation.get('errors', []))} error(s):\n  "
+                    f"{len(v_errors)} error(s):\n  "
                     + "\n  ".join(str(e) for e in _errs)
                 )
         else:
             validation_report = ""
 
-        return {
+        code_upper = afl_code.upper()
+        line_count = len(afl_code.split("\n")) if afl_code else 0
+        has_buy_sell = "BUY" in code_upper or "SELL" in code_upper
+        has_plot = "PLOT" in code_upper
+        has_section_markers = "_SECTION_BEGIN" in code_upper
+
+        # Normalize generation_time (engine returns "1.23s" string)
+        _gt_raw = stats.get("generation_time")
+        if isinstance(_gt_raw, str) and _gt_raw.endswith("s"):
+            try:
+                gen_time_ms = int(float(_gt_raw[:-1]) * 1000)
+            except ValueError:
+                gen_time_ms = None
+        elif isinstance(_gt_raw, (int, float)):
+            gen_time_ms = int(_gt_raw * 1000)
+        else:
+            gen_time_ms = None
+
+        # Take the first N issue dicts if the validator surfaced structured issues
+        raw_issues = validation.get("issues") if validation else None
+        if isinstance(raw_issues, list):
+            issues_capped = [
+                (i if isinstance(i, dict) else (i.to_dict() if hasattr(i, "to_dict") else {"message": str(i)}))
+                for i in raw_issues[:50]
+            ]
+        else:
+            issues_capped = []
+
+        result = {
             "success":             True,
             "description":         description,
             "strategy_type":       strategy_type,
@@ -2857,16 +2927,99 @@ def generate_afl_code(
             "afl_code":            afl_code,
             "explanation":         explanation,
             "validation_valid":    validation.get("is_valid"),
-            "validation_errors":   len(validation.get("errors", [])) if validation else 0,
-            "validation_warnings": len(validation.get("warnings", [])) if validation else 0,
+            "validation_errors":   len(v_errors),
+            "validation_warnings": len(v_warnings),
             "validation_report":   validation_report,
             "quality_score":       stats.get("quality_score"),
             "generation_time":     stats.get("generation_time"),
-            "issues":              validation.get("errors", []) if validation else [],
+            "line_count":          line_count,
+            "has_buy_sell":        has_buy_sell,
+            "has_plot":            has_plot,
+            "has_section_markers": has_section_markers,
+            "issues":              v_errors,
         }
+        result["genui_card"] = {
+            "type": "data-card_afl_strategy",
+            "data": {
+                "title": "AFL Strategy",
+                "description": description,
+                "strategy_type": strategy_type,
+                "trade_timing": trade_timing,
+                "afl_code": afl_code,
+                "explanation": explanation,
+                "validation": {
+                    "is_valid": bool(validation.get("is_valid")) if validation else None,
+                    "errors": len(v_errors),
+                    "warnings": len(v_warnings),
+                    "suggestions": validation.get("suggestion_count", 0) if validation else 0,
+                    "info": validation.get("info_count", 0) if validation else 0,
+                    "quality_score": stats.get("quality_score"),
+                    "issues": issues_capped,
+                },
+                "stats": {
+                    "generation_time_ms": gen_time_ms,
+                    "model": stats.get("model"),
+                    "line_count": line_count,
+                    "has_buy_sell": has_buy_sell,
+                    "has_plot": has_plot,
+                    "has_sections": has_section_markers,
+                },
+                "actions": ["copy", "download_afl", "debug", "explain"],
+                "summary": (
+                    f"AFL strategy generated ({line_count} lines, "
+                    f"{len(v_errors)} error(s), {len(v_warnings)} warning(s))"
+                ),
+            },
+        }
+        return result
     except Exception as e:
         logger.exception("generate_afl_code failed")
         return {"success": False, "error": str(e), "tool": "generate_afl_code"}
+
+
+def _compute_line_diff(original: str, fixed: str, max_changes: int = 30) -> List[Dict[str, Any]]:
+    """Compute a line-by-line diff summary between original and fixed AFL.
+
+    Returns up to ``max_changes`` entries of {line, before, after, kind}
+    where kind is 'changed', 'added', or 'removed'.
+    """
+    import difflib
+    orig_lines  = (original or "").splitlines()
+    fixed_lines = (fixed or "").splitlines()
+    matcher = difflib.SequenceMatcher(a=orig_lines, b=fixed_lines)
+    changes: List[Dict[str, Any]] = []
+    for tag, i1, i2, j1, j2 in matcher.get_opcodes():
+        if tag == "equal":
+            continue
+        if tag == "replace":
+            for off in range(max(i2 - i1, j2 - j1)):
+                before = orig_lines[i1 + off] if (i1 + off) < i2 else ""
+                after  = fixed_lines[j1 + off] if (j1 + off) < j2 else ""
+                changes.append({
+                    "line": (i1 + off) + 1,
+                    "before": before,
+                    "after": after,
+                    "kind": "changed",
+                })
+        elif tag == "delete":
+            for off in range(i2 - i1):
+                changes.append({
+                    "line": (i1 + off) + 1,
+                    "before": orig_lines[i1 + off],
+                    "after": "",
+                    "kind": "removed",
+                })
+        elif tag == "insert":
+            for off in range(j2 - j1):
+                changes.append({
+                    "line": (j1 + off) + 1,
+                    "before": "",
+                    "after": fixed_lines[j1 + off],
+                    "kind": "added",
+                })
+        if len(changes) >= max_changes:
+            break
+    return changes[:max_changes]
 
 
 def debug_afl_code(code: str, error_message: str = "", api_key: str = None) -> Dict[str, Any]:
@@ -2894,14 +3047,66 @@ def debug_afl_code(code: str, error_message: str = "", api_key: str = None) -> D
                 if fixed_code.startswith("afl\n"):
                     fixed_code = fixed_code[4:]
                 fixed_code = fixed_code.strip()
+
+        diff_summary = _compute_line_diff(code, fixed_code)
         return {
             "success":       True,
-            "original_code": (code[:200] + "...") if len(code) > 200 else code,
+            "original_code": code,
             "error_message": error_message,
             "fixed_code":    fixed_code,
+            "diff_summary":  diff_summary,
+            "genui_card": {
+                "type": "data-card_afl_debug",
+                "data": {
+                    "error_message": error_message,
+                    "original_code": code,
+                    "fixed_code": fixed_code,
+                    "diff_summary": diff_summary,
+                    "summary": f"{len(diff_summary)} change(s) applied",
+                },
+            },
         }
     except Exception as e:
         return {"success": False, "error": str(e)}
+
+
+def _split_explanation_sections(text: str) -> Dict[str, Any]:
+    """Best-effort split of an explain_afl_code response into labelled sections.
+
+    Looks for lines like 'Purpose:', 'Indicators:', 'Entry:', etc. Falls back
+    to an empty dict if nothing matches — the frontend can still render the raw text.
+    """
+    if not text:
+        return {}
+    section_map = {
+        "purpose":     ["purpose", "overview", "summary"],
+        "indicators":  ["indicators", "technical indicators"],
+        "entry_logic": ["entry", "entry logic", "entry conditions", "buy", "buy signal"],
+        "exit_logic":  ["exit", "exit logic", "exit conditions", "sell", "sell signal"],
+        "parameters":  ["parameters", "params", "inputs"],
+    }
+    lines = text.splitlines()
+    sections: Dict[str, List[str]] = {k: [] for k in section_map}
+    current_key: Optional[str] = None
+    for raw_line in lines:
+        line = raw_line.rstrip()
+        lower = line.lower().strip()
+        matched_key = None
+        for key, aliases in section_map.items():
+            for alias in aliases:
+                if lower.startswith(alias + ":") or lower == alias:
+                    matched_key = key
+                    break
+            if matched_key:
+                break
+        if matched_key:
+            current_key = matched_key
+            after_colon = line.split(":", 1)[1].strip() if ":" in line else ""
+            if after_colon:
+                sections[current_key].append(after_colon)
+        elif current_key and line.strip():
+            sections[current_key].append(line.strip())
+    return {k: "\n".join(v).strip() for k, v in sections.items() if v}
 
 
 def explain_afl_code(code: str, api_key: str = None) -> Dict[str, Any]:
@@ -2918,10 +3123,22 @@ def explain_afl_code(code: str, api_key: str = None) -> Dict[str, Any]:
             messages=[{"role": "user", "content": f"Explain this AFL:\n\n```afl\n{code}\n```"}],
         )
         explanation = response.content[0].text if response.content else ""
+        sections = _split_explanation_sections(explanation)
+        one_liner = (sections.get("purpose") or explanation.strip().split("\n", 1)[0])[:280]
+
         return {
             "success":     True,
             "code":        (code[:200] + "...") if len(code) > 200 else code,
             "explanation": explanation,
+            "genui_card": {
+                "type": "data-card_afl_explanation",
+                "data": {
+                    "code_preview": code[:2000],
+                    "sections": sections,
+                    "explanation_raw": explanation,
+                    "summary": one_liner,
+                },
+            },
         }
     except Exception as e:
         return {"success": False, "error": str(e)}
@@ -2942,20 +3159,33 @@ def sanity_check_afl(code: str, auto_fix: bool = True) -> Dict[str, Any]:
 
     report_lines = []
     if validation.is_valid:
-        report_lines.append(f"✅ AFL code passed all {len(validation.issues)} checks (0 errors)")
+        report_lines.append(f"AFL code passed all {len(validation.issues)} checks (0 errors)")
     else:
-        report_lines.append(f"❌ Found {validation.error_count} error(s), {validation.warning_count} warning(s)")
+        report_lines.append(f"Found {validation.error_count} error(s), {validation.warning_count} warning(s)")
     for issue in validation.issues[:20]:
-        prefix = "  " + ("❌" if issue.severity == Severity.ERROR else "⚠️" if issue.severity == Severity.WARNING else "💡")
-        report_lines.append(f"{prefix} L{issue.line}: [{issue.category}] {issue.message}")
+        sev = issue.severity.value if hasattr(issue.severity, "value") else str(issue.severity)
+        report_lines.append(f"  [{sev.upper()}] L{issue.line}: [{issue.category}] {issue.message}")
         if issue.suggestion:
-            report_lines.append(f"     → {issue.suggestion}")
+            report_lines.append(f"     -> {issue.suggestion}")
         if issue.cascading:
-            report_lines.append(f"     ⚡ Cascading from line {issue.cascading_parent}")
+            report_lines.append(f"     (cascading from line {issue.cascading_parent})")
     if len(validation.issues) > 20:
         report_lines.append(f"  ... and {len(validation.issues) - 20} more issues")
 
     report = "\n".join(report_lines)
+    line_count = len(code.split("\n"))
+
+    # Group issues by category for the card UI
+    issues_by_category: Dict[str, int] = {}
+    for i in validation.issues:
+        issues_by_category[i.category] = issues_by_category.get(i.category, 0) + 1
+
+    code_upper = code.upper()
+    has_buy_sell = "BUY" in code_upper or "SELL" in code_upper
+    has_plot = "PLOT" in code_upper
+    has_section_markers = "_SECTION_BEGIN" in code_upper
+
+    issue_dicts = [i.to_dict() for i in validation.issues]
 
     return {
         "success":          validation.is_valid,
@@ -2966,9 +3196,34 @@ def sanity_check_afl(code: str, auto_fix: bool = True) -> Dict[str, Any]:
         "suggestion_count": validation.suggestion_count,
         "cascade_count":    validation.cascade_count,
         "total_issues":     len(validation.issues),
-        "issues":           [i.to_dict() for i in validation.issues],
+        "issues":           issue_dicts,
         "report":           report,
-        "line_count":       len(code.split("\n")),
+        "line_count":       line_count,
+        "genui_card": {
+            "type": "data-card_afl_sanity_check",
+            "data": {
+                "valid": validation.is_valid,
+                "line_count": line_count,
+                "counts": {
+                    "errors": validation.error_count,
+                    "warnings": validation.warning_count,
+                    "suggestions": validation.suggestion_count,
+                    "info": validation.info_count,
+                    "cascades": validation.cascade_count,
+                },
+                "total_issues": len(validation.issues),
+                "auto_fix_applied": bool(auto_fix),
+                "structure": {
+                    "has_buy_sell": has_buy_sell,
+                    "has_plot": has_plot,
+                    "has_section_markers": has_section_markers,
+                },
+                "issues": issue_dicts[:50],
+                "issues_by_category": issues_by_category,
+                "report": report,
+                "summary": _build_validation_summary(validation, line_count),
+            },
+        },
     }
 
 
@@ -4707,7 +4962,24 @@ def _get_afl_syntax_reference(_ti: Dict[str, Any]) -> Dict[str, Any]:
             PARAM_OPTIMIZE_PATTERN.strip(),
             TIMEFRAME_RULES.strip(),
         ])
-        return {"success": True, "tool": "get_afl_syntax_reference", "reference": content}
+
+        return {
+            "success": True,
+            "tool": "get_afl_syntax_reference",
+            "reference": content,
+            "genui_card": {
+                "type": "data-card_afl_reference",
+                "data": {
+                    "sections": [
+                        {"title": "Function Signatures",  "body": FUNCTION_REFERENCE.strip()},
+                        {"title": "Reserved Keywords",    "body": RESERVED_KEYWORDS.strip()},
+                        {"title": "Param/Optimize Pattern", "body": PARAM_OPTIMIZE_PATTERN.strip()},
+                        {"title": "Timeframe Rules",      "body": TIMEFRAME_RULES.strip()},
+                    ],
+                    "summary": "AFL syntax reference: signatures, reserved keywords, Param/Optimize, timeframe rules.",
+                },
+            },
+        }
     except Exception as e:
         return {"success": False, "tool": "get_afl_syntax_reference", "error": str(e)}
 
