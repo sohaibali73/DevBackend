@@ -22,6 +22,7 @@ from anthropic import APIError, RateLimitError
 from api.dependencies import get_current_user_id, get_user_api_keys
 from core.claude_engine import ClaudeAFLEngine
 from core.prompts import get_base_prompt, get_chat_prompt
+from core.prompt_cache import mark_tools_cached
 from core.tools import get_all_tools, get_tools_for_api, handle_tool_call, is_tool_search_block
 from core.artifact_parser import ArtifactParser
 from core.streaming import VercelAIStreamEncoder, GenerativeUIStreamBuilder
@@ -1666,6 +1667,14 @@ async def chat_agent(
                         logger.debug("focus_chain injected (%d chars)", len(_fc_block))
                 except Exception as _fc_err:
                     logger.debug("focus_chain injection failed (non-fatal): %s", _fc_err)
+
+            # Cache tool definitions so the ~5-10k token tools array is
+            # billed at 10% on subsequent turns within the 5-min TTL window.
+            # Marks cache_control on the LAST tool, which caches everything
+            # before it. Safe because the tool list is stable across iterations
+            # of the same conversation (all conditional appends are above).
+            if data.use_prompt_caching and model_config["supports_prompt_caching"]:
+                tools = mark_tools_cached(tools)
 
             # Configurable iteration limit — Yolo hard-cap takes precedence
             if yang_cfg.yolo_mode:
