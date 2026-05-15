@@ -577,8 +577,17 @@ TOOL_DEFINITIONS = [
     # Custom: AFL Validator
     {
         "name": "validate_afl",
-        "defer_loading": True,
-        "description": "Validate AFL (AmiBroker Formula Language) code for syntax errors and common issues.",
+        "description": (
+            "Validate AFL (AmiBroker Formula Language) code by calling the "
+            "AFLValidator.validate() method DIRECTLY on the provided code. "
+            "No LLM round-trip, no rewriting, no auto-fix. Returns the raw "
+            "validator output: success, valid, error_count, warning_count, "
+            "errors[], warnings[], suggestions[], issues[] (with line numbers, "
+            "severity, category, message, suggestion), line_count, has_buy_sell, "
+            "has_plot. USE THIS — never reroute validation requests to "
+            "generate_afl_code (that would regenerate the code instead of "
+            "validating it)."
+        ),
         "input_schema": {
             "type": "object",
             "properties": {
@@ -664,8 +673,13 @@ TOOL_DEFINITIONS = [
     # Custom: Sanity Check AFL
     {
         "name": "sanity_check_afl",
-        "defer_loading": True,
-        "description": "Performs comprehensive sanity check on AFL code and automatically fixes common issues. USE THIS BEFORE PRESENTING ANY AFL CODE TO THE USER.",
+        "description": (
+            "Run AFLValidator.validate() directly on AFL code and return a "
+            "pre-formatted ✅/❌/⚠️ human-readable report (in the `report` field) "
+            "plus the full raw validator output (issues, errors, warnings, "
+            "counts). Use when the user wants a readable validation summary. "
+            "Does NOT call an LLM — pure deterministic validator output."
+        ),
         "input_schema": {
             "type": "object",
             "properties": {
