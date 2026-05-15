@@ -120,15 +120,13 @@ YANG_CAPABILITIES_PROMPT = '''YANG AGENTIC CAPABILITIES — how your environment
 
 GENUI_CARD_SCHEMA = '''STRUCTURED CARD RESPONSES (GenUI) — READ-ONLY REFERENCE
 
-Cards are rendered AUTOMATICALLY by the frontend from the genui_card field
-that tools attach to their return value. You DO NOT emit card JSON in your
-response text. You do not write `{"type":"data-card_*","data":...}` or any
-similar envelope as narration — ever.
+Cards are rendered AUTOMATICALLY by the frontend from data the tools attach
+to their return value. You DO NOT emit card markup in your response text.
 
 Your job after a tool returns:
   - Speak about the result in plain prose.
-  - Do NOT re-print the tool's JSON output.
-  - Do NOT paste the genui_card envelope into chat text.
+  - Do NOT re-print the tool's structured output.
+  - Do NOT paste any envelope into chat text.
 
 Card types the frontend understands (for reference only, not for emission):
   stock | backtest | afl | afl_strategy | afl_validation | afl_sanity_check
@@ -137,12 +135,9 @@ Card types the frontend understands (for reference only, not for emission):
   file_analysis | knowledge_base | error | task_progress | flight | restaurant
   rental_car | weather | hotel | directions | currency | performance
 
-Envelope shape (rendered by the UI from the tool's return — NOT model output):
-  {"type":"data-card_<type>","data":{...fields..., "summary":"..."}}
-
-If the tool you called did NOT attach a genui_card, the frontend falls back
-to a generic renderer — you still narrate in prose; you do not synthesize a
-card envelope to compensate.
+If the tool you called did NOT attach a renderable payload, the frontend
+falls back to a generic renderer — you still narrate in prose; you do not
+synthesize a card envelope to compensate.
 '''
 
 
@@ -181,10 +176,10 @@ MANDATORY AFL WORKFLOW — CALL generate_afl_code ONCE:
   - NEVER call validate_afl right after generate_afl_code "to double-check".
     The internal loop already validates. A redundant call surfaces extra
     cards and confuses the UI.
-  - NEVER emit JSON envelopes (`{"type":"data-card_*",...}`) in your reply
-    text — cards render automatically from the tool's genui_card field.
-  - NEVER write `<function_calls>`, `<invoke>`, or `<parameter>` XML in
-    your reply text. Tool calls happen through the API, not through text.
+  - Output ONLY plain prose. Do not include code blocks containing tool
+    results, do not paste structured JSON into your reply, and do not
+    produce any tag-like markup of your own. Cards render automatically;
+    you narrate.
 
 MANDATORY CODE QUALITY (already enforced by the engine's internal validator —
 listed here so you can recognise problems if the tool surfaces them):
@@ -334,12 +329,9 @@ AFL TOOLS (INTENT-BASED ROUTING — match the user's verb, not just the topic):
 CARD RENDERING — DO NOT NARRATE ENVELOPES:
   - Cards render AUTOMATICALLY from the genui_card field that tools attach
     to their return value. The frontend reads it; you do not emit it.
-  - NEVER write `{"type":"data-card_*","data":...}`, `{"data-card_*":{...}}`,
-    `{"card":"...","data":...}`, or any similar JSON envelope as part of
-    your response text.
-  - NEVER write `<function_calls>`, `<invoke>`, or `<parameter>` XML
-    markup in your reply. Tool calls happen through the API, never through
-    text.
+  - Output ONLY plain prose. Do not paste structured JSON, do not produce
+    fenced code blocks containing tool results, and do not write any
+    tag-like markup of your own.
   - After a tool returns, narrate the result in plain prose. Do NOT re-print
     the tool's full JSON output.
 

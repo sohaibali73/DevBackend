@@ -2939,7 +2939,12 @@ def generate_afl_code(
             "issues":              v_errors,
         }
         result["genui_card"] = {
-            "type": "data-card_afl_strategy",
+            # The strategy card uses the bare type "afl_strategy" (no
+            # data-card_ prefix) — this is the form the frontend's
+            # AFLGenerateAdapter checks for. Other AFL cards use the
+            # data-card_* prefix; this one predates that convention and
+            # the frontend matching is keyed on the bare form.
+            "type": "afl_strategy",
             "data": {
                 "title": "AFL Strategy",
                 "description": description,
