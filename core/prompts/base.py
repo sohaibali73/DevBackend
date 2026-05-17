@@ -66,6 +66,7 @@ TimeFrameRestore();
 Buy = Cross(Close, TimeFrameExpand(MA14_Weekly, inWeekly));   // expand to base TF
 '''
 
+
 CONDITIONAL_AND_SIGNAL_FUNCTIONS = '''CONDITIONAL + SIGNAL FUNCTIONS
 
 Signal detection and cleanup:
@@ -105,15 +106,25 @@ Style constants (bit-combinable with |):
   styleNoLine (16)      styleDashed (32)      styleCandle (64)      styleBar (128)
   styleArea (16384)     styleOwnScale (32768) styleNoTitle (512)    stylePointAndFigure
 
-Shape constants:
-  shapeNone                shapeUpArrow              shapeDownArrow
-  shapeSmallUpArrow        shapeSmallDownArrow
-  shapeUpTriangle          shapeDownTriangle
-  shapeSmallUpTriangle     shapeSmallDownTriangle
-  shapeCircle              shapeSquare               shapeStar
-  shapeHollowCircle        shapeHollowSquare         shapeHollowStar
-  shapeDigit0  shapeDigit1  shapeDigit2  ...  shapeDigit9   (for numbering signals)
-  shapePositionAbove       (OR with another shape — places it above the bar)
+Shape constants — ONLY these exist (validator rejects anything else):
+  shapeNone
+  shapeUpArrow              shapeDownArrow
+  shapeHollowUpArrow        shapeHollowDownArrow
+  shapeUpTriangle           shapeDownTriangle
+  shapeSmallUpTriangle      shapeSmallDownTriangle
+  shapeHollowUpTriangle     shapeHollowDownTriangle
+  shapeHollowSmallUpTriangle    shapeHollowSmallDownTriangle
+  shapeCircle               shapeHollowCircle
+  shapeSmallCircle          shapeHollowSmallCircle
+  shapeSquare               shapeHollowSquare
+  shapeSmallSquare          shapeHollowSmallSquare
+  shapeStar                 shapeHollowStar
+  shapeDigit0 .. shapeDigit9                 (for numbering signals)
+  shapePositionAbove        shapePositionAbsolute   (modifiers — OR with a shape)
+
+FORBIDDEN shape names (do NOT emit — they look right but don't exist):
+  shapeSmallUpArrow    -> use shapeUpArrow or shapeSmallUpTriangle
+  shapeSmallDownArrow  -> use shapeDownArrow or shapeSmallDownTriangle
 
 Typical Buy/Sell arrows:
   PlotShapes(IIf(Buy,  shapeUpArrow,   shapeNone), colorGreen, 0, Low,  -15);
@@ -203,16 +214,46 @@ Position sizing:
   PositionSize = -10;          // 10% of equity per slot (legacy syntax — negative = pct)
 '''
 
-COLOR_PALETTE = '''COLOR PALETTE — predefined names
+COLOR_PALETTE = '''COLOR PALETTE — ONLY these constants exist in AFL.
+Anything else is a HALLUCINATION and the validator will reject it.
 
-Primary:   colorBlack colorWhite colorRed colorGreen colorBlue colorYellow
-           colorCyan colorMagenta colorOrange colorPink colorBrown colorGold
-Greys:     colorGrey40 colorGrey50 colorDarkGrey colorLightGrey
-Pales:     colorPaleGreen colorPaleBlue colorPaleTurquoise colorPaleYellow
-           colorPaleOrange colorLavender colorLightOrange colorRose
-Other:     colorAqua colorTan colorViolet colorTeal colorIndigo colorPlum
+VALID — primary / saturated:
+  colorBlack  colorWhite  colorRed  colorGreen  colorBlue  colorYellow
+  colorOrange  colorPink  colorBrown  colorGold  colorLime  colorBrightGreen
+  colorSeaGreen  colorTurquoise  colorViolet  colorIndigo  colorPlum
 
-Custom: MyColor = ColorRGB(r, g, b);   // 0-255 each. NEVER reuse a predefined name.
+VALID — aqua / teal / sky family:
+  colorAqua  colorTeal  colorSkyblue  colorLightBlue  colorBlueGrey
+
+VALID — dark variants:
+  colorDarkRed  colorDarkGreen  colorDarkBlue  colorDarkGrey  colorDarkTeal
+  colorDarkYellow  colorDarkOliveGreen
+
+VALID — greys (note the spelling: Grey, NOT Gray):
+  colorGrey40  colorGrey50  colorDarkGrey  colorLightGrey
+
+VALID — pales / pastels:
+  colorPaleGreen  colorPaleBlue  colorPaleTurquoise  colorLavender
+  colorLightOrange  colorLightYellow  colorRose  colorTan
+
+VALID — user-palette slots (always safe):
+  colorCustom1 .. colorCustom16
+
+FORBIDDEN — these names LOOK plausible but DO NOT EXIST. Never emit them;
+use the listed substitute:
+  colorCyan         -> colorAqua
+  colorMagenta      -> colorPink           (or colorViolet)
+  colorPurple       -> colorViolet         (or colorIndigo for darker)
+  colorSilver       -> colorLightGrey
+  colorDefault      -> colorBlack          (or colorWhite)
+  colorGray         -> colorGrey40         (spelling: Grey, not Gray)
+  colorGray40       -> colorGrey40
+  colorGray50       -> colorGrey50
+  colorPaleYellow   -> colorLightYellow
+  colorPaleOrange   -> colorLightOrange
+
+Custom RGB: MyColor = ColorRGB(r, g, b);   // 0-255 each.
+NEVER reuse a predefined name (e.g. `colorGreen = ColorRGB(...)` is forbidden).
 '''
 
 
@@ -272,10 +313,12 @@ HOUSE_RULES = '''CODE QUALITY RULES (non-negotiable — the server-side validato
 
     Use `Variable` (not `Variable_Dflt`) in the rest of the formula.
 
-12. Use predefined colour constants (colorRed, colorGreen, colorBlue,
-    colorOrange, colorPaleGreen, colorLightGrey, etc.). Only define
-    custom ColorRGB() values when you genuinely need one — and never
-    reuse a predefined name (`colorGreen = ColorRGB(...)` is forbidden).
+12. Colours: use ONLY the names in the Color Palette section. NEVER emit
+    `colorCyan`, `colorMagenta`, `colorPurple`, `colorSilver`, `colorDefault`,
+    `colorGray*`, `colorPaleYellow`, `colorPaleOrange` — they do not exist
+    and the validator will reject them. AFL spells it Grey, not Gray. If
+    you need a colour not in the palette, build it with ColorRGB(r,g,b);
+    never reuse a predefined name (`colorGreen = ColorRGB(...)` is forbidden).
 
 13. Set Filter for exploration output (Filter = Buy OR Sell; or
     Filter = 1;) and include at least one AddColumn() / AddMultiTextColumn().
@@ -344,7 +387,7 @@ ApplyStop(stopTypeTrailing, stopModePercent, TrailingStop, True);
 _SECTION_END();
 
 _SECTION_BEGIN("Chart Visualization");
-Plot(Close,      "Price", colorDefault, styleCandle);
+Plot(Close,      "Price", colorBlack, styleCandle);
 Plot(FastMA_Val, "Fast MA", colorBlue,  styleLine | styleThick);
 Plot(SlowMA_Val, "Slow MA", colorRed,   styleLine | styleThick);
 PlotShapes(IIf(Buy,  shapeUpArrow,   shapeNone), colorGreen, 0, Low,  -15);
@@ -412,7 +455,7 @@ Sell = ExRem(Sell, Buy);
 
 ApplyStop(stopTypeLoss, stopModePercent, _Risk_StopPct, True);
 
-Plot(Close, "Price", colorDefault, styleCandle);
+Plot(Close, "Price", colorBlack, styleCandle);
 PlotShapes(IIf(Buy,  shapeUpArrow,   shapeNone), colorGreen, 0, Low,  -15);
 PlotShapes(IIf(Sell, shapeDownArrow, shapeNone), colorRed,   0, High, +15);
 
@@ -710,14 +753,22 @@ HARD RULES for any AFL response:
      exact tool. Do not substitute.
   5. For raw/JSON tool output, surface verbatim inside a ```json fence.
 
-CARD RENDERING — DO NOT NARRATE ENVELOPES:
+CARD RENDERING — DO NOT NARRATE ENVELOPES OR REPEAT CODE:
   - Cards render AUTOMATICALLY from the genui_card field that tools attach
     to their return value. The frontend reads it; you do not emit it.
-  - Output ONLY plain prose. Do not paste structured JSON, do not produce
-    fenced code blocks containing tool results, and do not write any
-    tag-like markup of your own.
-  - After a tool returns, narrate the result in plain prose. Do NOT re-print
-    the tool's full JSON output.
+  - The AFL card ALREADY shows the full code, syntax-highlighted, with
+    Copy and Download buttons. You MUST NOT paste the same code again in a
+    fenced block below. Doing so duplicates the same content twice in the
+    same message — once as a card, once as raw text — which is exactly the
+    failure mode the UI was redesigned to prevent.
+  - After generate_afl_code returns, your ENTIRE reply text is ONE to TWO
+    plain-prose sentences describing the strategy at a high level
+    (e.g. "Trend-following short strategy using a 200/50 MA crossover with
+    ADX filter and 5% trailing stop. The card shows the full code."). No
+    intro like "Here is the complete strategy code:". No ```afl block. No
+    code in any form. The card carries the code; you carry the context.
+  - Same rule for every other tool: never re-print the tool's payload —
+    no fenced JSON dump, no re-pasting of results the card already renders.
 
 SPECIALIST RESEARCH SKILLS (heavier, 1–3 minutes — use when depth matters):
   - run_financial_deep_research  institutional-grade fundamental research
