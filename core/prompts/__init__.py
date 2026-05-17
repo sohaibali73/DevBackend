@@ -6,10 +6,22 @@ This module provides a clean interface to all prompt functions used throughout t
 
 # Import from base.py (primary source for base prompts)
 from .base import (
+    build_afl_reference,
     get_base_prompt,
     get_chat_prompt,
     FUNCTION_REFERENCE,
     RESERVED_KEYWORDS,
+    PARAM_OPTIMIZE_PATTERN,
+    TIMEFRAME_RULES,
+    CONDITIONAL_AND_SIGNAL_FUNCTIONS,
+    PLOTTING_AND_SHAPES,
+    EXPLORATION_FUNCTIONS,
+    PARAMETER_FUNCTIONS,
+    RISK_MANAGEMENT,
+    COLOR_PALETTE,
+    HOUSE_RULES,
+    STANDALONE_TEMPLATE,
+    COMPOSITE_TEMPLATE,
     YANG_CAPABILITIES_PROMPT,
 )
 
@@ -24,67 +36,6 @@ from .condensed_prompts import (
     get_condensed_research_synthesis_prompt,
     get_condensed_schematic_generation_prompt,
 )
-
-
-
-def get_generate_prompt(strategy_type: str = "standalone") -> str:
-    """
-    Get AFL generation prompt tailored to strategy type.
-
-    Args:
-        strategy_type: Either "standalone" or "composite"
-
-    Returns:
-        Prompt string for AFL generation
-    """
-    base = get_base_prompt()
-
-    if strategy_type.lower() == "composite":
-        return base + """
-
-## COMPOSITE STRATEGY MODE
-
-This is a COMPOSITE strategy module. Follow these specific rules:
-
-1. **DO NOT** include backtest settings (SetOption, SetTradeDelays, PositionSize)
-2. **DO NOT** include Plot() or PlotShapes() for visualization
-3. **DO NOT** include AddColumn() or exploration output
-4. **DO NOT** assign to Buy/Sell directly
-
-Instead:
-- Prefix ALL variables with a unique strategy identifier
-- Use Buy[StrategyName], Sell[StrategyName] for signals
-- Include only the core strategy logic and indicator calculations
-- Document how to integrate with a master template
-"""
-    else:
-        return base + """
-
-## STANDALONE STRATEGY MODE
-
-This is a STANDALONE strategy. Include ALL sections:
-
-1. **Parameters Section** - Complete Param()/Optimize() structure
-2. **Backtest Settings** - SetOption(), SetTradeDelays(), PositionSize
-3. **Indicators** - All indicator calculations with proper naming
-4. **Trading Logic** - Buy/Sell/Short/Cover signals
-5. **Signal Cleanup** - ExRem() for all signals
-6. **Visualization** - Plot() for indicators, PlotShapes() for signals
-7. **Exploration** - AddColumn(), Filter for Analysis window
-
-Generate a complete, production-ready strategy file.
-"""
-
-
-# Convenience aliases for common use cases
-def get_afl_base_prompt() -> str:
-    """Alias for get_base_prompt for backwards compatibility."""
-    return get_base_prompt()
-
-
-def get_afl_chat_prompt() -> str:
-    """Alias for get_chat_prompt for backwards compatibility."""
-    return get_chat_prompt()
 
 
 def get_clarification_prompt(query: str = "") -> str:
@@ -132,26 +83,37 @@ Provide: performance metrics, key insights, optimization suggestions, risk asses
 
 # Export list - all publicly available functions and constants
 __all__ = [
+    # Canonical AFL accessor (single source of truth)
+    "build_afl_reference",
+
     # Base prompts
     "get_base_prompt",
     "get_chat_prompt",
-    "get_generate_prompt",
     "get_afl_system_prompt",
+
+    # AFL reference constants (returned by get_afl_syntax_reference tool)
     "FUNCTION_REFERENCE",
     "RESERVED_KEYWORDS",
+    "PARAM_OPTIMIZE_PATTERN",
+    "TIMEFRAME_RULES",
+    "CONDITIONAL_AND_SIGNAL_FUNCTIONS",
+    "PLOTTING_AND_SHAPES",
+    "EXPLORATION_FUNCTIONS",
+    "PARAMETER_FUNCTIONS",
+    "RISK_MANAGEMENT",
+    "COLOR_PALETTE",
+    "HOUSE_RULES",
+    "STANDALONE_TEMPLATE",
+    "COMPOSITE_TEMPLATE",
     "YANG_CAPABILITIES_PROMPT",
 
-    # Aliases for backwards compatibility
-    "get_afl_base_prompt",
-    "get_afl_chat_prompt",
-    
     # Condensed prompts
     "get_condensed_clarification_prompt",
     "get_condensed_reverse_engineer_prompt",
     "get_condensed_afl_generation_prompt",
     "get_condensed_research_synthesis_prompt",
     "get_condensed_schematic_generation_prompt",
-    
+
     # Wrapper functions for compatibility
     "get_clarification_prompt",
     "get_reverse_engineer_prompt",

@@ -292,7 +292,7 @@ ERROR_CODES: Dict[int, Dict] = {
          "fix": "Use \\\\\\\\ for backslash: \"C:\\\\\\\\windows\\\\\\\\file.txt\""},
     90: {"title": "Optimizer engine not found",
          "desc": "OptimizerSetEngine called with non-existing engine",
-         "fix": "Use valid engine: OptimizerSetEngine(\"cmae\")"},
+         "fix": "Use valid engine: OptimizerSetEngine(\"trib\")"},
     91: {"title": "OptimizerSetOption expects STRING",
          "desc": "Wrong type passed to OptimizerSetOption",
          "fix": "Pass string for string options"},
@@ -304,7 +304,7 @@ ERROR_CODES: Dict[int, Dict] = {
          "fix": "Use valid option names for the optimizer engine"},
     94: {"title": "External optimizer not selected",
          "desc": "Must call OptimizerSetEngine before OptimizerSetOption",
-         "fix": "OptimizerSetEngine(\"cmae\"); then OptimizerSetOption(...);"},
+         "fix": "OptimizerSetEngine(\"trib\"); then OptimizerSetOption(...);"},
     701: {"title": "Missing Buy/Sell assignments",
           "desc": "Backtest formula lacks Buy and/or Sell variable assignments",
           "fix": "Add: Buy = ...; Sell = ...;"},
@@ -1727,11 +1727,12 @@ class AFLValidator:
             except ValueError:
                 pass
         if re.search(r'\bOptimizerSetOption\s*\(', clean):
+            # Note: house default is the Tribes ("trib") optimiser engine.
             if not re.search(r'\bOptimizerSetEngine\s*\(', clean):
                 ln = self._find_line_re(lines, r'OptimizerSetOption\s*\(')
                 issues.append(Issue(ln, 0, Severity.ERROR,
                     "Optimization", "[ERROR_94] Must call OptimizerSetEngine() before OptimizerSetOption()",
-                    "Add: OptimizerSetEngine(\"cmae\");"))
+                    "Add: OptimizerSetEngine(\"trib\");"))
         for m in re.finditer(r'Optimize\s*\(\s*"([^"]+)"\s*,', clean):
             name = m.group(1)
             if not re.search(rf'Param\s*\(\s*"{re.escape(name)}"', clean):

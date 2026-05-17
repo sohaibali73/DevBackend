@@ -464,8 +464,29 @@ TOOL_DEFINITIONS = [
     # reference material when it actually needs it (saves ~1500 tokens per turn).
     {
         "name": "get_afl_syntax_reference",
-        "description": "Load the authoritative AFL syntax reference: function signatures (single/double/multi-arg), reserved-word list, the Param/Optimize template, and timeframe-expansion rules. Call this before writing or correcting any AFL code.",
-        "input_schema": {"type": "object", "properties": {}, "required": []},
+        "description": (
+            "THE single source of truth for AFL reference content. Returns the "
+            "full Potomac AFL playbook: function signatures, reserved words, "
+            "conditional/signal functions, Param/Optimize pattern, parameter "
+            "function family, risk management (ApplyStop), timeframe expansion, "
+            "plotting + shape/style constants, exploration functions, color "
+            "palette, and the 13 non-negotiable house rules. Optionally also "
+            "returns the standalone or composite scaffold template. Call this "
+            "before answering any AFL question in your own text. Note: when "
+            "the user wants NEW code, prefer generate_afl_code (which already "
+            "uses this reference internally) instead of writing AFL yourself."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "template": {
+                    "type": "string",
+                    "description": "Optional scaffold to append: 'standalone' for a single-file strategy template, 'composite' for the multi-file main+helpers template. Omit for reference only.",
+                    "enum": ["standalone", "composite"]
+                }
+            },
+            "required": []
+        },
     },
     {
         "name": "get_yang_capabilities",
@@ -647,7 +668,13 @@ TOOL_DEFINITIONS = [
     {
         "name": "debug_afl_code",
         "defer_loading": True,
-        "description": "Debug and fix errors in AFL code.",
+        "description": (
+            "Debug and fix AFL code the user PASTED. Use when the user supplies "
+            "broken AFL or an AmiBroker error message and wants it fixed. "
+            "NEVER reroute a debug request through generate_afl_code — that "
+            "would regenerate from scratch instead of inspecting and fixing "
+            "the user's code."
+        ),
         "input_schema": {
             "type": "object",
             "properties": {
@@ -661,7 +688,11 @@ TOOL_DEFINITIONS = [
     {
         "name": "explain_afl_code",
         "defer_loading": True,
-        "description": "Explain AFL code in plain English.",
+        "description": (
+            "Explain in plain English what an AFL block does. Use when the "
+            "user asks 'what does this do' about AFL they pasted. NEVER "
+            "reroute through generate_afl_code."
+        ),
         "input_schema": {
             "type": "object",
             "properties": {
@@ -1292,7 +1323,6 @@ TOOL_DEFINITIONS = [
             "- 'pptx': Anthropic built-in PowerPoint skill — general presentation creation and editing\n"
             "- 'docx': Anthropic built-in Word skill — general Word document creation and editing\n"
             "- 'pdf': Anthropic built-in PDF skill — PDF creation, extraction, and manipulation\n"
-            "- 'amibroker-afl-developer': Expert AFL code generation for complex trading strategies\n"
             "- 'financial-deep-research': Deep institutional-grade financial research reports\n"
             "- 'backtest-expert': Expert backtest analysis and strategy evaluation\n"
             "- 'quant-analyst': Quantitative analysis, factor models, portfolio optimization\n"
@@ -2836,7 +2866,8 @@ def generate_afl_code(
     All AFL generation in the system funnels through this function:
       • The chat tool 'generate_afl_code'
       • The chat tool 'generate_afl_with_skill' (legacy alias — routes here)
-      • invoke_skill('afl-developer' / 'amibroker-afl-developer' / 'afl' / ...)
+      • Any stray invoke_skill call with an AFL slug is intercepted by
+        _invoke_skill and reshaped to call this function.
       • The /afl/generate REST endpoint also uses the same ClaudeAFLEngine.
 
     Internally delegates to ClaudeAFLEngine.generate_afl() — the proven path
@@ -4990,34 +5021,68 @@ def search_flights(
 
 # ── Reference tool handlers (return static prompt content) ──────────────────
 # Defined as module-level functions so they're cheap (no closure allocation).
-def _get_afl_syntax_reference(_ti: Dict[str, Any]) -> Dict[str, Any]:
-    """Return the full AFL syntax reference string for the agent."""
+def _get_afl_syntax_reference(ti: Dict[str, Any]) -> Dict[str, Any]:
+    """Return the canonical AFL reference, optionally with a scaffold template.
+
+    Delegates to core.prompts.base.build_afl_reference — there is ONE source
+    of truth for AFL reference content, and this tool is its public surface.
+    """
     try:
         from core.prompts.base import (
-            FUNCTION_REFERENCE, RESERVED_KEYWORDS,
-            PARAM_OPTIMIZE_PATTERN, TIMEFRAME_RULES,
+            build_afl_reference,
+            FUNCTION_REFERENCE,
+            RESERVED_KEYWORDS,
+            PARAM_OPTIMIZE_PATTERN,
+            TIMEFRAME_RULES,
+            CONDITIONAL_AND_SIGNAL_FUNCTIONS,
+            PLOTTING_AND_SHAPES,
+            EXPLORATION_FUNCTIONS,
+            PARAMETER_FUNCTIONS,
+            RISK_MANAGEMENT,
+            COLOR_PALETTE,
+            HOUSE_RULES,
+            STANDALONE_TEMPLATE,
+            COMPOSITE_TEMPLATE,
         )
-        content = "\n\n".join([
-            FUNCTION_REFERENCE.strip(),
-            RESERVED_KEYWORDS.strip(),
-            PARAM_OPTIMIZE_PATTERN.strip(),
-            TIMEFRAME_RULES.strip(),
-        ])
+
+        template = (ti or {}).get("template")
+        content = build_afl_reference(template=template)
+
+        sections = [
+            {"title": "Function Signatures",            "body": FUNCTION_REFERENCE.strip()},
+            {"title": "Reserved Keywords",              "body": RESERVED_KEYWORDS.strip()},
+            {"title": "Conditional + Signal Functions", "body": CONDITIONAL_AND_SIGNAL_FUNCTIONS.strip()},
+            {"title": "Param/Optimize Pattern",         "body": PARAM_OPTIMIZE_PATTERN.strip()},
+            {"title": "Parameter Functions",            "body": PARAMETER_FUNCTIONS.strip()},
+            {"title": "Risk Management",                "body": RISK_MANAGEMENT.strip()},
+            {"title": "Timeframe Rules",                "body": TIMEFRAME_RULES.strip()},
+            {"title": "Plotting + Shape Constants",     "body": PLOTTING_AND_SHAPES.strip()},
+            {"title": "Exploration Functions",          "body": EXPLORATION_FUNCTIONS.strip()},
+            {"title": "Color Palette",                  "body": COLOR_PALETTE.strip()},
+            {"title": "House Rules",                    "body": HOUSE_RULES.strip()},
+        ]
+        t = (template or "").strip().lower()
+        if t == "standalone":
+            sections.append({"title": "Standalone Scaffold", "body": STANDALONE_TEMPLATE.strip()})
+        elif t == "composite":
+            sections.append({"title": "Composite Scaffold",  "body": COMPOSITE_TEMPLATE.strip()})
 
         return {
             "success": True,
             "tool": "get_afl_syntax_reference",
             "reference": content,
+            "template": t or None,
             "genui_card": {
                 "type": "data-card_afl_reference",
                 "data": {
-                    "sections": [
-                        {"title": "Function Signatures",  "body": FUNCTION_REFERENCE.strip()},
-                        {"title": "Reserved Keywords",    "body": RESERVED_KEYWORDS.strip()},
-                        {"title": "Param/Optimize Pattern", "body": PARAM_OPTIMIZE_PATTERN.strip()},
-                        {"title": "Timeframe Rules",      "body": TIMEFRAME_RULES.strip()},
-                    ],
-                    "summary": "AFL syntax reference: signatures, reserved keywords, Param/Optimize, timeframe rules.",
+                    "sections": sections,
+                    "summary": (
+                        "Canonical AFL playbook: signatures, reserved words, conditional + "
+                        "signal functions, Param/Optimize template, optimiser engines "
+                        "(trib default), ApplyStop, timeframe rules, plotting + shape/style "
+                        "constants, exploration, colour palette, and the 13 house rules"
+                        + (f", plus the {t} scaffold." if t in ("standalone", "composite") else ".")
+                    ),
                 },
             },
         }
@@ -5331,13 +5396,11 @@ def _invoke_skill(tool_input: Dict, api_key: str) -> Dict:
         skill_slug = tool_input.get("skill_slug", "")
 
         # ── AFL slugs → canonical generate_afl_code path ─────────────────────
-        # Every AFL request — whether the model uses generate_afl_code,
-        # generate_afl_with_skill, or invoke_skill('amibroker-afl-developer'/
-        # 'afl-developer'/'afl'/etc.) — must end up at the same engine, the
-        # same prompt, and the same validator. This is what the user calls
-        # "ONE singular tool". The old SkillRouter path produced different
-        # output (and often empty/failing output), causing the "always falls
-        # back" behavior.
+        # The afl-developer skill was retired; AFL goes through ClaudeAFLEngine
+        # exclusively. This block is a defensive net: if the model ever calls
+        # invoke_skill with an AFL-flavoured slug, we reshape it into a
+        # generate_afl_code call so the response still flows through the
+        # canonical engine + validator instead of erroring out.
         _AFL_SLUGS = {
             "afl-developer", "amibroker-afl-developer", "afl",
             "amibroker", "afl-expert", "amibroker-developer",

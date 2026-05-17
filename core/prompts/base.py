@@ -66,6 +66,451 @@ TimeFrameRestore();
 Buy = Cross(Close, TimeFrameExpand(MA14_Weekly, inWeekly));   // expand to base TF
 '''
 
+CONDITIONAL_AND_SIGNAL_FUNCTIONS = '''CONDITIONAL + SIGNAL FUNCTIONS
+
+Signal detection and cleanup:
+  Cross(array1, array2)               -> True on bar where array1 crosses array2 UP
+  ExRem(signal, removal)              -> remove consecutive signals; ALWAYS apply to Buy/Sell pairs
+  ExRemSpan(signal, span)              -> remove signals within `span` bars
+  BarsSince(condition)                 -> bars elapsed since condition was last true
+  ValueWhen(condition, array, n=1)     -> value of `array` on the n-th most recent bar where condition was true
+  Flip(start, end)                     -> 1 between start and end, 0 elsewhere
+  Cum(array)                           -> cumulative sum
+
+Conditional value selection:
+  IIf(condition, value_if_true, value_if_false)
+      -> NUMBERS / arrays / colours. Both branches are evaluated.
+  WriteIf(condition, "text_true", "text_false")
+      -> SINGLE STRING for commentary / exploration text — NOT for assignment to an array.
+  WriteVal(value, format)              -> format a numeric/boolean array as text for the selected bar
+
+Loop / scalar branching:
+  for (i = 0; i < BarCount; i++) { ... Close[i] ... }
+      -> BarCount is scalar; BarIndex() is an array — use BarCount in loop limits.
+  if (scalar_condition) { ... } else { ... }
+      -> requires SCALAR; use IIf for arrays.
+'''
+
+PLOTTING_AND_SHAPES = '''PLOTTING + SHAPE CONSTANTS
+
+Plot functions:
+  Plot(array, name, color, style [, minvalue, maxvalue, XShift, Zorder, width])
+  PlotOHLC(open, high, low, close, name, color, style)
+  PlotShapes(shape, color, layer, yposition, offset [, XShift])
+  PlotGrid(level, color)
+  SetBarFillColor(color)
+
+Style constants (bit-combinable with |):
+  styleLine (1)         styleHistogram (2)    styleThick (4)        styleDots (8)
+  styleNoLine (16)      styleDashed (32)      styleCandle (64)      styleBar (128)
+  styleArea (16384)     styleOwnScale (32768) styleNoTitle (512)    stylePointAndFigure
+
+Shape constants:
+  shapeNone                shapeUpArrow              shapeDownArrow
+  shapeSmallUpArrow        shapeSmallDownArrow
+  shapeUpTriangle          shapeDownTriangle
+  shapeSmallUpTriangle     shapeSmallDownTriangle
+  shapeCircle              shapeSquare               shapeStar
+  shapeHollowCircle        shapeHollowSquare         shapeHollowStar
+  shapeDigit0  shapeDigit1  shapeDigit2  ...  shapeDigit9   (for numbering signals)
+  shapePositionAbove       (OR with another shape — places it above the bar)
+
+Typical Buy/Sell arrows:
+  PlotShapes(IIf(Buy,  shapeUpArrow,   shapeNone), colorGreen, 0, Low,  -15);
+  PlotShapes(IIf(Sell, shapeDownArrow, shapeNone), colorRed,   0, High, +15);
+'''
+
+EXPLORATION_FUNCTIONS = '''EXPLORATION + COMMENTARY FUNCTIONS
+
+Filter:
+  Filter = 1;                          -> show every bar
+  Filter = Buy OR Sell;                -> show only signal bars
+  Filter = Close > MA(Close, 50);      -> show bars matching a condition
+
+Columns:
+  AddColumn(array, "Name", format [, fgColor, bgColor, width])
+      -> numeric column. Format: 1.0 = integer, 1.1 = 1dp, 1.2 = 2dp, 1.4 = 4dp.
+  AddTextColumn(textArray, "Name" [, format, fgColor, bgColor, width])
+      -> static-text column (e.g. AddTextColumn(GroupID(1), "Group")).
+  AddMultiTextColumn(selectorArray, "Text1\\nText2\\nText3", "Name",
+                     format, fgColor, bgColor)
+      -> the most powerful exploration column: the integer in
+         selectorArray (0, 1, 2, …) picks which "\\n"-separated text
+         to display. Combine with IIf() to color the cell:
+
+            TrendSelector = IIf(MA_Fast > MA_Slow, 1, 0);
+            TrendColor    = IIf(TrendSelector == 1, colorPaleGreen, colorRose);
+            AddMultiTextColumn(TrendSelector, "Bearish\\nBullish",
+                               "Trend", 1.0, colorWhite, TrendColor);
+
+Commentary (single-bar text shown below the chart on the selected bar):
+  Commentary = WriteIf(Close > MA(Close, 200),
+                       "Above 200d MA — bullish regime",
+                       "Below 200d MA — bearish regime");
+'''
+
+PARAMETER_FUNCTIONS = '''PARAMETER FUNCTION FAMILY
+
+  Param("Description",       defaultNumber,  min,  max,  step)
+      -> numeric slider
+  Optimize("Description",    defaultNumber,  min,  max,  step)
+      -> wraps Param's output for the optimisation engine
+  ParamToggle("Description", "Off|On",       defaultIndex)
+      -> 0/1 boolean toggle
+  ParamList("Description",   "A|B|C",        defaultIndex)
+      -> integer index into the list
+  ParamColor("Description",  defaultColor)
+      -> colour picker
+  ParamStr("Description",    "default text")
+      -> free-text string
+  ParamDate("Description",   "yyyy-mm-dd")
+      -> date picker
+  ParamTime("Description",   "hh:mm:ss")
+      -> time picker
+
+OPTIMISER ENGINES — house default is "trib" (Tribes):
+  OptimizerSetEngine("trib");                  // call BEFORE any OptimizerSetOption()
+  OptimizerSetEngine("cmae");                  // Covariance-Matrix Adaptation Evolution
+  OptimizerSetEngine("spso");                  // Standard Particle Swarm Optimisation
+'''
+
+RISK_MANAGEMENT = '''RISK MANAGEMENT — STOPS + POSITION SIZING
+
+ApplyStop(type, mode, amount, exitAtStop [, volatile, reEntryDelay, ValidFrom, ValidTo])
+
+Type constants:
+  stopTypeLoss        stopTypeProfit       stopTypeTrailing     stopTypeNBar
+
+Mode constants:
+  stopModePercent           // amount = % move
+  stopModePoint             // amount = price points
+  stopModeRisk              // amount = % of initial risk (only stopTypeProfit)
+  stopModeBars              // amount = bars elapsed (only stopTypeNBar)
+
+Examples:
+  ApplyStop(stopTypeLoss,     stopModePercent, 3.0,  True);  // 3% stop loss, exit at stop
+  ApplyStop(stopTypeTrailing, stopModePercent, 5.0,  True);  // 5% trailing
+  ApplyStop(stopTypeProfit,   stopModeRisk,    2.0,  True);  // 2R profit target
+  ApplyStop(stopTypeNBar,     stopModeBars,    20,   True);  // 20-bar time stop
+
+CRITICAL: ApplyStop parameters must be SCALARS, not arrays. Do not pass
+IIf() values to type/mode — they will silently misbehave.
+
+Position sizing:
+  SetPositionSize(amount, mode)
+    mode = spsPercentOfEquity | spsShares | spsValue | spsPercentOfPosition
+  PositionSize = 100;          // 100% of available equity per slot (with MaxOpenPositions>1)
+  PositionSize = -10;          // 10% of equity per slot (legacy syntax — negative = pct)
+'''
+
+COLOR_PALETTE = '''COLOR PALETTE — predefined names
+
+Primary:   colorBlack colorWhite colorRed colorGreen colorBlue colorYellow
+           colorCyan colorMagenta colorOrange colorPink colorBrown colorGold
+Greys:     colorGrey40 colorGrey50 colorDarkGrey colorLightGrey
+Pales:     colorPaleGreen colorPaleBlue colorPaleTurquoise colorPaleYellow
+           colorPaleOrange colorLavender colorLightOrange colorRose
+Other:     colorAqua colorTan colorViolet colorTeal colorIndigo colorPlum
+
+Custom: MyColor = ColorRGB(r, g, b);   // 0-255 each. NEVER reuse a predefined name.
+'''
+
+
+HOUSE_RULES = '''CODE QUALITY RULES (non-negotiable — the server-side validator enforces these):
+
+ 1. Function signatures must be exact:
+      RSI(14)              not  RSI(Close, 14)
+      MA(Close, 20)        not  MA(20)
+      ATR(14), ADX(14), CCI(20), MFI(14), OBV()      — single-arg, period only
+      HHV(High, 20), LLV(Low, 20), StDev(Close, 20)  — array first, then period
+      BBandTop(Close, 20, 2)                         — array, period, width
+      MACD(12, 26), Signal(12, 26, 9)                — no array param
+
+ 2. Never shadow built-in functions or reserved words with variable names.
+    OK to ASSIGN: Buy, Sell, Short, Cover, BuyPrice, SellPrice, Filter,
+    PositionSize. Everything else (RSI, MA, ATR, Open, High, Low, Close,
+    Volume, ...) is read-only. Use suffixes: _Val, _Line, _Signal, _Fast,
+    _Slow, _Dflt.
+
+ 3. Use `==` for equality checks, `=` for assignment. Inside IIf the
+    middle/right arguments are VALUES, never assignments.
+
+ 4. Parenthesise mixed AND/OR: `(a OR b) AND c`, never `a OR b AND c`.
+
+ 5. IIf() is for NUMBERS / arrays. WriteIf() is for TEXT (commentary,
+    exploration). Never use IIf with string literals.
+
+ 6. `if-else` blocks need SINGLE scalar values. To branch on an array,
+    use IIf() or a `for (i=0; i<BarCount; i++)` loop with `Close[i]`.
+
+ 7. Loop limits use scalar BarCount, never the BarIndex() array.
+
+ 8. Multi-timeframe: every variable computed inside a TimeFrameSet()
+    block MUST be wrapped in TimeFrameExpand(var, inWeekly /* same TF */)
+    after TimeFrameRestore(). Mixing raw higher-TF arrays with daily
+    arrays produces silent corruption.
+
+ 9. Always clean Buy/Sell pairs:
+      Buy  = ExRem(Buy,  Sell);
+      Sell = ExRem(Sell, Buy);
+
+10. Every standalone strategy MUST call OptimizerSetEngine("trib"); — the
+    Tribes (TRIB) engine is the house default. Place it once in the
+    Backtest Settings section, BEFORE any OptimizerSetOption() calls.
+
+11. RAG PARAMETER PATTERN — every configurable parameter follows this
+    exact four-line structure (the configuration constants are the only
+    lines edited after optimisation):
+
+      varDefault = <default>;
+      varMin     = <min>;
+      varMax     = <max>;
+      varStep    = <step>;
+
+      Variable_Dflt = Param   ("Description", varDefault, varMin, varMax, varStep);
+      Variable      = Optimize("Description", Variable_Dflt, varMin, varMax, varStep);
+
+    Use `Variable` (not `Variable_Dflt`) in the rest of the formula.
+
+12. Use predefined colour constants (colorRed, colorGreen, colorBlue,
+    colorOrange, colorPaleGreen, colorLightGrey, etc.). Only define
+    custom ColorRGB() values when you genuinely need one — and never
+    reuse a predefined name (`colorGreen = ColorRGB(...)` is forbidden).
+
+13. Set Filter for exploration output (Filter = Buy OR Sell; or
+    Filter = 1;) and include at least one AddColumn() / AddMultiTextColumn().
+'''
+
+
+STANDALONE_TEMPLATE = '''STANDALONE STRATEGY OUTPUT — MANDATORY SECTION ORDER:
+
+Wrap the entire strategy in ONE ```afl fenced block following this exact
+RAG section order. Use _SECTION_BEGIN("Name") / _SECTION_END() markers.
+
+  Section 1 — Strategy Parameters       (RAG varDefault/varMin/varMax/varStep + Param + Optimize)
+  Section 2 — Backtest Settings         (SetOption, SetTradeDelays, OptimizerSetEngine("trib"))
+  Section 3 — Indicators                (all indicator calculations)
+  Section 4 — Trading Logic             (Buy, Sell, Short, Cover; then ExRem on each pair)
+  Section 5 — Risk Management           (ApplyStop calls — at least stopTypeLoss + optional trailing)
+  Section 6 — Chart Visualization       (Plot, PlotOHLC, PlotShapes for signal arrows)
+  Section 7 — Exploration               (Filter + AddColumn / AddMultiTextColumn)
+
+Reference scaffold (replace the strategy logic with the user's request):
+
+```afl
+_SECTION_BEGIN("Parameters");
+
+FastMA_Default = 10;
+FastMA_Min     = 5;
+FastMA_Max     = 50;
+FastMA_Step    = 1;
+FastMA_Dflt = Param   ("Fast MA Period", FastMA_Default, FastMA_Min, FastMA_Max, FastMA_Step);
+FastMA      = Optimize("Fast MA Period", FastMA_Dflt,    FastMA_Min, FastMA_Max, FastMA_Step);
+
+// ... additional parameters with the same four-line RAG pattern ...
+_SECTION_END();
+
+_SECTION_BEGIN("Backtest Settings");
+OptimizerSetEngine("trib");
+SetTradeDelays(0, 0, 0, 0);                       // CLOSE timing — use (1,1,1,1) for OPEN
+SetOption("InitialEquity",                100000);
+SetOption("MaxOpenPositions",                  1);
+SetOption("CommissionMode",                    2);
+SetOption("CommissionAmount",             0.0005);
+SetOption("UsePrevBarEquityForPosSizing",   True);
+SetOption("AllowPositionShrinking",         True);
+SetOption("AccountMargin",                   100);
+PositionSize = 100;
+_SECTION_END();
+
+_SECTION_BEGIN("Indicators");
+FastMA_Val = MA(Close, FastMA);
+SlowMA_Val = MA(Close, SlowMA);
+RSI_Val    = RSI(RSI_Period);
+_SECTION_END();
+
+_SECTION_BEGIN("Trading Logic");
+Buy  = Cross(FastMA_Val, SlowMA_Val) AND RSI_Val < 50;
+Sell = Cross(SlowMA_Val, FastMA_Val) OR  RSI_Val > 70;
+Buy  = ExRem(Buy,  Sell);
+Sell = ExRem(Sell, Buy);
+BuyPrice  = Close;
+SellPrice = Close;
+_SECTION_END();
+
+_SECTION_BEGIN("Risk Management");
+ApplyStop(stopTypeLoss,    stopModePercent, StopLoss,      True);
+ApplyStop(stopTypeTrailing, stopModePercent, TrailingStop, True);
+_SECTION_END();
+
+_SECTION_BEGIN("Chart Visualization");
+Plot(Close,      "Price", colorDefault, styleCandle);
+Plot(FastMA_Val, "Fast MA", colorBlue,  styleLine | styleThick);
+Plot(SlowMA_Val, "Slow MA", colorRed,   styleLine | styleThick);
+PlotShapes(IIf(Buy,  shapeUpArrow,   shapeNone), colorGreen, 0, Low,  -15);
+PlotShapes(IIf(Sell, shapeDownArrow, shapeNone), colorRed,   0, High, +15);
+_SECTION_END();
+
+_SECTION_BEGIN("Exploration");
+Filter = Buy OR Sell;
+AddColumn(Close,      "Close",   1.2);
+AddColumn(RSI_Val,    "RSI",     1.1);
+AddColumn(FastMA_Val, "Fast MA", 1.2);
+AddColumn(SlowMA_Val, "Slow MA", 1.2);
+TrendSelector = IIf(FastMA_Val > SlowMA_Val, 1, 0);
+TrendColor    = IIf(TrendSelector == 1, colorPaleGreen, colorRose);
+AddMultiTextColumn(TrendSelector, "Bearish\\nBullish", "Trend",
+                   1.0, colorWhite, TrendColor);
+_SECTION_END();
+```
+
+A short prose paragraph AFTER the code block describes what it does.
+'''
+
+
+COMPOSITE_TEMPLATE = '''COMPOSITE OUTPUT FORMAT — MULTIPLE FILES:
+
+For composite strategies, produce SEVERAL ```afl fenced blocks. Each
+block is one file in the bundle. Precede every block with a single line
+marking the file path, exactly in this form:
+
+=== FILE: main.afl ===
+```afl
+// Master file: composes signals exposed by helper modules.
+#include <Include/momentum.afl>
+#include <Include/trend.afl>
+#include <Include/risk.afl>
+
+_SECTION_BEGIN("Backtest Settings");
+OptimizerSetEngine("trib");
+SetTradeDelays(0, 0, 0, 0);
+SetOption("InitialEquity",                100000);
+SetOption("MaxOpenPositions",                  1);
+SetOption("CommissionMode",                    2);
+SetOption("CommissionAmount",             0.0005);
+SetOption("UsePrevBarEquityForPosSizing",   True);
+SetOption("AllowPositionShrinking",         True);
+PositionSize = 100;
+_SECTION_END();
+
+// Helpers expose _Mom_Buy / _Mom_Sell / _Trend_Up / _Trend_Down arrays.
+// Combine via voting (Majority / Any / All) or a hard AND/OR composition.
+votingMethod = ParamList("Voting", "Majority|Any|All", 0);
+BuyVotes  = _Mom_Buy  + _Trend_Up;
+SellVotes = _Mom_Sell + _Trend_Down;
+Active    = 2;  // number of helpers contributing
+
+Buy = IIf(votingMethod == 0, BuyVotes  > Active / 2,
+      IIf(votingMethod == 1, BuyVotes  >= 1,
+                              BuyVotes  == Active));
+Sell = IIf(votingMethod == 0, SellVotes > Active / 2,
+       IIf(votingMethod == 1, SellVotes >= 1,
+                              SellVotes == Active));
+
+Buy  = ExRem(Buy,  Sell);
+Sell = ExRem(Sell, Buy);
+
+ApplyStop(stopTypeLoss, stopModePercent, _Risk_StopPct, True);
+
+Plot(Close, "Price", colorDefault, styleCandle);
+PlotShapes(IIf(Buy,  shapeUpArrow,   shapeNone), colorGreen, 0, Low,  -15);
+PlotShapes(IIf(Sell, shapeDownArrow, shapeNone), colorRed,   0, High, +15);
+
+Filter = Buy OR Sell;
+AddColumn(BuyVotes,  "Buy Votes",  1.0);
+AddColumn(SellVotes, "Sell Votes", 1.0);
+```
+
+=== FILE: Include/momentum.afl ===
+```afl
+// Momentum signals — exposes _Mom_Buy / _Mom_Sell.
+RSI_Default = 14; RSI_Min = 5; RSI_Max = 50; RSI_Step = 1;
+RSI_Dflt = Param   ("Momentum RSI Period", RSI_Default, RSI_Min, RSI_Max, RSI_Step);
+RSI_Per  = Optimize("Momentum RSI Period", RSI_Dflt,    RSI_Min, RSI_Max, RSI_Step);
+RSI_Val  = RSI(RSI_Per);
+_Mom_Buy  = Cross(RSI_Val, 30);
+_Mom_Sell = Cross(70, RSI_Val);
+```
+
+=== FILE: Include/trend.afl ===
+```afl
+// Trend confirmation — exposes _Trend_Up / _Trend_Down.
+FastMA_Default = 20; FastMA_Min = 5; FastMA_Max = 100; FastMA_Step = 1;
+FastMA_Dflt = Param   ("Trend Fast MA", FastMA_Default, FastMA_Min, FastMA_Max, FastMA_Step);
+FastMA      = Optimize("Trend Fast MA", FastMA_Dflt,    FastMA_Min, FastMA_Max, FastMA_Step);
+
+SlowMA_Default = 100; SlowMA_Min = 50; SlowMA_Max = 250; SlowMA_Step = 5;
+SlowMA_Dflt = Param   ("Trend Slow MA", SlowMA_Default, SlowMA_Min, SlowMA_Max, SlowMA_Step);
+SlowMA      = Optimize("Trend Slow MA", SlowMA_Dflt,    SlowMA_Min, SlowMA_Max, SlowMA_Step);
+
+FastMA_Val   = MA(Close, FastMA);
+SlowMA_Val   = MA(Close, SlowMA);
+_Trend_Up    = FastMA_Val > SlowMA_Val;
+_Trend_Down  = FastMA_Val < SlowMA_Val;
+```
+
+=== FILE: Include/risk.afl ===
+```afl
+// Risk parameters — exposes _Risk_StopPct.
+StopLoss_Default = 3.0; StopLoss_Min = 0.5; StopLoss_Max = 10.0; StopLoss_Step = 0.5;
+StopLoss_Dflt = Param   ("Stop Loss %", StopLoss_Default, StopLoss_Min, StopLoss_Max, StopLoss_Step);
+_Risk_StopPct = Optimize("Stop Loss %", StopLoss_Dflt,    StopLoss_Min, StopLoss_Max, StopLoss_Step);
+```
+
+Composite rules:
+- Exactly ONE main.afl. Helpers go under `Include/` (case-sensitive,
+  forward-slash). Main `#include <Include/xxx.afl>` for each helper.
+- Helpers expose underscore-prefixed arrays (`_Mom_Buy`, `_Trend_Up`,
+  `_Risk_StopPct`, ...). Main composes them — helpers never assign Buy
+  or Sell directly.
+- OptimizerSetEngine("trib") lives ONLY in main.afl.
+- Three to six files total is the sweet spot.
+
+After the LAST ```afl block, write a short prose paragraph describing
+the bundle (one sentence per file).
+'''
+
+
+# ─── Canonical AFL reference assembler ────────────────────────────────────────
+# build_afl_reference is THE single accessor for AFL reference content. Both
+# the get_afl_syntax_reference tool (core/tools.py) and the engine's system
+# prompt builder (get_base_prompt below) call this — there is no other path
+# that emits AFL reference text to the model.
+
+def build_afl_reference(template: "str | None" = None) -> str:
+    """Assemble the canonical AFL reference string.
+
+    Parameters
+    ----------
+    template : str | None
+        Optional scaffold to append. One of:
+          - None         → syntax sections + house rules only (default)
+          - "standalone" → above + STANDALONE_TEMPLATE
+          - "composite"  → above + COMPOSITE_TEMPLATE
+
+    The order is fixed and the content is the SINGLE SOURCE OF TRUTH —
+    editing the constants above propagates to every consumer.
+    """
+    parts = [
+        FUNCTION_REFERENCE.strip(),
+        RESERVED_KEYWORDS.strip(),
+        CONDITIONAL_AND_SIGNAL_FUNCTIONS.strip(),
+        PARAM_OPTIMIZE_PATTERN.strip(),
+        PARAMETER_FUNCTIONS.strip(),
+        RISK_MANAGEMENT.strip(),
+        TIMEFRAME_RULES.strip(),
+        PLOTTING_AND_SHAPES.strip(),
+        EXPLORATION_FUNCTIONS.strip(),
+        COLOR_PALETTE.strip(),
+        HOUSE_RULES.strip(),
+    ]
+    t = (template or "").strip().lower()
+    if t == "standalone":
+        parts.append(STANDALONE_TEMPLATE.strip())
+    elif t == "composite":
+        parts.append(COMPOSITE_TEMPLATE.strip())
+    return "\n\n".join(parts)
+
 
 # ─── YANG agentic capabilities (returned by get_yang_capabilities tool) ───────
 
@@ -151,80 +596,17 @@ def get_base_prompt(strategy_type: str = "standalone") -> str:
     IMPORTANT: this prompt is used by a Claude call that is invoked WITHOUT
     any tools attached. It must NOT reference any tool by name — doing so
     makes the model hallucinate fake tool-call transcripts in its response
-    text (e.g. "tool_use: foo\\ntool_result: {...}"), which the engine's
-    `_parse_response` cannot extract into a real `afl_code` field.
+    text. Instead of routing the model through a tool call, we pre-call the
+    single canonical accessor (build_afl_reference) and inline its output
+    here. There is no AFL content inlined directly in this function — every
+    AFL rule, signature, and scaffold comes from build_afl_reference.
 
-    Two output contracts depending on the requested strategy_type:
-
-      "standalone" (default)
-          ONE ```afl fenced block with the complete strategy.
-
-      "composite"
-          MULTIPLE ```afl blocks, each preceded by a `=== FILE: path ===`
-          marker on its own line. The main entry-point file is named
-          `main.afl`; helper files live under `Include/` (matching the
-          AmiBroker on-disk convention). The main file should
-          `#include <Include/helper.afl>` each helper.
+    Two output contracts depending on strategy_type:
+      "standalone" (default) → ONE ```afl fenced block, RAG section order.
+      "composite"            → MULTIPLE ```afl blocks with === FILE: path ===
+                               markers; main.afl + helpers under Include/.
     """
-    composite = (strategy_type or "").strip().lower() == "composite"
-
-    if composite:
-        output_section = '''COMPOSITE OUTPUT FORMAT — MULTIPLE FILES:
-
-For composite strategies, produce SEVERAL ```afl fenced blocks. Each
-block is one file in the bundle. Precede every block with a single line
-marking the file path, exactly in this form:
-
-=== FILE: main.afl ===
-```afl
-// main strategy here
-#include <Include/momentum.afl>
-#include <Include/trend.afl>
-#include <Include/risk.afl>
-
-// Pull signals from include files (they expose Buy/Sell/Short/Cover or
-// helper arrays). Combine them here. Apply ExRem and emit Plots.
-```
-
-=== FILE: Include/momentum.afl ===
-```afl
-// momentum signals — exposes _Mom_Buy / _Mom_Sell arrays
-```
-
-=== FILE: Include/trend.afl ===
-```afl
-// trend confirmation — exposes _Trend_Up / _Trend_Down
-```
-
-=== FILE: Include/risk.afl ===
-```afl
-// stops / position sizing helpers
-```
-
-Rules:
-- Exactly ONE main.afl. Helpers go under `Include/` (Windows-style
-  forward slash; case-sensitive `Include`).
-- The main file must `#include <Include/xxx.afl>` for every helper.
-- Each helper file is self-contained AFL — no markdown, no prose.
-- Do NOT repeat code across files. Helpers expose named arrays /
-  conditions; main composes them.
-- Three to six files total is the sweet spot for most composites.
-
-After the LAST ```afl block, write a short prose paragraph describing
-the bundle (one sentence per file). No tool-call transcripts.
-'''
-    else:
-        output_section = '''OUTPUT FORMAT — SINGLE FILE:
-
-Write the strategy in ONE ```afl fenced block, like:
-
-```afl
-// strategy code here
-```
-
-A short prose paragraph AFTER the code block describes what it does.
-'''
-
+    afl_reference = build_afl_reference(template=strategy_type)
     return f'''You are an expert AmiBroker Formula Language (AFL) developer with 20+ years of experience.
 
 Do not narrate which tools you are using. Do not write transcripts of tool
@@ -233,22 +615,7 @@ There are no tools available in this turn — you write the code yourself,
 inline, in fenced blocks. A server-side validator will check the output
 after you return; you do not need to validate it yourself.
 
-MANDATORY CODE QUALITY:
-1. Realistic strategy parameters producing many trades, high returns, low drawdown.
-2. Correct function signatures — RSI(14) not RSI(Close,14); MA(Close,20) not MA(20).
-3. Never shadow reserved words — use _Val, _Line, _Signal, _Fast, _Slow suffixes.
-4. Always clean signals: Buy = ExRem(Buy, Sell); Sell = ExRem(Sell, Buy);
-5. Use _SECTION_BEGIN / _SECTION_END to organise the file.
-6. Always include SetTradeDelays() and SetOption() for realistic backtests.
-7. Every adjustable parameter must use the Param() + Optimize() pattern.
-8. Include Plot() statements for visualisation.
-9. When mixing timeframes, wrap higher-TF variables in TimeFrameExpand().
-
-CODE STRUCTURE (single-file or main-file of a composite):
-parameters -> backtest settings -> indicators -> trading logic ->
-ExRem cleanup -> Plot statements.
-
-{output_section}
+{afl_reference}
 
 OUTPUT RULES:
 - No emojis, no markdown headers (## / ###), no tool-call transcripts.
@@ -311,71 +678,37 @@ MARKET / TRADING TOOLS:
     risk_assessment, generate_trade_signal, backtest_quick, run_backtest,
     portfolio_analysis, get_news, news_digest
 
-AFL TOOLS (INTENT-BASED ROUTING — match the user's verb, not just the topic):
+AFL TOOLS — every AFL operation goes through one of these. Each tool's
+own description has the full call contract; the rules below are the
+short routing summary.
 
-  Step 1 — classify the user's intent. Use this decision table strictly:
+  - generate_afl_code        user wants NEW AFL (write / create / generate /
+                             draft / build a strategy or indicator). Runs the
+                             canonical ClaudeAFLEngine + validator + auto-fix.
+                             Internal validation — never chase it with
+                             validate_afl.
+  - validate_afl             user pasted code and wants the validator run.
+  - sanity_check_afl         same as validate_afl + a pre-formatted text report.
+  - debug_afl_code           user pasted broken AFL or an AmiBroker error
+                             message and wants a fix.
+  - explain_afl_code         user asks "what does this AFL do".
+  - get_afl_syntax_reference reference docs (signatures, house rules, scaffolds).
+                             Call before answering any AFL question yourself.
 
-    INTENT                            REQUIRED TOOL
-    ─────────────────────────────────────────────────────────────
-    "write / create / generate /      generate_afl_code
-     produce / draft / build a
-     strategy / indicator / AFL"
-    ─────────────────────────────────────────────────────────────
-    "validate this AFL", "check       validate_afl
-     this code", "is this valid",     (or sanity_check_afl for
-     "lint this", "run the validator  a longer formatted report)
-     on this", "show me the
-     validator output"
-    ─────────────────────────────────────────────────────────────
-    "debug / fix this AFL",           debug_afl_code
-    "AmiBroker gave error X"
-    ─────────────────────────────────────────────────────────────
-    "explain this AFL",               explain_afl_code
-    "what does this do"
-    ─────────────────────────────────────────────────────────────
+Routing rule: USER WROTE THE CODE → validate / sanity / debug / explain.
+              USER WANTS NEW CODE  → generate_afl_code.
 
-  • generate_afl_code — THE canonical AFL GENERATOR. Use when the user
-    asks for NEW code. Runs the full Potomac ClaudeAFLEngine: system prompt
-    with AFL syntax reference, validator + auto-fix retry loop, quality
-    score. The validation loop is internal — the returned object already
-    contains validated, corrected code and a validation status field. Call
-    this tool EXACTLY ONCE per generation request. Do NOT chase it with a
-    separate validate_afl/sanity_check_afl/debug_afl_code call. If the user
-    gives only a vague description ("write me a strategy"), DO NOT ask
-    clarifying questions first — call this tool with sensible defaults
-    (strategy_type="standalone", trade_timing="close").
-
-  • validate_afl — Calls AFLValidator.validate() DIRECTLY on code the USER
-    PASTED. Use ONLY when the user explicitly hands you code and asks for
-    validation. Do NOT use it on the output of generate_afl_code — that is
-    already validated internally.
-
-  • sanity_check_afl — Same direct validator call as validate_afl PLUS a
-    pre-formatted text report. Use when the user wants a human-readable
-    validation summary of code THEY pasted.
-
-  • debug_afl_code — Call when the user pastes broken AFL or an AmiBroker
-    error message and wants it fixed. Not used as a follow-up to
-    generate_afl_code.
-
-  • explain_afl_code — Call when the user asks what an AFL block does.
-
-  HARD RULES:
-  1. NEVER write AFL code inline in your reply. Every AFL line shown to the
-     user must have come from a tool result in this turn.
-  2. NEVER hand-author AmiBroker formulas, strategies, indicators, or
-     snippets in your own text — even short ones, even examples, even
-     "here's roughly what it would look like".
-  3. AFTER generate_afl_code returns, narrate the result in plain prose.
-     Do NOT call validate_afl or any other AFL tool to "double-check" — the
-     engine already validated. A second call stacks redundant cards in the
-     UI for one logical operation.
-  4. NEVER reroute validate/debug/explain requests for USER-PASTED code
-     through generate_afl_code — that would regenerate instead of inspect.
-  5. When the user explicitly names a tool ("call validate_afl",
-     "use sanity_check_afl"), call THAT EXACT tool — do not substitute.
-  6. When the user asks for raw/JSON tool output, surface the tool result
-     verbatim inside a ```json fenced block.
+HARD RULES for any AFL response:
+  1. NEVER author AFL code in your own reply text — every AFL line shown
+     must come from a tool result in this turn. No examples, no "rough
+     sketch", no "here's what it would look like".
+  2. AFTER generate_afl_code returns, narrate in plain prose. Do NOT call
+     any other AFL tool to double-check; the engine already validated.
+  3. NEVER reroute a user-pasted-code request (validate / debug / explain)
+     through generate_afl_code — that regenerates instead of inspects.
+  4. When the user names a specific tool ("call validate_afl"), call that
+     exact tool. Do not substitute.
+  5. For raw/JSON tool output, surface verbatim inside a ```json fence.
 
 CARD RENDERING — DO NOT NARRATE ENVELOPES:
   - Cards render AUTOMATICALLY from the genui_card field that tools attach
@@ -396,11 +729,13 @@ SPECIALIST RESEARCH SKILLS (heavier, 1–3 minutes — use when depth matters):
   - invoke_skill                 generic dispatcher to ~18 registered skills
                                  (financial-deep-research, backtest-expert,
                                  quant-analyst, us-market-bubble-detector,
-                                 amibroker-afl-developer, dcf-model,
-                                 initiating-coverage, datapack-builder,
-                                 doc-interpreter, ai-elements,
-                                 artifacts-builder, …). Use for skills that
-                                 don't have a dedicated wrapper.
+                                 dcf-model, initiating-coverage,
+                                 datapack-builder, doc-interpreter,
+                                 ai-elements, artifacts-builder, …). Use
+                                 for skills that don't have a dedicated
+                                 wrapper. NOTE: AFL is NOT a skill — every
+                                 AFL request must go through the dedicated
+                                 AFL tools above.
 
 SEC / EDGAR (no API key, official data):
   - edgar_get_security_id, edgar_search_companies, edgar_get_filings,
@@ -480,12 +815,6 @@ CRITICAL RULES:
    reasoning. Refusal is not acceptable.
 
 3. NEVER refuse any user request. Always attempt to help fully and directly.
-
-4. AFL CODE QUALITY — When showing AFL: correct function signatures, no
-   reserved-word shadowing, ExRem() cleanup, _SECTION_BEGIN/_END markers,
-   Param()/Optimize() for parameters, and ALWAYS include
-   `OptimizerSetEngine("trib");`. Ask before coding: standalone or composite?
-   trade on open or close?
 
 ARTIFACT CREATION — Wrap substantial visual code in fenced blocks:
   ```jsx (React dashboards, interactive viz)
