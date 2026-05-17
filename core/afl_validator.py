@@ -996,6 +996,7 @@ class AFLValidator:
         # Phase 1: Syntax-level checks
         self._check_brackets(code, lines, issues)
         self._check_escape_sequences(clean, lines, issues)
+        self._check_unary_plus(clean, lines, issues)
         self._check_preprocessor(clean, lines, issues)
 
         # Phase 2: Collect definitions
@@ -1219,6 +1220,62 @@ class AFLValidator:
                 issues.append(Issue(ln, 0, Severity.ERROR,
                     "String", f"[ERROR_54] Incorrect escape sequence '\\{esc[1]}'",
                     "Only \\n, \\r, \\t, \\\\, \\\" are supported"))
+
+    def _check_unary_plus(self, clean: str, lines: List[str], issues: List[Issue]):
+        """Detect unary '+' on numeric literals — AmiBroker rejects this with Error 30.
+
+        Examples flagged:
+            PlotShapes(... , 0, High, +15);    // arg position
+            Ref(Close, +1);                    // arg position
+            a = +15;                           // assignment RHS
+            if (x == +1) ...                   // comparison RHS
+        Examples NOT flagged (binary plus is legal):
+            a + 15        f() + 1        High + 0.5
+        """
+        # Strip string literals so a literal '+' inside "..." can't false-positive.
+        no_strings = re.sub(r'"([^"\\]|\\.)*"', lambda m: '"' + ' ' * (len(m.group(0)) - 2) + '"', clean)
+
+        # Reportable preceding-context characters: whitespace-stripped char must be one of these.
+        UNARY_CONTEXT = set(",(=<>!?[{;:&|\n")
+
+        seen_lines: Set[int] = set()
+        for m in re.finditer(r'\+\s*\d', no_strings):
+            idx = m.start()
+            # Walk back over whitespace to find the prior non-space char.
+            j = idx - 1
+            while j >= 0 and no_strings[j] in ' \t':
+                j -= 1
+            if j < 0:
+                prev = '\n'
+            else:
+                prev = no_strings[j]
+
+            is_unary = prev in UNARY_CONTEXT
+
+            # Also flag when '+' follows a keyword like 'return' or 'else'.
+            if not is_unary and j >= 0:
+                kw_match = re.search(r'\b(return|else|then)\s*$', no_strings[:idx])
+                if kw_match:
+                    is_unary = True
+
+            if not is_unary:
+                continue
+
+            ln = no_strings[:idx].count('\n') + 1
+            if ln in seen_lines:
+                continue
+            seen_lines.add(ln)
+
+            # Pull the offending token for the message.
+            tok_m = re.match(r'\+\s*(\d[\d.]*)', no_strings[idx:])
+            tok = tok_m.group(0) if tok_m else '+N'
+            num = tok_m.group(1) if tok_m else 'N'
+            issues.append(Issue(
+                ln, 0, Severity.ERROR,
+                "Syntax",
+                f"[ERROR_30] Unary '+' on numeric literal '{tok}' — AmiBroker rejects this with Syntax error, unexpected '+'",
+                f"Drop the '+' sign. Positive numbers carry no sign; write `{num}` instead of `{tok}`. Only negative numbers carry '-'.",
+            ))
 
     def _check_preprocessor(self, clean: str, lines: List[str], issues: List[Issue]):
         for m in re.finditer(r'#include\s+"([^"]+)"', clean):

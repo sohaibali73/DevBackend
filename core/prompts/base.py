@@ -128,7 +128,7 @@ FORBIDDEN shape names (do NOT emit — they look right but don't exist):
 
 Typical Buy/Sell arrows:
   PlotShapes(IIf(Buy,  shapeUpArrow,   shapeNone), colorGreen, 0, Low,  -15);
-  PlotShapes(IIf(Sell, shapeDownArrow, shapeNone), colorRed,   0, High, +15);
+  PlotShapes(IIf(Sell, shapeDownArrow, shapeNone), colorRed,   0, High, 15);
 '''
 
 EXPLORATION_FUNCTIONS = '''EXPLORATION + COMMENTARY FUNCTIONS
@@ -322,6 +322,18 @@ HOUSE_RULES = '''CODE QUALITY RULES (non-negotiable — the server-side validato
 
 13. Set Filter for exploration output (Filter = Buy OR Sell; or
     Filter = 1;) and include at least one AddColumn() / AddMultiTextColumn().
+
+14. NUMERIC LITERALS — AFL does NOT accept a unary `+` prefix on numbers.
+    Positive numbers are written WITHOUT any sign; only negative numbers
+    carry the `-`. Writing `+15`, `+1.5`, `+0.05` triggers AmiBroker
+    `Error 30: Syntax error, unexpected '+'`. Examples:
+        PlotShapes(... , 0, High, 15);      // correct — positive offset
+        PlotShapes(... , 0, Low,  -15);     // correct — negative offset
+        PlotShapes(... , 0, High, +15);     // WRONG — Error 30
+    The rule applies everywhere a number appears: PlotShapes offsets,
+    Ref() lookbacks (use Ref(Close, -1), never Ref(Close, +1)), function
+    arguments, comparisons, assignments. If the value is positive, omit
+    the sign.
 '''
 
 
@@ -391,7 +403,7 @@ Plot(Close,      "Price", colorBlack, styleCandle);
 Plot(FastMA_Val, "Fast MA", colorBlue,  styleLine | styleThick);
 Plot(SlowMA_Val, "Slow MA", colorRed,   styleLine | styleThick);
 PlotShapes(IIf(Buy,  shapeUpArrow,   shapeNone), colorGreen, 0, Low,  -15);
-PlotShapes(IIf(Sell, shapeDownArrow, shapeNone), colorRed,   0, High, +15);
+PlotShapes(IIf(Sell, shapeDownArrow, shapeNone), colorRed,   0, High, 15);
 _SECTION_END();
 
 _SECTION_BEGIN("Exploration");
@@ -457,7 +469,7 @@ ApplyStop(stopTypeLoss, stopModePercent, _Risk_StopPct, True);
 
 Plot(Close, "Price", colorBlack, styleCandle);
 PlotShapes(IIf(Buy,  shapeUpArrow,   shapeNone), colorGreen, 0, Low,  -15);
-PlotShapes(IIf(Sell, shapeDownArrow, shapeNone), colorRed,   0, High, +15);
+PlotShapes(IIf(Sell, shapeDownArrow, shapeNone), colorRed,   0, High, 15);
 
 Filter = Buy OR Sell;
 AddColumn(BuyVotes,  "Buy Votes",  1.0);
