@@ -30,23 +30,23 @@ function buildExtraTemplates(ctx) {
   const chrome = (slide, d, th) => {
     prim.accentBar(slide, { color: th.accent });
     // title
-    const m = tokens.marginH(), mv = tokens.marginV();
-    const logoW = tokens.logoW();
-    const titleBox = { x: m, y: mv, w: engine.W - m * 2 - logoW, h: tokens.titleH() };
+    const m = tokens.marginH, mv = tokens.marginV;
+    const logoW = tokens.logoW;
+    const titleBox = { x: m, y: mv, w: engine.W - m * 2 - logoW, h: tokens.titleH };
     prim.text(slide, String(d.title || '').toUpperCase(), titleBox, {
       fontFace: FONTS.HEADLINE, bold: true, color: th.onBg,
       valign: 'middle', maxPt: 32, minPt: 14,
     });
     // underline
     prim.shape(slide, pres.shapes.RECTANGLE,
-      { x: titleBox.x, y: titleBox.y + titleBox.h, w: titleBox.w * 0.2, h: tokens.ulineH() },
+      { x: titleBox.x, y: titleBox.y + titleBox.h, w: titleBox.w * 0.2, h: tokens.ulineH },
       { fill: { color: th.accent }, line: { color: th.accent, width: 0 } });
     // corner logo
     prim.cornerLogo(slide, 'tr', th.isDark ? 'icon_yellow' : 'full');
     // optional subtitle
     if (d.subtitle) {
       const subBox = { x: m,
-        y: titleBox.y + titleBox.h + tokens.ulineH() + engine.H * 0.005,
+        y: titleBox.y + titleBox.h + tokens.ulineH + engine.H * 0.005,
         w: titleBox.w, h: engine.H * 0.04 };
       prim.text(slide, d.subtitle, subBox, {
         fontFace: FONTS.BODY, italic: true, color: th.muted,
@@ -54,8 +54,8 @@ function buildExtraTemplates(ctx) {
       });
     }
     // content area below chrome
-    const chromeBottom = titleBox.y + titleBox.h + tokens.ulineH()
-      + tokens.titleGap() + (d.subtitle ? engine.H * 0.045 : 0);
+    const chromeBottom = titleBox.y + titleBox.h + tokens.ulineH
+      + tokens.titleGap + (d.subtitle ? engine.H * 0.045 : 0);
     return { x: m, y: chromeBottom, w: engine.W - m * 2, h: engine.H - chromeBottom - mv };
   };
 

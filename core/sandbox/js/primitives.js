@@ -250,7 +250,7 @@ function buildPrimitives({ pres, engine, brand, logos, resolveAsset }) {
    * Left yellow accent bar (standard chrome).
    */
   const accentBar = (slide, { width, color = PALETTE.YELLOW } = {}) => {
-    const w = width !== undefined ? width : tokens.accentBarW();
+    const w = width !== undefined ? width : tokens.accentBarW;
     shape(slide, pres.shapes.RECTANGLE,
       { x: 0, y: 0, w, h: engine.H },
       { fill: { color: hex(color) }, line: { color: hex(color), width: 0 } },
@@ -267,7 +267,7 @@ function buildPrimitives({ pres, engine, brand, logos, resolveAsset }) {
       x: titleBox.x,
       y: titleBox.y + titleBox.h,
       w: titleBox.w * widthFrac,
-      h: tokens.ulineH(),
+      h: tokens.ulineH,
     };
     shape(slide, pres.shapes.RECTANGLE, box,
       { fill: { color: hex(color) }, line: { color: hex(color), width: 0 } });
@@ -357,8 +357,8 @@ function buildPrimitives({ pres, engine, brand, logos, resolveAsset }) {
    * Default top-right logo spot.
    */
   const cornerLogo = (slide, corner = 'tr', variant = 'full') => {
-    const w = tokens.logoW(), h = tokens.logoH();
-    const m = tokens.marginH(), mv = tokens.marginV();
+    const w = tokens.logoW, h = tokens.logoH;
+    const m = tokens.marginH, mv = tokens.marginV;
     let x, y;
     if (corner === 'tr') { x = engine.W - m - w; y = mv; }
     else if (corner === 'tl') { x = m; y = mv; }
@@ -380,10 +380,10 @@ function buildPrimitives({ pres, engine, brand, logos, resolveAsset }) {
     const variant = logoVariant || (isDark ? 'icon_yellow' : 'full');
     cornerLogo(slide, 'tr', variant);
 
-    const m = tokens.marginH(), mv = tokens.marginV();
-    const logoW = tokens.logoW();
+    const m = tokens.marginH, mv = tokens.marginV;
+    const logoW = tokens.logoW;
     const titleW = engine.W - m - m - logoW - m * 0.2;
-    const titleBox = { x: m, y: mv, w: titleW, h: tokens.titleH() };
+    const titleBox = { x: m, y: mv, w: titleW, h: tokens.titleH };
     text(slide, String(title || '').toUpperCase(), titleBox, {
       fontFace: FONTS.HEADLINE, bold: true, color: titleColor,
       valign: 'middle', maxPt: 30, minPt: 14,
@@ -393,7 +393,7 @@ function buildPrimitives({ pres, engine, brand, logos, resolveAsset }) {
     if (subtitle) {
       const subBox = {
         x: m,
-        y: titleBox.y + titleBox.h + tokens.ulineH() + engine.H * 0.005,
+        y: titleBox.y + titleBox.h + tokens.ulineH + engine.H * 0.005,
         w: titleW, h: engine.H * 0.04,
       };
       text(slide, subtitle, subBox, {
@@ -402,8 +402,8 @@ function buildPrimitives({ pres, engine, brand, logos, resolveAsset }) {
       });
     }
     // Return content area below chrome
-    const chromeBottom = titleBox.y + titleBox.h + tokens.ulineH()
-      + tokens.titleGap() + (subtitle ? engine.H * 0.045 : 0);
+    const chromeBottom = titleBox.y + titleBox.h + tokens.ulineH
+      + tokens.titleGap + (subtitle ? engine.H * 0.045 : 0);
     return {
       x: m, y: chromeBottom,
       w: engine.W - m * 2, h: engine.H - chromeBottom - mv,
