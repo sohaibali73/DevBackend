@@ -16,7 +16,7 @@ import asyncio
 import logging
 from typing import Any, Dict, Optional
 
-from fastapi import Depends, HTTPException
+from fastapi import Depends, HTTPException, Query, Request
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
 from config import get_settings
@@ -116,6 +116,55 @@ async def get_current_user_id(
 
     # 2. Fall back to Supabase round-trip (cached).
     uid = await _verify_jwt_supabase(token)
+    if uid:
+        return uid
+
+    raise HTTPException(status_code=401, detail="Invalid or expired token")
+
+
+async def get_current_user_id_sse(
+    request: Request,
+    token: Optional[str] = Query(
+        default=None,
+        description=(
+            "Auth token for EventSource clients. EventSource cannot set "
+            "the Authorization header, so SSE endpoints accept the JWT as "
+            "?token=... instead. Header still wins when both are present."
+        ),
+    ),
+) -> str:
+    """SSE-friendly auth: bearer header OR ?token= query param.
+
+    Use this dependency in place of ``get_current_user_id`` ONLY on Server-
+    Sent-Events endpoints, since browsers cannot attach headers to an
+    ``EventSource`` request. Verification path is identical to the header
+    flow (local HS256 first, Supabase fallback, same cache).
+
+    Token in URL caveat: URLs may appear in HTTP access logs and Referer
+    headers, so keep this opt-in per route. Do NOT default it onto JSON
+    endpoints.
+    """
+    # 1. Authorization header wins when present (avoids logging the token).
+    auth_header = request.headers.get("authorization") or request.headers.get("Authorization")
+    raw_token: Optional[str] = None
+    if auth_header and auth_header.lower().startswith("bearer "):
+        raw_token = auth_header.split(" ", 1)[1].strip() or None
+
+    # 2. Fallback to ?token= query string.
+    if not raw_token and token:
+        raw_token = token.strip() or None
+
+    if not raw_token:
+        raise HTTPException(
+            status_code=401,
+            detail="Missing auth token (header `Authorization: Bearer …` or `?token=…`)",
+        )
+
+    # 3. Verify via the same path as get_current_user_id.
+    uid = _verify_jwt_local(raw_token)
+    if uid:
+        return uid
+    uid = await _verify_jwt_supabase(raw_token)
     if uid:
         return uid
 

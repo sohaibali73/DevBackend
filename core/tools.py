@@ -538,6 +538,105 @@ TOOL_DEFINITIONS = [
         },
     },
 
+    # ── Per-conversation IDE workspace ────────────────────────────────────────
+    # The frontend shows a Monaco-based IDE panel for the active conversation.
+    # Every file the model writes through these tools appears there, editable
+    # by the user. Use these instead of execute_python whenever the user
+    # benefits from seeing/keeping the source code (full strategies, data
+    # pipelines, analysis scripts). Reserve execute_python for ephemeral,
+    # throwaway calculations the user doesn't need to revisit.
+    {
+        "name": "workspace_list_files",
+        "description": (
+            "List every file in the current conversation's IDE workspace. "
+            "Use BEFORE writing a new file to check whether one with that name "
+            "already exists, and BEFORE editing a file so you know it's there. "
+            "Returns filename, language, version, last_author ('agent' or "
+            "'user'), and size_bytes for each file. No input required."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {},
+            "required": [],
+        },
+    },
+    {
+        "name": "workspace_read_file",
+        "description": (
+            "Read the current contents of a workspace file. MANDATORY before "
+            "editing a file the user may have modified in the IDE panel — "
+            "always pull the latest content so your edits don't clobber the "
+            "user's changes. Returns content, language, version, last_author. "
+            "Returns success=false if the file doesn't exist (use "
+            "workspace_list_files first if you're unsure of the name)."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "filename": {
+                    "type": "string",
+                    "description": "Exact filename (e.g. 'agri_cycle_rotator.py'). Flat namespace — no directories. Use the exact name from workspace_list_files.",
+                },
+            },
+            "required": ["filename"],
+        },
+    },
+    {
+        "name": "workspace_write_file",
+        "description": (
+            "Create or overwrite a file in the current conversation's IDE "
+            "workspace. This is the DEFAULT way to deliver any Python or "
+            "JavaScript code to the user — they see it appear in the IDE "
+            "panel with syntax highlighting and can edit and re-run it. "
+            "Use a descriptive filename (e.g. 'sector_rotation_v3.py', "
+            "'merge_csvs.js'); existing files with the same name are "
+            "overwritten and the version bumps. The user may have edited "
+            "the file since you last touched it — call workspace_read_file "
+            "first if you're producing a NEW version of an existing file."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "filename": {
+                    "type": "string",
+                    "description": "Filename with extension. Allowed chars: A-Z a-z 0-9 _ - . Max 128 chars. Flat namespace — no directories.",
+                },
+                "content": {
+                    "type": "string",
+                    "description": "Full file content. Replaces any previous version entirely (no patch semantics).",
+                },
+                "language": {
+                    "type": "string",
+                    "description": "Optional language hint: 'python' | 'javascript' | 'typescript' | 'afl' | 'sql' | 'json' | 'yaml' | 'markdown' | 'text'. Inferred from extension if omitted.",
+                },
+            },
+            "required": ["filename", "content"],
+        },
+    },
+    {
+        "name": "workspace_execute_file",
+        "description": (
+            "Execute a Python or JavaScript file already saved in the "
+            "workspace. Streams stdout/stderr back into the IDE console "
+            "panel for the user, AND returns the captured output to you "
+            "so you can react to errors in your next message. Use this "
+            "instead of execute_python when the code is something the user "
+            "should see and keep. For Python, the file runs in the same "
+            "per-conversation sandbox namespace as previous execute_python "
+            "calls, so variables and helper files persist across runs."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "filename": {
+                    "type": "string",
+                    "description": "Exact filename of a previously-written workspace file. Must be Python or JavaScript.",
+                },
+            },
+            "required": ["filename"],
+        },
+    },
+
     # Custom: Python Code Execution
     {
         "name": "execute_python",
@@ -5984,6 +6083,7 @@ def handle_tool_call(
     api_key:         str = None,
     conversation_file_ids: Optional[List[str]] = None,
     conversation_id: Optional[str] = None,
+    user_id:         Optional[str] = None,
 ) -> str:
     """
     Dispatch a tool call and return a JSON string.
@@ -6049,6 +6149,95 @@ def handle_tool_call(
         if handler is not None:
             result = handler(tool_input)
 
+
+        # ── Workspace tools — need conversation_id + user_id from chat ctx ─────
+        elif tool_name in (
+            "workspace_list_files",
+            "workspace_read_file",
+            "workspace_write_file",
+            "workspace_execute_file",
+        ):
+            if not conversation_id or not user_id:
+                result = {
+                    "success": False,
+                    "tool": tool_name,
+                    "error": (
+                        "workspace tools require conversation_id and user_id; "
+                        "available only inside an authenticated chat turn."
+                    ),
+                }
+            else:
+                from core import workspace as _ws
+                try:
+                    if tool_name == "workspace_list_files":
+                        files = _ws.list_files(conversation_id, user_id)
+                        result = {
+                            "success": True,
+                            "tool": tool_name,
+                            "file_count": len(files),
+                            "files": files,
+                        }
+                    elif tool_name == "workspace_read_file":
+                        row = _ws.read_file(
+                            conversation_id, user_id, tool_input.get("filename", "")
+                        )
+                        if row is None:
+                            result = {
+                                "success": False,
+                                "tool": tool_name,
+                                "error": f"file {tool_input.get('filename')!r} not found in this conversation's workspace",
+                            }
+                        else:
+                            result = {"success": True, "tool": tool_name, "file": row}
+                    elif tool_name == "workspace_write_file":
+                        row = _ws.write_file(
+                            conversation_id,
+                            user_id,
+                            tool_input.get("filename", ""),
+                            tool_input.get("content", ""),
+                            tool_input.get("language"),
+                            author="agent",
+                        )
+                        result = {
+                            "success": True,
+                            "tool": tool_name,
+                            "file": row,
+                            "genui_card": {
+                                "type": "data-card_workspace_file",
+                                "data": {
+                                    "filename": row["filename"],
+                                    "language": row["language"],
+                                    "version": row["version"],
+                                    "size_bytes": row.get("size_bytes", 0),
+                                    "summary": (
+                                        f"Saved {row['filename']} "
+                                        f"(v{row['version']}, "
+                                        f"{row.get('size_bytes', 0)} bytes) "
+                                        f"to the IDE workspace."
+                                    ),
+                                },
+                            },
+                        }
+                    else:  # workspace_execute_file
+                        result = _ws.execute_file(
+                            conversation_id,
+                            user_id,
+                            tool_input.get("filename", ""),
+                        ) or {"success": False, "error": "no result"}
+                        result.setdefault("tool", tool_name)
+                except _ws.WorkspaceError as _we:
+                    result = {
+                        "success": False,
+                        "tool": tool_name,
+                        "error": str(_we),
+                    }
+                except Exception as _wse:
+                    logger.exception("workspace tool %s failed", tool_name)
+                    result = {
+                        "success": False,
+                        "tool": tool_name,
+                        "error": str(_wse),
+                    }
 
         # ── Dependency-injected tools — handled inline, no throwaway dict ──────
         elif tool_name == "search_knowledge_base":

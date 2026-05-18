@@ -2122,6 +2122,7 @@ async def chat_agent(
                                             api_key=api_keys.get("claude"),
                                             conversation_file_ids=conversation_file_ids,
                                             conversation_id=conversation_id,
+                                            user_id=user_id,
                                         )
                                     )
 

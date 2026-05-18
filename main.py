@@ -694,6 +694,16 @@ except Exception as e:
     logger.debug(traceback.format_exc())
 
 try:
+    from api.routes import workspace
+    app.include_router(workspace.router)
+    routers_loaded.append("workspace")
+    logger.info("✓ Loaded workspace router (per-conversation IDE files)")
+except Exception as e:
+    routers_failed.append(("workspace", str(e)))
+    logger.error(f"✗ Failed to load workspace router: {e}")
+    logger.debug(traceback.format_exc())
+
+try:
     from api.routes import agent_teams
     app.include_router(agent_teams.router)
     routers_loaded.append("agent_teams")
