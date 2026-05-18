@@ -214,6 +214,34 @@ The tool-result payload shapes for the four workspace tools:
   exit_code?: number, artifacts?: any[], execution_time_ms?: number }
 ```
 
+### Auto-save mirror on `execute_python`
+
+Every non-trivial `execute_python` call also drops the executed source into the
+workspace automatically (`last_author: "system"`). The user doesn't have to
+ask, and the agent doesn't have to remember `workspace_write_file` for ad-hoc
+analyses. The tool result carries a `workspace_file` field when this happened:
+
+```ts
+// execute_python (auto-save case)
+{ success: true, tool: "execute_python",
+  output: "<the actual computed output the user wanted>",
+  // ... other normal execute_python fields ...
+  workspace_file?: {
+    filename:    string;        // slug of `description`, or auto_<hash>.py
+    version:     number;
+    language:    "python";
+    size_bytes:  number;
+    last_author: "system";
+    auto_saved:  true;
+  }
+}
+```
+
+Skip rules (auto-save does NOT fire):
+- code is empty or a true one-liner (< 80 source chars AND no newlines)
+- no chat context (e.g. tool invoked from a non-authenticated path)
+- workspace DB write fails (best-effort — the execute response is preserved)
+
 ## 3. UI components to build
 
 ### `WorkspacePanel` — the right-side resizable IDE pane
@@ -290,17 +318,28 @@ interface WorkspaceState {
 
 ## 4. Hooking the chat stream
 
-In your existing chat hook (probably `src/hooks/useChat.ts` or similar), watch for tool-result parts where `tool` starts with `workspace_`:
+In your existing chat hook (probably `src/hooks/useChat.ts` or similar), watch for tool-result parts that touched the workspace — either an explicit `workspace_*` tool or an `execute_python` call that auto-saved:
 
 ```ts
-if (part.type === "tool-result" && typeof part.toolName === "string"
-    && part.toolName.startsWith("workspace_")) {
+function touchesWorkspace(part: ToolResultPart): boolean {
+  if (typeof part.toolName !== "string") return false;
+  if (part.toolName.startsWith("workspace_")) return true;
+  // execute_python's auto-mirror surfaces a `workspace_file` field
+  // on the result payload when the code was substantive enough to save.
+  if (part.toolName === "execute_python") {
+    const r = part.result as { workspace_file?: unknown } | undefined;
+    return !!r && !!r.workspace_file;
+  }
+  return false;
+}
+
+if (part.type === "tool-result" && touchesWorkspace(part)) {
   // Refetch the file list; the panel will rerender from store.
   useWorkspaceStore.getState().loadFiles(conversationId);
 }
 ```
 
-That single hook is enough to make the panel feel live without any custom transport.
+That single hook keeps the panel live whether the agent went through `workspace_write_file` directly OR just ran an `execute_python` analysis that got auto-mirrored.
 
 ## 5. Run the migration
 

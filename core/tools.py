@@ -6076,6 +6076,92 @@ def _create_pptx_with_skill(tool_input: Dict, api_key: str) -> Dict:
         return {"success": False, "error": f"Presentation creation failed: {str(e)}", "tool": "create_pptx_with_skill"}
 
 
+# ── Auto-save Python executions into the conversation workspace ─────────────
+# Every non-trivial execute_python call also drops the code into the IDE panel
+# so the user can read it, edit it, and re-run it. This is the "the python
+# should auto-execute BUT also land in the workspace" flow — the agent doesn't
+# have to remember to call workspace_write_file for every analysis script.
+#
+# Skipped silently when:
+#   • code is empty / a true one-liner (< 80 chars and 0 newlines) — keeps
+#     scratch evaluations from cluttering the panel
+#   • conversation_id or user_id is missing (no chat context)
+#   • the workspace DB layer is unavailable or errors (best-effort)
+_AUTO_SAVE_MIN_CHARS = 80
+
+
+def _slug_for_auto_save(description: str, code: str) -> str:
+    """Pick a stable filename for an auto-saved execute_python script.
+
+    Priority:
+      1. Slug of `description` (the agent already wrote a one-liner about
+         what the code does) → stable name, agent reruns of the same intent
+         version-bump the same file.
+      2. Fallback: ``auto_<8-char-content-hash>.py`` — identical code in
+         the same conversation lands in the same file.
+    """
+    import hashlib
+    import re as _re
+
+    desc = (description or "").strip()
+    if desc:
+        slug = _re.sub(r"[^A-Za-z0-9_-]+", "_", desc).strip("_").lower()[:48]
+        if slug:
+            return f"{slug}.py"
+
+    digest = hashlib.sha1(code.encode("utf-8", errors="replace")).hexdigest()[:8]
+    return f"auto_{digest}.py"
+
+
+def _auto_save_python_to_workspace(
+    tool_input: Dict[str, Any],
+    result: Dict[str, Any],
+    conversation_id: Optional[str],
+    user_id: Optional[str],
+) -> None:
+    """Best-effort: drop the executed code into the per-conversation workspace.
+
+    Mutates ``result`` in place to surface the saved filename + version so the
+    chat stream's tool_result event carries enough info for the IDE panel to
+    refresh (frontend hook: refetch listWorkspaceFiles when result has a
+    ``workspace_file`` field).
+
+    Never raises — auto-save failure must not break the actual execute_python
+    response the user is waiting on.
+    """
+    if not isinstance(result, dict):
+        return
+    if not conversation_id or not user_id:
+        return
+    code = (tool_input or {}).get("code") or ""
+    if not code or not isinstance(code, str):
+        return
+    if len(code) < _AUTO_SAVE_MIN_CHARS and "\n" not in code.strip():
+        return  # one-liner / scratch eval — skip
+    try:
+        from core import workspace as _ws
+        description = (tool_input or {}).get("description") or ""
+        filename = _slug_for_auto_save(description, code)
+        row = _ws.write_file(
+            conversation_id,
+            user_id,
+            filename,
+            code,
+            language="python",
+            author="system",
+        )
+        result["workspace_file"] = {
+            "filename":   row.get("filename"),
+            "version":    row.get("version"),
+            "language":   row.get("language"),
+            "size_bytes": row.get("size_bytes"),
+            "last_author": row.get("last_author"),
+            "auto_saved": True,
+        }
+    except Exception as e:
+        logger.debug("auto-save execute_python to workspace skipped: %s", e)
+
+
 def handle_tool_call(
     tool_name:       str,
     tool_input:      Dict[str, Any],
@@ -6128,6 +6214,9 @@ def handle_tool_call(
                 sandbox_files=sandbox_files or None,
                 session_id=conversation_id,
             )
+            # Auto-mirror the executed code into the IDE workspace so the
+            # user can read / edit / re-run it. Best-effort; never raises.
+            _auto_save_python_to_workspace(tool_input, result, conversation_id, user_id)
             elapsed_ms = round((time.time() - start_time) * 1000, 2)
             result["_tool_time_ms"] = elapsed_ms
             # Log tool call end for debug transcript (early-return path)
@@ -6148,6 +6237,13 @@ def handle_tool_call(
         handler = _STATIC_DISPATCH.get(tool_name)
         if handler is not None:
             result = handler(tool_input)
+            # Mirror non-trivial execute_python code into the IDE workspace.
+            # The synchronous execute_python sandbox runs the code and returns
+            # output; this side-effect drops the source into the IDE panel so
+            # the user has the script to inspect / edit / re-run. No-op for
+            # other static-dispatch tools.
+            if tool_name == "execute_python":
+                _auto_save_python_to_workspace(tool_input, result, conversation_id, user_id)
 
 
         # ── Workspace tools — need conversation_id + user_id from chat ctx ─────
