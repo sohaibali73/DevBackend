@@ -498,6 +498,45 @@ TOOL_DEFINITIONS = [
         "description": "Load the GenUI structured-card catalog: full list of card types (stock, weather, afl, backtest, news, etc.) and the exact JSON envelope format the frontend renders. Call this before emitting a structured data card in your reply.",
         "input_schema": {"type": "object", "properties": {}, "required": []},
     },
+    {
+        "name": "lookup_norgate_ticker",
+        "description": (
+            "MANDATORY before emitting any reference to a ticker symbol in AFL "
+            "code — Foreign(), SetForeign(), AddToComposite(), PositionScore "
+            "on a specific symbol, RelStrength(), watchlist filters, etc. "
+            "Searches the live Norgate universe (~75k securities across US "
+            "Equities, US Indices, Continuous Futures, Cash Commodities, "
+            "Forex Spot, World Indices, Economic) and returns the canonical "
+            "Norgate symbol(s) matching your query. Accepts a ticker fragment, "
+            "a company name, or an asset description; ranks exact symbol hits "
+            "first, then prefix matches, then name-token matches. Use the "
+            "`database` filter to scope to one section (e.g. `Continuous "
+            "Futures` for ES, `US Equities` for SPY, `Forex Spot` for EURUSD). "
+            "NEVER invent a ticker — if this tool returns no result, ask the "
+            "user or pick the closest alternative it suggests. Norgate prefix "
+            "conventions: $ = index, # = index/cash commodity, & = continuous "
+            "future, @ = cash/spot, % = economic series, no prefix = equity / "
+            "ETF / forex pair."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "query": {
+                    "type": "string",
+                    "description": "Ticker fragment, company name, or asset description (e.g. 'SPY', 'Apple', 'S&P 500', 'crude oil', 'EURUSD').",
+                },
+                "database": {
+                    "type": "string",
+                    "description": "Optional database filter. Common values: 'US Equities', 'US Indices', 'Continuous Futures', 'Futures', 'Cash Commodities', 'Forex Spot', 'World Indices', 'Economic', 'US Equities Delisted'.",
+                },
+                "limit": {
+                    "type": "integer",
+                    "description": "Max results to return (default 15, hard cap 50).",
+                },
+            },
+            "required": ["query"],
+        },
+    },
 
     # Custom: Python Code Execution
     {
@@ -5034,6 +5073,7 @@ def _get_afl_syntax_reference(ti: Dict[str, Any]) -> Dict[str, Any]:
             RESERVED_KEYWORDS,
             PARAM_OPTIMIZE_PATTERN,
             TIMEFRAME_RULES,
+            NORGATE_TICKER_RULES,
             CONDITIONAL_AND_SIGNAL_FUNCTIONS,
             PLOTTING_AND_SHAPES,
             EXPLORATION_FUNCTIONS,
@@ -5056,6 +5096,7 @@ def _get_afl_syntax_reference(ti: Dict[str, Any]) -> Dict[str, Any]:
             {"title": "Parameter Functions",            "body": PARAMETER_FUNCTIONS.strip()},
             {"title": "Risk Management",                "body": RISK_MANAGEMENT.strip()},
             {"title": "Timeframe Rules",                "body": TIMEFRAME_RULES.strip()},
+            {"title": "Norgate Ticker Universe",        "body": NORGATE_TICKER_RULES.strip()},
             {"title": "Plotting + Shape Constants",     "body": PLOTTING_AND_SHAPES.strip()},
             {"title": "Exploration Functions",          "body": EXPLORATION_FUNCTIONS.strip()},
             {"title": "Color Palette",                  "body": COLOR_PALETTE.strip()},
@@ -5116,6 +5157,78 @@ def _get_genui_card_schema(_ti: Dict[str, Any]) -> Dict[str, Any]:
         return {"success": False, "tool": "get_genui_card_schema", "error": str(e)}
 
 
+def _lookup_norgate_ticker(ti: Dict[str, Any]) -> Dict[str, Any]:
+    """Search the on-disk Norgate ticker universe and return canonical matches.
+
+    Backs the lookup_norgate_ticker tool. Index is singleton-cached, so only the
+    first call pays the ~360 ms parse cost; subsequent calls are pure in-memory
+    dict/word-index lookups.
+    """
+    try:
+        from core.norgate_index import NorgateIndex, NORGATE_PREFIX_HINTS
+
+        query = (ti or {}).get("query", "")
+        database = (ti or {}).get("database") or None
+        try:
+            limit = int((ti or {}).get("limit") or 15)
+        except (TypeError, ValueError):
+            limit = 15
+        limit = max(1, min(limit, 50))
+
+        if not query or not str(query).strip():
+            return {
+                "success": False,
+                "tool": "lookup_norgate_ticker",
+                "error": "query is required (ticker fragment, company name, or description)",
+            }
+
+        index = NorgateIndex.get()
+        if not index.loaded:
+            return {
+                "success": False,
+                "tool": "lookup_norgate_ticker",
+                "error": index.error or "Norgate ticker index failed to load",
+            }
+
+        results = index.search(str(query), database=database, limit=limit)
+
+        # Build a compact, human-summary line and the card.
+        if results:
+            top = results[0]
+            summary = (
+                f"{len(results)} match(es) for {query!r}; top: "
+                f"{top['symbol']} ({top['database']}) — {top['name']}"
+            )
+        else:
+            summary = f"No Norgate ticker matched {query!r}" + (
+                f" in {database!r}." if database else "."
+            )
+
+        return {
+            "success": True,
+            "tool": "lookup_norgate_ticker",
+            "query": query,
+            "database_filter": database,
+            "result_count": len(results),
+            "results": results,
+            "prefix_hints": NORGATE_PREFIX_HINTS,
+            "available_databases": [d["database"] for d in index.list_databases()],
+            "genui_card": {
+                "type": "data-card_norgate_lookup",
+                "data": {
+                    "query": query,
+                    "database_filter": database,
+                    "result_count": len(results),
+                    "results": results,
+                    "summary": summary,
+                },
+            },
+        }
+    except Exception as e:
+        logger.exception("lookup_norgate_ticker failed")
+        return {"success": False, "tool": "lookup_norgate_ticker", "error": str(e)}
+
+
 def _calculate_performance(ti: Dict[str, Any]) -> Dict[str, Any]:
     """
     MANDATORY tool for any performance / risk metric on market data.
@@ -5154,6 +5267,7 @@ _STATIC_DISPATCH: Dict[str, Any] = {
     "get_afl_syntax_reference": _get_afl_syntax_reference,
     "get_yang_capabilities":    _get_yang_capabilities,
     "get_genui_card_schema":    _get_genui_card_schema,
+    "lookup_norgate_ticker":    _lookup_norgate_ticker,
     "execute_python":         lambda ti: execute_python(code=ti.get("code",""), description=ti.get("description","")),
 
     "execute_react":          lambda ti: execute_react(code=ti.get("code",""), description=ti.get("description","")),

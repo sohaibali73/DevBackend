@@ -67,6 +67,45 @@ Buy = Cross(Close, TimeFrameExpand(MA14_Weekly, inWeekly));   // expand to base 
 '''
 
 
+NORGATE_TICKER_RULES = '''NORGATE TICKER UNIVERSE — never invent a symbol
+
+This AmiBroker installation runs on Norgate Data. Every symbol referenced in
+the formula (Foreign(), SetForeign(), AddToComposite(), watchlist filters,
+RelStrength against a benchmark, composite indicator universes, etc.) MUST
+be a real Norgate symbol. There are ~75,000 of them across 9 databases —
+you cannot reasonably memorise them, and you must NOT guess.
+
+The single authoritative source is the lookup_norgate_ticker tool. Call it
+BEFORE you emit any ticker string in AFL code. Pass a fragment, ticker, or
+company name; use the optional `database` argument to scope.
+
+Norgate symbol prefix conventions:
+  $SYMBOL    indices (e.g. $SPX = S&P 500 Index, $COMP = Nasdaq Composite)
+  #SYMBOL    cash commodities and breadth indicators (e.g. #GSR = Gold/Silver)
+  &SYMBOL    continuous futures (e.g. &ES = E-mini S&P 500, &CL = Crude)
+  &SYMBOL_CCB  continuous future, back-adjusted ("CCB" variant)
+  @SYMBOL    cash / spot commodities
+  %SYMBOL    economic series (e.g. %TYX = 30Y Treasury Yield)
+  SYMBOL     plain — US equities, ETFs, forex pairs (EURUSD, AUDUSD, ...)
+
+Databases (use the exact label as the `database` argument):
+  US Equities             ~13,900   common stocks + active ETFs
+  US Equities Delisted    ~26,900   historical delisted (suffix -YYYYMM)
+  US Indices              ~1,600    indices ($, #, sector breadth, etc.)
+  Continuous Futures      ~270      &-prefixed rolled contracts
+  Futures                 ~32,000   individual expiry contracts (rare)
+  Cash Commodities        ~106      spot/cash commodity series
+  Forex Spot              ~57       EURUSD, AUDUSD, XAUUSD, ...
+  World Indices           ~31       $DAX, $CAC, $BVSP, ...
+  Economic                ~161      Treasury yields, rates, macro series
+
+Rule: if lookup_norgate_ticker returns no result for what you intended,
+DO NOT fall back to a guessed symbol. Either pick the closest suggestion
+the tool surfaces or ask the user. Never write Foreign("XXX") for an XXX
+the lookup tool has not confirmed exists.
+'''
+
+
 CONDITIONAL_AND_SIGNAL_FUNCTIONS = '''CONDITIONAL + SIGNAL FUNCTIONS
 
 Signal detection and cleanup:
@@ -554,6 +593,7 @@ def build_afl_reference(template: "str | None" = None) -> str:
         PARAMETER_FUNCTIONS.strip(),
         RISK_MANAGEMENT.strip(),
         TIMEFRAME_RULES.strip(),
+        NORGATE_TICKER_RULES.strip(),
         PLOTTING_AND_SHAPES.strip(),
         EXPLORATION_FUNCTIONS.strip(),
         COLOR_PALETTE.strip(),
@@ -749,9 +789,18 @@ short routing summary.
   - explain_afl_code         user asks "what does this AFL do".
   - get_afl_syntax_reference reference docs (signatures, house rules, scaffolds).
                              Call before answering any AFL question yourself.
+  - lookup_norgate_ticker    resolve a real Norgate ticker before referencing
+                             it in AFL. The AmiBroker installation is Norgate-
+                             backed; symbols cannot be invented. MANDATORY
+                             before Foreign(), SetForeign(), AddToComposite(),
+                             RelStrength benchmarks, watchlist filters, or any
+                             string that names a security in AFL.
 
 Routing rule: USER WROTE THE CODE → validate / sanity / debug / explain.
               USER WANTS NEW CODE  → generate_afl_code.
+              USER MENTIONS A SPECIFIC TICKER OR ASSET → lookup_norgate_ticker
+              first to get the canonical symbol, THEN pass it into
+              generate_afl_code as part of the description / extra_context.
 
 HARD RULES for any AFL response:
   1. NEVER author AFL code in your own reply text — every AFL line shown
@@ -764,6 +813,11 @@ HARD RULES for any AFL response:
   4. When the user names a specific tool ("call validate_afl"), call that
      exact tool. Do not substitute.
   5. For raw/JSON tool output, surface verbatim inside a ```json fence.
+  6. NEVER write a ticker symbol into AFL code (Foreign, SetForeign, watchlist
+     filter, benchmark, etc.) without first calling lookup_norgate_ticker to
+     confirm the symbol exists in the Norgate universe. If the user said
+     "S&P 500", look it up — don't assume "SPX" or "SPY". If the user said
+     "crude oil futures", look it up — don't assume "&CL".
 
 CARD RENDERING — DO NOT NARRATE ENVELOPES OR REPEAT CODE:
   - Cards render AUTOMATICALLY from the genui_card field that tools attach

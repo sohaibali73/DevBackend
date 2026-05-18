@@ -648,6 +648,7 @@ BACKTEST_FUNCTIONS: Set[str] = {
     "SetPositionSize", "EnableRotationalTrading",
     "SetChartOptions", "SetFormulaName", "SetBarsRequired",
     "Equity", "GetExtraData", "AlertIf", "GetTradingInterface",
+    "OptimizerSetEngine", "OptimizerSetOption",
 }
 
 EXTRA_MISC_FUNCTIONS: Set[str] = {
@@ -1359,6 +1360,10 @@ class AFLValidator:
             fname = m.group(1)
             if fname in CONTROL_KEYWORDS:
                 continue
+            # Boolean operators AND/OR/NOT can legally appear before an opening
+            # paren (e.g. `x AND (y > 0)`); they are operators, not functions.
+            if fname in LOGICAL_OPS:
+                continue
             if fname in self.defined_funcs:
                 continue
             if fname not in ALL_FUNCTIONS:
@@ -1507,11 +1512,17 @@ class AFLValidator:
             issues.append(Issue(ln, 0, Severity.ERROR,
                 "Type", "[ERROR_3] Unary minus operator requires number or array, not string",
                 "Don't negate string values"))
-        for m in re.finditer(r'"[^"]*"\s*[*/^%]', clean):
-            ln = self._find_line(lines, '"')
+        # Only flag the clearly illegal pattern: "literal" OP "literal".
+        # The previous looser pattern fired on valid string + numeric mixes
+        # (e.g. `Title = "Equity: " + WriteVal(eq, 1.2);` where the regex saw
+        # `"..." /` inside StrFormat or similar). Multiplying a string by a
+        # number is unusual but is silently coerced by AmiBroker; only two
+        # string operands are a real Type error.
+        for m in re.finditer(r'"[^"]*"\s*([*/^%])\s*"', clean):
+            ln = clean[:m.start()].count('\n') + 1
             issues.append(Issue(ln, 0, Severity.ERROR,
-                "Type", "[ERROR_1] Cannot multiply/divide strings",
-                "Use numeric operands only"))
+                "Type", f"[ERROR_1] Cannot {m.group(1)!r} two string literals",
+                "Use numeric operands only — strings can only be concatenated with '+'."))
         for func in MATH_FUNCTIONS:
             pattern = rf'\b{func}\s*\(\s*"'
             if re.search(pattern, clean):
@@ -1964,11 +1975,15 @@ class AFLValidator:
 
     # ====================== PHASE 16: STRING CHECKS ======================
     def _check_string_operations(self, clean: str, lines: List[str], issues: List[Issue]):
-        for m in re.finditer(r'"[^"]*"\s*[\-*/^%]', clean):
-            ln = self._find_line(lines, '"')
+        # Only flag the unambiguous illegal pattern: "literal" OP "literal".
+        # The older loose regex fired on every Title/StrFormat line containing
+        # a `/` after a string literal even when the right operand was numeric.
+        for m in re.finditer(r'"[^"]*"\s*([\-*/^%])\s*"', clean):
+            ln = clean[:m.start()].count('\n') + 1
+            op = m.group(1)
             issues.append(Issue(ln, 0, Severity.ERROR,
-                "String", "[ERROR_1] Cannot use arithmetic operators with strings",
-                "Use numeric values only"))
+                "String", f"[ERROR_1] Cannot use arithmetic operator {op!r} between two string literals",
+                "Use '+' to concatenate strings; arithmetic operators require numeric operands."))
         for m in re.finditer(r'WriteIf\s*\([^,]+,\s*(\d+)\s*,\s*(\d+)\s*\)', clean):
             ln = self._find_line_re(lines, r'WriteIf\s*\(')
             issues.append(Issue(ln, 0, Severity.SUGGESTION,
