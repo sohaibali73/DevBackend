@@ -135,6 +135,138 @@ def _sandbox_dir_for(conversation_id: str) -> Path:
     return base
 
 
+# ─────────────────────────────────────── file-mirror after execution
+# Files the running script writes (output.csv, plot_data.json, scratch.py)
+# should appear in the IDE panel so the user can inspect them. The sandbox
+# already drops them in the per-conversation dir; this helper mirrors any
+# NEW or MODIFIED text file into the workspace_files DB after a run.
+#
+# Binary files (.png, .pdf, .xlsx, .pkl, ...) are intentionally skipped —
+# the synchronous main-sandbox path captures those as downloadable
+# artifacts. Mirroring them here would just pollute the IDE tab bar.
+
+# Extensions we'll mirror into the workspace. Anything not in this set is
+# skipped (binary, archives, compiled artifacts, screenshots).
+_TEXT_EXTENSIONS: set = {
+    "py", "js", "mjs", "cjs", "ts", "tsx", "jsx",
+    "json", "yaml", "yml", "toml", "ini", "cfg", "env",
+    "csv", "tsv", "txt", "md", "markdown", "log",
+    "html", "htm", "xml", "css", "scss", "sass",
+    "sql", "afl", "sh", "ps1", "rst",
+}
+
+# Files matching these prefixes are noise (caches, hidden, lock files).
+_SKIP_PREFIXES: tuple = ("__", ".")
+_SKIP_NAMES: set = {"__pycache__", ".DS_Store"}
+# Hard size cap for mirrored content — IDE wants source-sized files, not data dumps.
+_MIRROR_MAX_BYTES = 500_000
+
+
+def _is_mirrorable(path: Path) -> bool:
+    """Return True iff ``path`` is a text file the IDE should surface."""
+    if not path.is_file():
+        return False
+    name = path.name
+    if name in _SKIP_NAMES:
+        return False
+    if name.startswith(_SKIP_PREFIXES):
+        return False
+    ext = name.rsplit(".", 1)[-1].lower() if "." in name else ""
+    if ext not in _TEXT_EXTENSIONS:
+        return False
+    try:
+        if path.stat().st_size > _MIRROR_MAX_BYTES:
+            return False
+    except OSError:
+        return False
+    return True
+
+
+def snapshot_sandbox_mtimes(conversation_id: str) -> Dict[str, float]:
+    """Snapshot mtimes of every file currently in the per-conv sandbox dir.
+
+    Call BEFORE executing user code; pair with ``mirror_new_files`` after.
+    Returns a dict ``{filename: mtime}`` — files not in the snapshot, OR
+    with a later mtime, are considered "newly written" by the run.
+    """
+    out: Dict[str, float] = {}
+    try:
+        d = _sandbox_dir_for(conversation_id)
+        for entry in d.iterdir():
+            if not entry.is_file():
+                continue
+            try:
+                out[entry.name] = entry.stat().st_mtime
+            except OSError:
+                continue
+    except Exception as e:
+        logger.debug("snapshot_sandbox_mtimes failed: %s", e)
+    return out
+
+
+def mirror_new_files(
+    conversation_id: str,
+    user_id: str,
+    before: Dict[str, float],
+    *,
+    skip_filenames: Optional[set] = None,
+) -> List[str]:
+    """Mirror any files written by the just-finished execution into the
+    workspace_files table.
+
+    Compares current mtimes against ``before`` (from
+    ``snapshot_sandbox_mtimes``). Anything missing from ``before`` OR with
+    a newer mtime is upserted. ``skip_filenames`` lets the caller exclude
+    the file that was just executed (otherwise re-runs would flip
+    ``last_author`` from 'user' to 'system' every time).
+
+    Best-effort: per-file failures are logged and skipped; the caller's
+    response is never broken by a mirror error.
+
+    Returns the list of filenames that were mirrored.
+    """
+    if not conversation_id or not user_id:
+        return []
+    mirrored: List[str] = []
+    skip = skip_filenames or set()
+    try:
+        d = _sandbox_dir_for(conversation_id)
+    except Exception:
+        return []
+
+    for entry in d.iterdir():
+        if not entry.is_file():
+            continue
+        name = entry.name
+        if name in skip:
+            continue
+        if not _is_mirrorable(entry):
+            continue
+        try:
+            mt = entry.stat().st_mtime
+        except OSError:
+            continue
+        prior = before.get(name)
+        if prior is not None and mt <= prior:
+            continue  # unchanged
+        # Read content; skip if it suddenly grew or isn't UTF-decodable.
+        try:
+            content = entry.read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError):
+            continue
+        if len(content) > _MIRROR_MAX_BYTES:
+            continue
+        try:
+            write_file(
+                conversation_id, user_id, name, content,
+                language=None, author="system",
+            )
+            mirrored.append(name)
+        except Exception as e:
+            logger.debug("mirror %s skipped: %s", name, e)
+    return mirrored
+
+
 # ─────────────────────────────────────────────────────────────────── public API
 def list_files(conversation_id: str, user_id: str) -> List[Dict[str, Any]]:
     """All files in this conversation's workspace, newest-updated first."""
@@ -320,9 +452,27 @@ def execute_file(
     except Exception as e:
         logger.debug("workspace exec stage failed (non-fatal): %s", e)
 
+    # Snapshot the sandbox dir BEFORE running so we can detect which files
+    # the script wrote and mirror them into the workspace_files table.
+    before = snapshot_sandbox_mtimes(conversation_id)
+
     if lang == "python":
-        return _execute_python(content, conversation_id=conversation_id, filename=filename)
-    return _execute_javascript(content, conversation_id=conversation_id, filename=filename)
+        result = _execute_python(content, conversation_id=conversation_id, filename=filename)
+    else:
+        result = _execute_javascript(content, conversation_id=conversation_id, filename=filename)
+
+    # Mirror any new text files the script wrote. Skip the file that was
+    # executed — its `last_author` should stay whatever wrote it (agent / user).
+    try:
+        mirrored = mirror_new_files(
+            conversation_id, user_id, before,
+            skip_filenames={file_row["filename"]},
+        )
+        if mirrored:
+            result["workspace_files_changed"] = mirrored
+    except Exception as e:
+        logger.debug("post-exec file mirror failed: %s", e)
+    return result
 
 
 def _execute_python(code: str, *, conversation_id: str, filename: str) -> Dict[str, Any]:

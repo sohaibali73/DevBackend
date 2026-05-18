@@ -264,10 +264,14 @@ async def stream_execute_workspace_file(
         if language == "python":
             from core.sandbox.streaming_sandbox import (
                 EndEvent, ErrorEvent, StartEvent,
-                StdoutEvent, StderrEvent, stream_python,
+                StdoutEvent, StderrEvent,
+                WorkspaceFilesChangedEvent,
+                stream_python,
             )
             try:
-                async for evt in stream_python(content, conversation_id, filename):
+                async for evt in stream_python(
+                    content, conversation_id, filename, user_id=user_id,
+                ):
                     if isinstance(evt, StartEvent):
                         yield _frame("start", {
                             "filename": evt.filename, "language": evt.language,
@@ -282,6 +286,13 @@ async def stream_execute_workspace_file(
                             "exit_code":          evt.exit_code,
                             "execution_time_ms":  evt.execution_time_ms,
                             "timed_out":          evt.timed_out,
+                        })
+                    elif isinstance(evt, WorkspaceFilesChangedEvent):
+                        # Script wrote files we mirrored back into workspace_files.
+                        # Frontend should refresh its file list so the new tabs
+                        # appear in the IDE panel.
+                        yield _frame("workspace_files_changed", {
+                            "filenames": evt.filenames,
                         })
                     elif isinstance(evt, ErrorEvent):
                         yield _frame("error", {"message": evt.message})

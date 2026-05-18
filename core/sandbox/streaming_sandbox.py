@@ -76,12 +76,23 @@ class EndEvent:
 
 
 @dataclasses.dataclass
+class WorkspaceFilesChangedEvent:
+    """Emitted after EndEvent when the script wrote files to the sandbox dir
+    that we mirrored into workspace_files. The frontend should refresh its
+    file list so the new tab appears in the IDE panel."""
+    filenames: list
+
+
+@dataclasses.dataclass
 class ErrorEvent:
     """Setup-side failure (couldn't even start). Terminal."""
     message: str
 
 
-StreamEvent = Union[StartEvent, StdoutEvent, StderrEvent, EndEvent, ErrorEvent]
+StreamEvent = Union[
+    StartEvent, StdoutEvent, StderrEvent,
+    EndEvent, WorkspaceFilesChangedEvent, ErrorEvent,
+]
 
 
 # ─────────────────────────────────────────────────────────── stream writer
@@ -295,18 +306,25 @@ async def stream_python(
     conversation_id: str,
     filename: str = "<workspace>",
     timeout_s: Optional[int] = None,
+    user_id: Optional[str] = None,
 ) -> AsyncIterator[StreamEvent]:
     """Execute `code` in the conversation's persistent sandbox dir, streaming
     stdout/stderr as they happen.
 
     Yields: one StartEvent, zero-or-more Stdout/StderrEvent, exactly one
-    EndEvent (or one ErrorEvent on setup failure). The iterator finishes
-    after the terminal event.
+    EndEvent (or one ErrorEvent on setup failure), then optionally one
+    WorkspaceFilesChangedEvent if the script wrote files we mirrored back
+    into the workspace_files table. The iterator finishes after that.
 
     The execution timeout defaults to ``$SANDBOX_STREAM_TIMEOUT_S`` (60s).
     On timeout we yield an EndEvent with ``timed_out=True`` and stop reading
     the thread (it may keep running briefly until exec finishes a step;
     that's a Python limitation, not specific to this code).
+
+    When ``user_id`` is provided AND ``core.workspace`` is importable, any
+    text file the script wrote (CSV, JSON, generated .py, etc.) is mirrored
+    into ``workspace_files`` so the IDE panel shows it as a new tab. Pass
+    None to disable mirroring (used by non-chat callers).
     """
     if not isinstance(code, str):
         yield ErrorEvent(message="code must be a string")
@@ -319,6 +337,16 @@ async def stream_python(
     err_writer = _QueueWriter(loop, queue, "stderr")
     done = threading.Event()
     result: Dict = {"success": False, "exit_code": 1}
+
+    # Snapshot file mtimes BEFORE the run. After the run we'll diff against
+    # this to find newly-written / modified text files and mirror them.
+    file_mtimes_before: Dict[str, float] = {}
+    if user_id:
+        try:
+            from core.workspace import snapshot_sandbox_mtimes
+            file_mtimes_before = snapshot_sandbox_mtimes(conversation_id)
+        except Exception as e:
+            logger.debug("pre-exec snapshot failed: %s", e)
 
     yield StartEvent(filename=filename, language="python")
     started_at = time.monotonic()
@@ -375,3 +403,20 @@ async def stream_python(
             execution_time_ms=elapsed_ms,
             timed_out=False,
         )
+
+    # Mirror any text files the script wrote into workspace_files so the IDE
+    # panel surfaces them. We skip the file that was executed (its
+    # last_author should stay whatever wrote it).
+    if user_id and file_mtimes_before is not None:
+        try:
+            from core.workspace import mirror_new_files
+            skip = {filename} if filename and not filename.startswith("<") else set()
+            mirrored = await asyncio.to_thread(
+                mirror_new_files,
+                conversation_id, user_id, file_mtimes_before,
+                skip_filenames=skip,
+            )
+            if mirrored:
+                yield WorkspaceFilesChangedEvent(filenames=list(mirrored))
+        except Exception as e:
+            logger.debug("post-exec mirror failed: %s", e)
