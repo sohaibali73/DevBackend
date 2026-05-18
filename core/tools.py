@@ -111,6 +111,9 @@ TOOL_SEARCH_NON_DEFERRED: frozenset = frozenset({
     "workspace_read_file",
     "workspace_write_file",
     "workspace_execute_file",
+    # PDF reader — needs to be visible upfront so "read this pdf" requests
+    # don't fall back to execute_python + pdfplumber + Session Variables noise.
+    "read_pdf",
 })
 
 
@@ -547,6 +550,47 @@ TOOL_DEFINITIONS = [
                 },
             },
             "required": ["query"],
+        },
+    },
+
+    # ── PDF reader ────────────────────────────────────────────────────────────
+    # Purpose-built for "the user uploaded a PDF, read it". Replaces the old
+    # pattern where the agent called execute_python with a pdfplumber snippet
+    # (worked, but rendered as a code-output blob with leaked file handles).
+    {
+        "name": "read_pdf",
+        "description": (
+            "Read the text contents of a PDF file that the user uploaded to "
+            "this conversation. MANDATORY for any 'please read this pdf' / "
+            "'summarize this document' / 'what's on page X' request — do NOT "
+            "use execute_python for that anymore. Returns per-page text, full "
+            "concatenated text (capped at 200 KB), and document metadata "
+            "(title, author, producer). Pass `file_id` (preferred — the UUID "
+            "shown next to the file in <file_context>) or `filename` (best-"
+            "effort match within this conversation). Optional `page_range` "
+            "like '1-5,10,15-20' restricts the extraction; omit it to read "
+            "the whole document. The frontend renders a structured PDF card "
+            "with collapsible page previews so the chat stays clean — your "
+            "reply text should be ONE short sentence on what the document "
+            "is about, NOT a re-dump of the text."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "file_id": {
+                    "type": "string",
+                    "description": "UUID from <file_context>. Prefer this over filename for unambiguous lookup.",
+                },
+                "filename": {
+                    "type": "string",
+                    "description": "Fallback when file_id isn't known. Matches uploaded files in this conversation; case-insensitive, exact match first then substring.",
+                },
+                "page_range": {
+                    "type": "string",
+                    "description": "Optional. Comma-separated 1-based pages and ranges, e.g. '1-5', '1,3,5', '1-10,15-20'. Omit to read all pages.",
+                },
+            },
+            "required": [],
         },
     },
 
@@ -6198,6 +6242,276 @@ def _auto_save_python_to_workspace(
         logger.debug("auto-save execute_python to workspace skipped: %s", e)
 
 
+# ── read_pdf — purpose-built PDF reader ─────────────────────────────────────
+# The agent used to handle PDFs by writing a pdfplumber snippet through
+# execute_python. That works but spills a wall of stdout, leaks file handles
+# into Session Variables, and renders as a code-output card. This dedicated
+# handler:
+#   • takes a file_id (preferred) or filename of an uploaded file
+#   • extracts text page-by-page with PyMuPDF (fitz), fallback pdfplumber
+#   • returns structured per-page output + metadata
+#   • attaches a `genui_card` so the frontend renders a clean PDF panel
+
+_PDF_MAX_TOTAL_CHARS = 200_000   # cap returned text to keep context manageable
+_PDF_PAGE_PREVIEW_CHARS = 600    # per-page preview in the card payload
+
+
+def _resolve_uploaded_pdf_path(
+    file_id: Optional[str],
+    filename: Optional[str],
+    conversation_id: str,
+    user_id: str,
+) -> Optional[Dict[str, Any]]:
+    """Resolve an uploaded file (by id, falling back to filename) to a row
+    from the `file_uploads` table that is linked to this conversation AND
+    owned by this user. Returns the row or None.
+    """
+    try:
+        from db.supabase_client import get_supabase
+        db = get_supabase()
+    except Exception as e:
+        logger.warning("read_pdf: supabase unavailable: %s", e)
+        return None
+
+    if file_id:
+        try:
+            r = (
+                db.table("file_uploads")
+                .select("id, user_id, original_filename, storage_path, content_type, file_size")
+                .eq("id", file_id)
+                .eq("user_id", user_id)
+                .limit(1)
+                .execute()
+            )
+            if r.data:
+                return r.data[0]
+        except Exception as e:
+            logger.debug("read_pdf: file_id lookup failed: %s", e)
+
+    if filename:
+        # Match a file uploaded to THIS conversation by name. Newest first.
+        try:
+            r = (
+                db.table("conversation_files")
+                .select("file_id, file_uploads(id, user_id, original_filename, storage_path, content_type, file_size, created_at)")
+                .eq("conversation_id", conversation_id)
+                .execute()
+            )
+            target = filename.lower().strip()
+            best = None
+            for cf in (r.data or []):
+                fu = cf.get("file_uploads") or {}
+                if (fu.get("user_id") != user_id):
+                    continue
+                fname = (fu.get("original_filename") or "").lower().strip()
+                if fname == target:
+                    return fu
+                if (not best) and target in fname:
+                    best = fu
+            if best:
+                return best
+        except Exception as e:
+            logger.debug("read_pdf: filename lookup failed: %s", e)
+    return None
+
+
+def _parse_page_range(spec: Optional[str], total_pages: int) -> List[int]:
+    """Parse "1-5,8,10-12" into a sorted list of 1-based page indices, clamped
+    to ``[1, total_pages]``. Empty / None → all pages."""
+    if not spec or not isinstance(spec, str):
+        return list(range(1, total_pages + 1))
+    out: set = set()
+    for chunk in spec.split(","):
+        chunk = chunk.strip()
+        if not chunk:
+            continue
+        if "-" in chunk:
+            try:
+                a, b = chunk.split("-", 1)
+                lo, hi = int(a), int(b)
+                if lo > hi:
+                    lo, hi = hi, lo
+                for p in range(lo, hi + 1):
+                    if 1 <= p <= total_pages:
+                        out.add(p)
+            except ValueError:
+                continue
+        else:
+            try:
+                p = int(chunk)
+                if 1 <= p <= total_pages:
+                    out.add(p)
+            except ValueError:
+                continue
+    return sorted(out) or list(range(1, total_pages + 1))
+
+
+def read_pdf(
+    file_id: Optional[str] = None,
+    filename: Optional[str] = None,
+    page_range: Optional[str] = None,
+    *,
+    conversation_id: Optional[str] = None,
+    user_id: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Extract text from a previously-uploaded PDF in this conversation.
+
+    Accepts ``file_id`` (preferred) or ``filename``. Returns per-page text
+    plus full-text concatenation and a genui_card payload for the IDE.
+    """
+    import time as _t
+    started = _t.time()
+
+    if not conversation_id or not user_id:
+        return {
+            "success": False, "tool": "read_pdf",
+            "error": "read_pdf requires an authenticated chat context",
+        }
+    if not file_id and not filename:
+        return {
+            "success": False, "tool": "read_pdf",
+            "error": "Provide file_id or filename",
+        }
+
+    row = _resolve_uploaded_pdf_path(file_id, filename, conversation_id, user_id)
+    if row is None:
+        return {
+            "success": False, "tool": "read_pdf",
+            "error": (
+                f"No uploaded PDF matches "
+                f"{'file_id=' + repr(file_id) if file_id else 'filename=' + repr(filename)} "
+                f"in this conversation"
+            ),
+        }
+
+    storage_path = row.get("storage_path") or ""
+    real_filename = row.get("original_filename") or filename or "document.pdf"
+    if not storage_path or not os.path.exists(storage_path):
+        return {
+            "success": False, "tool": "read_pdf",
+            "error": f"File {real_filename!r} is registered but its bytes are missing on disk",
+        }
+
+    # ── Extract per-page text ────────────────────────────────────────────────
+    pages: List[Dict[str, Any]] = []
+    metadata: Dict[str, Any] = {}
+    extractor_used: str = ""
+    total_pages_in_doc = 0
+
+    try:
+        import fitz  # PyMuPDF
+        with fitz.open(storage_path) as doc:
+            total_pages_in_doc = doc.page_count
+            target = _parse_page_range(page_range, total_pages_in_doc)
+            try:
+                md = doc.metadata or {}
+                metadata = {
+                    "title":    md.get("title") or "",
+                    "author":   md.get("author") or "",
+                    "subject":  md.get("subject") or "",
+                    "creator":  md.get("creator") or "",
+                    "producer": md.get("producer") or "",
+                }
+            except Exception:
+                metadata = {}
+            for p in target:
+                try:
+                    text = doc[p - 1].get_text("text") or ""
+                except Exception:
+                    text = ""
+                pages.append({"number": p, "text": text, "char_count": len(text)})
+        extractor_used = "pymupdf"
+    except ImportError:
+        try:
+            import pdfplumber  # type: ignore
+            with pdfplumber.open(storage_path) as pdf:
+                total_pages_in_doc = len(pdf.pages)
+                target = _parse_page_range(page_range, total_pages_in_doc)
+                try:
+                    metadata = {
+                        k: str(v) for k, v in (pdf.metadata or {}).items()
+                    }
+                except Exception:
+                    metadata = {}
+                for p in target:
+                    try:
+                        text = pdf.pages[p - 1].extract_text() or ""
+                    except Exception:
+                        text = ""
+                    pages.append({"number": p, "text": text, "char_count": len(text)})
+            extractor_used = "pdfplumber"
+        except Exception as e:
+            return {
+                "success": False, "tool": "read_pdf",
+                "error": f"No PDF extractor available: {e}",
+            }
+    except Exception as e:
+        return {
+            "success": False, "tool": "read_pdf",
+            "error": f"PDF parse failed: {e}",
+        }
+
+    full_text = "\n\n".join(p["text"] for p in pages if p.get("text"))
+    truncated = False
+    if len(full_text) > _PDF_MAX_TOTAL_CHARS:
+        full_text = full_text[:_PDF_MAX_TOTAL_CHARS]
+        truncated = True
+    total_chars = sum(p.get("char_count", 0) for p in pages)
+    elapsed_ms = int((_t.time() - started) * 1000)
+
+    # ── genui_card payload (small enough for the chat envelope; full text
+    #    sits on `full_text` for the model, the card shows previews) ───────
+    page_previews = [
+        {
+            "number":     p["number"],
+            "char_count": p["char_count"],
+            "preview":    (p["text"][:_PDF_PAGE_PREVIEW_CHARS] +
+                           ("…" if len(p["text"]) > _PDF_PAGE_PREVIEW_CHARS else "")),
+        }
+        for p in pages
+    ]
+
+    return {
+        "success": True,
+        "tool": "read_pdf",
+        "file_id":     row.get("id"),
+        "filename":    real_filename,
+        "size_bytes":  row.get("file_size") or 0,
+        "total_pages": total_pages_in_doc,
+        "pages_returned": len(pages),
+        "extractor":   extractor_used,
+        "metadata":    metadata,
+        "pages":       pages,           # full per-page text for the model
+        "full_text":   full_text,       # capped at _PDF_MAX_TOTAL_CHARS
+        "truncated":   truncated,
+        "total_chars": total_chars,
+        "duration_ms": elapsed_ms,
+        "genui_card": {
+            "type": "data-card_pdf_read",
+            "data": {
+                "filename":    real_filename,
+                "file_id":     row.get("id"),
+                "size_bytes":  row.get("file_size") or 0,
+                "total_pages": total_pages_in_doc,
+                "pages_returned": len(pages),
+                "total_chars": total_chars,
+                "truncated":   truncated,
+                "extractor":   extractor_used,
+                "metadata":    metadata,
+                "page_range":  page_range or None,
+                "page_previews": page_previews,
+                "duration_ms": elapsed_ms,
+                "summary": (
+                    f"Read {len(pages)} of {total_pages_in_doc} pages from "
+                    f"{real_filename} ({total_chars:,} chars"
+                    + (", truncated" if truncated else "")
+                    + ")"
+                ),
+            },
+        },
+    }
+
+
 def handle_tool_call(
     tool_name:       str,
     tool_input:      Dict[str, Any],
@@ -6281,6 +6595,30 @@ def handle_tool_call(
             if tool_name == "execute_python":
                 _auto_save_python_to_workspace(tool_input, result, conversation_id, user_id)
 
+
+        # ── read_pdf — needs conversation_id + user_id to scope file lookup ───
+        elif tool_name == "read_pdf":
+            if not conversation_id or not user_id:
+                result = {
+                    "success": False,
+                    "tool": "read_pdf",
+                    "error": "read_pdf requires an authenticated chat context",
+                }
+            else:
+                try:
+                    result = read_pdf(
+                        file_id=tool_input.get("file_id"),
+                        filename=tool_input.get("filename"),
+                        page_range=tool_input.get("page_range"),
+                        conversation_id=conversation_id,
+                        user_id=user_id,
+                    )
+                except Exception as _rp_err:
+                    logger.exception("read_pdf failed")
+                    result = {
+                        "success": False, "tool": "read_pdf",
+                        "error": str(_rp_err),
+                    }
 
         # ── Workspace tools — need conversation_id + user_id from chat ctx ─────
         elif tool_name in (
