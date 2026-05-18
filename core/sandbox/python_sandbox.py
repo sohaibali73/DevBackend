@@ -1297,10 +1297,40 @@ class PythonSandbox(BaseSandbox):
                 "text"
             )
 
+            # ── Build the user-visible variables snapshot ──────────────────
+            # The frontend renders this under "Session Variables". Two failure
+            # modes we explicitly defend against:
+            #   • file/IO handles leaking ("<_io.TextIOWrapper name=...>")
+            #     — useless to the user, looks like a bug.
+            #   • huge string blobs ("content" holding a 10 KB AFL file)
+            #     dumping the entire file body into the chat bubble.
+            # Filter both at the source so the UI never sees them.
+            def _is_renderable_value(v: Any) -> bool:
+                mod = type(v).__module__
+                if mod == "io" or mod.startswith("io."):
+                    return False
+                # Modules, functions, classes — meaningless to surface.
+                kind = type(v).__name__
+                if kind in {"module", "function", "method", "type", "builtin_function_or_method"}:
+                    return False
+                return True
+
+            def _render_value(v: Any) -> str:
+                # Strings: show a short preview, never the full body.
+                if isinstance(v, str):
+                    if len(v) <= 80:
+                        return v
+                    return v[:80] + f"... ({len(v):,} chars total)"
+                # Lists / tuples / dicts: stringify with hard cap.
+                s = str(v)
+                if len(s) > 120:
+                    return s[:120] + "..."
+                return s
+
             variables = {
-                k: str(v)[:200]
+                k: _render_value(v)
                 for k, v in local_vars.items()
-                if not k.startswith("_")
+                if not k.startswith("_") and _is_renderable_value(v)
             }
             # If the caller passed an in-memory persisted_namespace dict
             # (i.e. a real Python dict, not from the DB JSON path), we

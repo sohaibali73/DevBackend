@@ -99,6 +99,18 @@ TOOL_SEARCH_NON_DEFERRED: frozenset = frozenset({
     "explain_afl_code",
     "validate_afl",
     "sanity_check_afl",
+    # Ticker universe — MUST be visible without a tool_search call. If this
+    # one is deferred, the model "discovers" it's missing and hand-writes
+    # AFL with invented symbols (and forbidden colours, because the same
+    # discovery failure makes it skip generate_afl_code too).
+    "lookup_norgate_ticker",
+    # IDE workspace — same reasoning. The model needs to know it can write
+    # files into the conversation panel from the very first turn; deferring
+    # these tools causes it to dump code into chat instead.
+    "workspace_list_files",
+    "workspace_read_file",
+    "workspace_write_file",
+    "workspace_execute_file",
 })
 
 
@@ -6083,11 +6095,15 @@ def _create_pptx_with_skill(tool_input: Dict, api_key: str) -> Dict:
 # have to remember to call workspace_write_file for every analysis script.
 #
 # Skipped silently when:
-#   • code is empty / a true one-liner (< 80 chars and 0 newlines) — keeps
-#     scratch evaluations from cluttering the panel
+#   • code is shorter than _AUTO_SAVE_MIN_CHARS (scratch eval)
+#   • code is fewer than _AUTO_SAVE_MIN_LINES non-blank lines (scratch eval
+#     even if it happens to have a newline — e.g. `f = open(...); content = f.read()`)
+#   • code is just opening/reading uploaded files for the agent's own eyes
+#     (no `print`, no assignment to a result variable beyond the read itself)
 #   • conversation_id or user_id is missing (no chat context)
 #   • the workspace DB layer is unavailable or errors (best-effort)
-_AUTO_SAVE_MIN_CHARS = 80
+_AUTO_SAVE_MIN_CHARS = 160
+_AUTO_SAVE_MIN_LINES = 4
 
 
 def _slug_for_auto_save(description: str, code: str) -> str:
@@ -6136,8 +6152,28 @@ def _auto_save_python_to_workspace(
     code = (tool_input or {}).get("code") or ""
     if not code or not isinstance(code, str):
         return
-    if len(code) < _AUTO_SAVE_MIN_CHARS and "\n" not in code.strip():
-        return  # one-liner / scratch eval — skip
+    stripped = code.strip()
+    if not stripped:
+        return
+    non_blank_lines = [ln for ln in stripped.splitlines() if ln.strip()]
+    # Skip true scratch evaluations:
+    #   • too short (under 160 chars OR fewer than 4 non-blank lines)
+    #   • no real "work" — the script just opens/reads files for the agent's
+    #     own internal use (no print, no return-style assignment, no real
+    #     computation). The previous threshold mirrored 90-byte snippets
+    #     like `f = open(...); content = f.read()` into the user's IDE,
+    #     which the user (correctly) flagged as noise.
+    if len(stripped) < _AUTO_SAVE_MIN_CHARS:
+        return
+    if len(non_blank_lines) < _AUTO_SAVE_MIN_LINES:
+        return
+    has_print = "print(" in stripped or "print (" in stripped
+    has_display = "display(" in stripped or "HTML(" in stripped or "SVG(" in stripped
+    has_plot = "plt.show" in stripped or ".show(" in stripped or "plt.savefig" in stripped
+    if not (has_print or has_display or has_plot):
+        # No visible output of any kind — almost certainly the agent
+        # reading/parsing a file for its own context. Don't surface to user.
+        return
     try:
         from core import workspace as _ws
         description = (tool_input or {}).get("description") or ""
