@@ -214,7 +214,8 @@ class SkillExecutor:
                 return search_knowledge_base(
                     query=args.get("query", ""),
                     category=args.get("category"),
-                    limit=args.get("limit", 3),
+                    limit=args.get("limit", 5),
+                    document_filenames=args.get("document_filenames"),
                 )
 
             elif name == "get_stock_data":

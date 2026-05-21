@@ -753,23 +753,37 @@ TOOL_DEFINITIONS = [
     # Custom: Knowledge Base Search
     {
         "name": "search_knowledge_base",
-        "description": "Search the user's uploaded documents and knowledge base for relevant information about AFL, trading strategies, indicators, or any uploaded content. Use this when you need to reference the user's specific documents or previously uploaded trading knowledge. FAST - results are cached.",
+        "description": (
+            "Search the user's knowledge base for relevant content. "
+            "ALWAYS use this when the user attaches a document via "
+            "[Attached document: <name>] — pass that name in document_filenames "
+            "and the user's question in query. The tool will return chunk-level "
+            "snippets from inside that specific document, ranked by relevance to "
+            "the query. Without document_filenames, this falls back to a broader "
+            "search across all of the user's documents and returns top-doc "
+            "snippets. FAST — results are cached."
+        ),
         "input_schema": {
             "type": "object",
             "properties": {
                 "query": {
                     "type": "string",
-                    "description": "Search query to find relevant documents"
+                    "description": "What to look for inside the doc (or across the KB if no doc is specified). Use the user's actual question or key terms from it."
+                },
+                "document_filenames": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "Pass the exact name(s) from [Attached document: <name>] markers in the user message. Match is case-insensitive against filename OR title. When set, search is scoped to chunks inside those documents only."
                 },
                 "category": {
                     "type": "string",
-                    "description": "Optional category filter (e.g., 'afl', 'strategy', 'indicator')",
+                    "description": "Optional category filter — ignored when document_filenames is set.",
                     "enum": ["afl", "strategy", "indicator", "general", "documentation"]
                 },
                 "limit": {
                     "type": "integer",
-                    "description": "Maximum number of results to return",
-                    "default": 3
+                    "description": "Maximum number of chunks (doc-scoped) or documents (broad) to return.",
+                    "default": 5
                 }
             },
             "required": ["query"]
@@ -2775,23 +2789,183 @@ def execute_python(
         }
 
 
+def _resolve_kb_docs_by_filename(
+    db,
+    filenames: List[str],
+) -> Dict[str, Dict[str, Any]]:
+    """Resolve attachment names → {doc_id: {title, filename, category}}.
+
+    Matches each name case-insensitively against ``filename`` OR ``title``.
+    Commas are stripped from the input to keep the PostgREST OR clause valid.
+    """
+    if not filenames:
+        return {}
+
+    or_conds: List[str] = []
+    for raw in filenames:
+        if not raw:
+            continue
+        safe = raw.replace(",", " ").strip()
+        if not safe:
+            continue
+        or_conds.append(f"filename.ilike.%{safe}%")
+        or_conds.append(f"title.ilike.%{safe}%")
+
+    if not or_conds:
+        return {}
+
+    res = (
+        db.table("brain_documents")
+        .select("id, title, filename, category")
+        .or_(",".join(or_conds))
+        .execute()
+    )
+    return {d["id"]: d for d in (res.data or [])}
+
+
+def _search_chunks_in_docs(
+    db,
+    query: str,
+    doc_ids: List[str],
+    limit: int,
+) -> List[Dict[str, Any]]:
+    """Return chunks from ``doc_ids`` ranked by ILIKE-match on ``query``.
+
+    Falls back to the first ``limit`` chunks (ordered by ``chunk_index``) when
+    no query term matches — that way Claude always has *something* to work with
+    after the user explicitly attaches a doc.
+    """
+    if not doc_ids:
+        return []
+
+    # Use longer query terms first (>2 chars) — short words like "is"/"of" pollute
+    # the OR clause and match every chunk.
+    search_terms = [t for t in query.split() if len(t) > 2][:5]
+
+    chunks: List[Dict[str, Any]] = []
+    if search_terms:
+        or_conds = ",".join(f"content.ilike.%{t}%" for t in search_terms)
+        res = (
+            db.table("brain_chunks")
+            .select("id, document_id, chunk_index, content")
+            .in_("document_id", doc_ids)
+            .or_(or_conds)
+            .limit(limit)
+            .execute()
+        )
+        chunks = res.data or []
+
+    if not chunks:
+        res = (
+            db.table("brain_chunks")
+            .select("id, document_id, chunk_index, content")
+            .in_("document_id", doc_ids)
+            .order("chunk_index")
+            .limit(limit)
+            .execute()
+        )
+        chunks = res.data or []
+
+    return chunks
+
+
 def search_knowledge_base(
-    query:           str,
-    category:        Optional[str] = None,
-    limit:           int           = 3,
+    query:              str,
+    category:           Optional[str] = None,
+    limit:              int           = 5,
+    document_filenames: Optional[List[str]] = None,
     supabase_client=None,
 ) -> Dict[str, Any]:
-    """Search the knowledge base with caching."""
-    cached = _get_cached_kb(query, category or "all")
+    """Search the knowledge base.
+
+    Two modes:
+
+    * **Doc-scoped** (``document_filenames`` non-empty) — resolve those names to
+      doc IDs, then return chunk-level snippets from ``brain_chunks`` for the
+      matched docs. This is what Claude should use whenever the user attaches a
+      specific doc via ``[Attached document: <name>]``.
+    * **Broad** — full-text ILIKE across ``brain_documents`` (title / summary /
+      raw_content), returning per-doc snippets. The legacy behavior.
+
+    Results are cached on a key that includes the doc filter so doc-scoped and
+    broad searches don't collide.
+    """
+    doc_filter = sorted({(f or "").strip().lower() for f in (document_filenames or []) if f and f.strip()})
+    cache_scope = "all"
+    if doc_filter:
+        cache_scope = "docs:" + "|".join(doc_filter)
+    elif category:
+        cache_scope = category
+
+    cached = _get_cached_kb(query, cache_scope)
     if cached:
         return cached
 
     if supabase_client is None:
         return {"success": False, "error": "Database connection not available", "results": []}
 
+    start_time = time.time()
+
+    # ── Doc-scoped path: chunk-level retrieval from named documents ─────────
+    if doc_filter:
+        try:
+            doc_map = _resolve_kb_docs_by_filename(supabase_client, list(document_filenames or []))
+            if not doc_map:
+                response = {
+                    "success":         True,
+                    "query":           query,
+                    "scope":           "documents",
+                    "requested":       document_filenames,
+                    "results_count":   0,
+                    "search_time_ms":  round((time.time() - start_time) * 1000, 2),
+                    "results":         [],
+                    "note":            "No documents matched the supplied filenames.",
+                }
+                _set_cached_kb(query, cache_scope, response)
+                return response
+
+            doc_ids = list(doc_map.keys())
+            chunks  = _search_chunks_in_docs(supabase_client, query, doc_ids, limit)
+
+            results = [
+                {
+                    "chunk_id":          c["id"],
+                    "document_id":       c["document_id"],
+                    "document_title":    doc_map.get(c["document_id"], {}).get("title"),
+                    "document_filename": doc_map.get(c["document_id"], {}).get("filename"),
+                    "chunk_index":       c["chunk_index"],
+                    "content":           c["content"],
+                }
+                for c in chunks
+            ]
+
+            response = {
+                "success":         True,
+                "query":           query,
+                "scope":           "documents",
+                "requested":       document_filenames,
+                "matched_docs":    [
+                    {"id": did, "title": d.get("title"), "filename": d.get("filename")}
+                    for did, d in doc_map.items()
+                ],
+                "results_count":   len(results),
+                "search_time_ms":  round((time.time() - start_time) * 1000, 2),
+                "results":         results,
+            }
+            _set_cached_kb(query, cache_scope, response)
+            logger.debug(
+                "KB doc-scoped search: %.3fs, %d chunks across %d docs",
+                time.time() - start_time, len(results), len(doc_map),
+            )
+            return response
+
+        except Exception as e:
+            logger.error("KB doc-scoped search error: %s", e)
+            return {"success": False, "error": str(e), "results": []}
+
+    # ── Broad path: full-text ILIKE across brain_documents ──────────────────
     try:
-        start_time = time.time()
-        db_query   = supabase_client.table("brain_documents").select(
+        db_query = supabase_client.table("brain_documents").select(
             "id, title, category, summary, tags, raw_content"
         )
         if category:
@@ -2824,17 +2998,17 @@ def search_knowledge_base(
                 "content_snippet":  _extract_relevant_snippet(raw_content, query),
             })
 
-        search_time = time.time() - start_time
         response = {
             "success":         True,
             "query":           query,
+            "scope":           "broad",
             "category_filter": category,
             "results_count":   len(documents),
-            "search_time_ms":  round(search_time * 1000, 2),
+            "search_time_ms":  round((time.time() - start_time) * 1000, 2),
             "results":         documents,
         }
-        _set_cached_kb(query, category or "all", response)
-        logger.debug("KB search: %.3fs, %d results", search_time, len(documents))
+        _set_cached_kb(query, cache_scope, response)
+        logger.debug("KB broad search: %.3fs, %d results", time.time() - start_time, len(documents))
         return response
 
     except Exception as e:
@@ -6714,7 +6888,8 @@ def handle_tool_call(
             result = search_knowledge_base(
                 query=tool_input.get("query", ""),
                 category=tool_input.get("category"),
-                limit=tool_input.get("limit", 3),
+                limit=tool_input.get("limit", 5),
+                document_filenames=tool_input.get("document_filenames"),
                 supabase_client=supabase_client,
             )
         elif tool_name == "generate_afl_code":

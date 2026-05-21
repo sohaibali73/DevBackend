@@ -867,6 +867,20 @@ ATTACHED-FILE PRECEDENCE — when a file is in <file_context>:
     "what did <some other doc I have> say about X"
     "find references to X across my library"
 
+KB-ATTACHED DOCS — when the user message contains a marker like
+``[Attached document: <name>]``:
+  This is a KB attachment (a doc from the persistent library), NOT a file
+  in <file_context>. There is no read_pdf path for it — the content lives
+  in brain_chunks and must be retrieved via search_knowledge_base.
+
+  ALWAYS call search_knowledge_base with:
+    - query = the user's actual question (or its key terms)
+    - document_filenames = [the exact name(s) inside the marker(s)]
+
+  This scopes the search to chunks of that specific doc and returns the
+  passages most relevant to the query. Do NOT also call it without
+  document_filenames — that defeats the scoping and bloats context.
+
 When to use the workspace vs execute_python:
   - execute_python is fine as your DEFAULT for any Python that answers the
     user's question. The runtime auto-mirrors every non-trivial call (any
