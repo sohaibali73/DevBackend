@@ -87,6 +87,12 @@ async def search_knowledge_base(
 # List files
 # ──────────────────────────────────────────────────────────────────────────────
 
+# Documents uploaded via /kb-admin/* are owned by this sentinel UUID.
+# They live in the shared KB and should appear to every authenticated user
+# alongside their own uploads.
+SYSTEM_UPLOADER_ID = "00000000-0000-0000-0000-000000000000"
+
+
 @router.get("/files")
 async def list_files(
     limit: int = 50,
@@ -96,18 +102,34 @@ async def list_files(
     category: Optional[str] = None,
     user_id: str = Depends(get_current_user_id),
 ):
-    """List all documents in the knowledge base with pagination and filters."""
+    """List documents in the knowledge base with pagination and filters.
+
+    Visibility: the caller's own uploads PLUS shared/admin-uploaded docs
+    (``uploaded_by`` either NULL or the SYSTEM_UPLOADER_ID sentinel). This
+    matches the legacy ``/kb-admin/bulk-upload`` and ``/kb-admin/upload-preparsed``
+    paths that stamp docs with the sentinel owner.
+
+    Each row carries the real processing state so the UI doesn't have to poll:
+      * ``is_processed`` (bool) — chunked + indexed
+      * ``status`` (string)     — ``ready`` | ``processing`` | ``error``
+      * ``error`` (string|null) — set when status == ``error``
+    """
     db = get_supabase()
 
     query = db.table("brain_documents").select(
-        "id, title, filename, category, tags, summary, file_size, file_type, created_at, chunk_count"
+        "id, title, filename, category, tags, summary, file_size, file_type, "
+        "created_at, chunk_count, is_processed, processed_at, uploaded_by, "
+        "source_type"
     )
 
-    # Filter by owner where possible (uploaded_by column)
-    try:
-        query = query.eq("uploaded_by", user_id)
-    except Exception:
-        pass
+    # Owner filter: caller's own + the sentinel "shared" owner. PostgREST
+    # accepts a single ``or_`` clause for this; we keep it permissive enough
+    # that admin-uploaded docs (NULL or sentinel) always show up.
+    query = query.or_(
+        f"uploaded_by.eq.{user_id},"
+        f"uploaded_by.eq.{SYSTEM_UPLOADER_ID},"
+        f"uploaded_by.is.null"
+    )
 
     if category:
         query = query.eq("category", category)
@@ -120,11 +142,36 @@ async def list_files(
 
     result = query.order("created_at", desc=True).range(offset, offset + limit - 1).execute()
 
-    total_res = db.table("brain_documents").select("id", count="exact").execute()
-    total = total_res.count or 0
+    # Count with the same owner filter so the total matches what the user sees.
+    try:
+        total_res = (
+            db.table("brain_documents")
+            .select("id", count="exact")
+            .or_(
+                f"uploaded_by.eq.{user_id},"
+                f"uploaded_by.eq.{SYSTEM_UPLOADER_ID},"
+                f"uploaded_by.is.null"
+            )
+            .execute()
+        )
+        total = total_res.count or 0
+    except Exception:
+        total = len(result.data or [])
 
     files = []
     for doc in result.data or []:
+        is_processed = bool(doc.get("is_processed"))
+        processed_at = doc.get("processed_at")
+        summary      = doc.get("summary") or ""
+        is_error     = (not is_processed) and bool(processed_at) and summary.startswith("[ERROR")
+
+        if is_processed:
+            status = "ready"
+        elif is_error:
+            status = "error"
+        else:
+            status = "processing"
+
         files.append({
             "id": doc["id"],
             "name": doc.get("title") or doc.get("filename", ""),
@@ -132,10 +179,17 @@ async def list_files(
             "size": doc.get("file_size", 0),
             "type": doc.get("file_type", "unknown"),
             "upload_date": doc.get("created_at", ""),
+            "created_at": doc.get("created_at", ""),
             "tags": doc.get("tags") or [],
-            "description": doc.get("summary", ""),
+            "description": "" if summary.startswith("[ERROR") else summary,
             "category": doc.get("category", "general"),
             "page_count": doc.get("chunk_count"),
+            "chunk_count": doc.get("chunk_count"),
+            "is_processed": is_processed,
+            "status": status,
+            "error": summary if is_error else None,
+            "source_type": doc.get("source_type"),
+            "shared": doc.get("uploaded_by") in (SYSTEM_UPLOADER_ID, None),
         })
 
     return {

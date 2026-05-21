@@ -485,6 +485,219 @@ async def upload_text(
 
 
 # ============================================================================
+# UPLOAD PRE-PARSED  (client extracted the text — server just inserts + indexes)
+# ============================================================================
+
+class PreParsedDocIn(BaseModel):
+    filename: str
+    file_type: str = "application/octet-stream"
+    file_size: int = 0
+    extracted_text: str
+    content_hash: str                        # SHA-256 of original file bytes
+    category: str = "general"
+    tags: List[str] = []
+    title: Optional[str] = None
+
+
+class PreParsedBatchIn(BaseModel):
+    documents: List[PreParsedDocIn]
+
+
+# Keep batch insert serial and capped so a single request can't tie up a worker
+# indefinitely. Matches the cap on the admin endpoint.
+_PREPARSED_MAX_PER_REQUEST = 50
+_PREPARSED_CHUNK_SIZE      = 1500
+_PREPARSED_CHUNK_OVERLAP   = 150
+
+
+@router.post("/upload-preparsed")
+async def upload_preparsed(
+    batch: PreParsedBatchIn,
+    user_id: str = Depends(get_current_user_id),
+):
+    """Ingest documents whose text was already extracted client-side.
+
+    The frontend wizard parses PDFs/DOCX/XLSX/etc. in the browser (via pdfjs,
+    mammoth, xlsx) and posts only the resulting text — no binary transfer,
+    no server-side parsing. The server deduplicates on ``content_hash``,
+    inserts into ``brain_documents``, then chunks + embeds via the same
+    ``chunk_and_index`` path used by the binary upload.
+
+    Each document is fully processed before returning, so the response
+    reflects the final state (no follow-up status polling required for
+    text-only uploads).
+    """
+    if not batch.documents:
+        return {"status": "completed", "results": [],
+                "summary": {"total": 0, "successful": 0, "duplicates": 0, "failed": 0}}
+
+    if len(batch.documents) > _PREPARSED_MAX_PER_REQUEST:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Too many documents in one request (max {_PREPARSED_MAX_PER_REQUEST}). "
+                   "Split into smaller batches.",
+        )
+
+    db = get_supabase()
+    results: list = []
+    successful = duplicates = failed = 0
+
+    for doc in batch.documents:
+        try:
+            content = (doc.extracted_text or "").replace("\x00", "").strip()
+            if not content:
+                failed += 1
+                results.append({
+                    "filename": doc.filename,
+                    "status": "error",
+                    "error": "Extracted text is empty.",
+                })
+                continue
+
+            # Dedup on the original-file hash provided by the client.
+            existing = db.table("brain_documents").select("id, is_processed").eq(
+                "content_hash", doc.content_hash
+            ).limit(1).execute()
+            if existing.data:
+                duplicates += 1
+                row = existing.data[0]
+                results.append({
+                    "filename": doc.filename,
+                    "status": "duplicate",
+                    "document_id": row["id"],
+                    "ready": bool(row.get("is_processed")),
+                })
+                continue
+
+            file_id = str(uuid.uuid4())
+            now     = datetime.now(timezone.utc).isoformat()
+
+            db.table("brain_documents").insert({
+                "id": file_id,
+                "uploaded_by": user_id,
+                "title": doc.title or doc.filename,
+                "filename": doc.filename,
+                "file_type": doc.file_type,
+                "file_size": doc.file_size,
+                "storage_path": "",          # no binary stored for preparsed uploads
+                "category": doc.category or "general",
+                "subcategories": [],
+                "tags": doc.tags or [],
+                "raw_content": content,
+                "summary": "",
+                "content_hash": doc.content_hash,
+                "source_type": "client_preparsed",
+                "created_at": now,
+            }).execute()
+
+            index_result = chunk_and_index(
+                db=db,
+                document_id=file_id,
+                text=content,
+                chunk_size=_PREPARSED_CHUNK_SIZE,
+                overlap=_PREPARSED_CHUNK_OVERLAP,
+                max_chunks=0,                 # no cap — index the entire doc
+                generate_embeddings=True,
+            )
+
+            db.table("brain_documents").update({
+                "is_processed": True,
+                "chunk_count": index_result["chunks_created"],
+                "processed_at": now,
+            }).eq("id", file_id).execute()
+
+            successful += 1
+            results.append({
+                "filename": doc.filename,
+                "status": "success",
+                "document_id": file_id,
+                "ready": True,
+                "chunks_created": index_result["chunks_created"],
+                "embeddings_generated": index_result["embeddings_generated"],
+                "text_length": len(content),
+            })
+
+        except Exception as exc:
+            failed += 1
+            logger.error(
+                "Pre-parsed insert failed for %s: %s", doc.filename, exc, exc_info=True
+            )
+            results.append({
+                "filename": doc.filename,
+                "status": "error",
+                "error": str(exc),
+            })
+
+    return {
+        "status": "completed",
+        "summary": {
+            "total": len(batch.documents),
+            "successful": successful,
+            "duplicates": duplicates,
+            "failed": failed,
+        },
+        "results": results,
+    }
+
+
+# ============================================================================
+# HASH PRECHECK  (client-side dedup before uploading)
+# ============================================================================
+
+class HashCheckIn(BaseModel):
+    hashes: List[str]
+
+
+@router.post("/check-hashes")
+async def check_hashes(
+    data: HashCheckIn,
+    user_id: str = Depends(get_current_user_id),
+):
+    """Return which of the supplied SHA-256 hashes already exist in the KB.
+
+    The wizard hashes files locally before uploading and posts the list here
+    to skip duplicates without sending the file bytes. Response shape:
+
+        { "existing": { "<hash>": { "document_id": "...", "ready": true } } }
+
+    Hashes not present in the response do not exist in the KB.
+    """
+    if not data.hashes:
+        return {"existing": {}}
+
+    # Cap query size to keep the IN() clause sane.
+    hashes = [h for h in data.hashes if h][:500]
+    if not hashes:
+        return {"existing": {}}
+
+    db = get_supabase()
+    try:
+        rows = (
+            db.table("brain_documents")
+            .select("id, content_hash, is_processed, filename, title")
+            .in_("content_hash", hashes)
+            .execute()
+            .data
+            or []
+        )
+    except Exception as e:
+        logger.warning("check_hashes query failed: %s", e)
+        return {"existing": {}}
+
+    existing = {
+        r["content_hash"]: {
+            "document_id": r["id"],
+            "ready": bool(r.get("is_processed")),
+            "filename": r.get("filename"),
+            "title": r.get("title"),
+        }
+        for r in rows
+        if r.get("content_hash")
+    }
+    return {"existing": existing}
+
+
+# ============================================================================
 # SEARCH
 # ============================================================================
 
