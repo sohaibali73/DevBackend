@@ -602,6 +602,18 @@ class ChatAgentRequest(BaseModel):
     yang: Optional[YangOverrides] = None  # YANG per-request feature overrides
     # Optional client envelope injected by the Electron desktop app.
     client: Optional[ClientEnvelope] = None
+    # Knowledge Base attachments — set by the FE when the user attaches docs
+    # from the KB picker. PDFs are injected as native Anthropic document
+    # blocks on the last user message; other types are inlined as text in the
+    # system prompt. See _fetch_kb_attached_docs below.
+    kb_doc_ids: Optional[List[str]] = None
+    kb_docs: Optional[List[Dict]] = None
+    # Knowledge Stacks — FE-built RAG preamble is already inlined in `content`,
+    # these fields are accepted so they don't 422 the request and so they can
+    # be persisted as message metadata downstream.
+    stack_id: Optional[str] = None
+    stack_mode: Optional[str] = None
+    stack_sources: Optional[List[Dict]] = None
 
 
 # ---------------------------------------------------------------------------
@@ -913,6 +925,106 @@ async def _fetch_kb_doc_refs(db, user_content: str) -> str:
     except Exception:
         # Don't let KB lookup failures break the chat endpoint
         return ""
+
+
+async def _fetch_kb_attached_docs(
+    db,
+    kb_doc_ids: Optional[List[str]],
+    user_id: str,
+) -> tuple[list, str]:
+    """
+    Fetch KB documents the user explicitly attached via the composer's KB
+    picker. Returns ``(pdf_blocks, text_block)``:
+
+    * ``pdf_blocks`` — list of Anthropic native ``document`` content blocks
+      (base64-encoded PDFs). Prepended to the last user message so Claude
+      can read the PDF directly with citation support.
+    * ``text_block`` — system-prompt text appended for any non-PDF attachment
+      (DOCX, TXT, MD, HTML, …). Uses the document's extracted ``raw_content``.
+
+    Safe no-op on any error or when ``kb_doc_ids`` is empty.
+    """
+    if not kb_doc_ids:
+        return [], ""
+
+    import base64 as _b64
+
+    def _load_rows():
+        try:
+            return db.table("brain_documents").select(
+                "id, filename, title, file_type, storage_path, raw_content, uploaded_by"
+            ).in_("id", list(kb_doc_ids)).execute().data or []
+        except Exception as e:
+            logger.warning("_fetch_kb_attached_docs query failed: %s", e)
+            return []
+
+    rows = await asyncio.to_thread(_load_rows)
+    if not rows:
+        return [], ""
+
+    pdf_blocks: list = []
+    text_chunks: list[str] = []
+
+    for row in rows:
+        # Defense in depth: only serve docs that belong to this user.
+        # uploaded_by may be NULL on legacy rows — allow those through.
+        owner = row.get("uploaded_by")
+        if owner and owner != user_id:
+            logger.warning(
+                "kb_doc %s requested by %s but owned by %s — skipped",
+                row.get("id"), user_id, owner,
+            )
+            continue
+
+        filename = row.get("filename") or row.get("title") or "document"
+        title = row.get("title") or filename
+        file_type = (row.get("file_type") or "").lower()
+        storage_path = row.get("storage_path")
+        is_pdf = (
+            file_type == "application/pdf"
+            or filename.lower().endswith(".pdf")
+        )
+
+        if is_pdf and storage_path and os.path.exists(storage_path):
+            try:
+                with open(storage_path, "rb") as fh:
+                    pdf_bytes = fh.read()
+                pdf_blocks.append({
+                    "type": "document",
+                    "source": {
+                        "type": "base64",
+                        "media_type": "application/pdf",
+                        "data": _b64.b64encode(pdf_bytes).decode("ascii"),
+                    },
+                    "title": title,
+                    "context": f"KB-attached document: {filename}",
+                    "citations": {"enabled": True},
+                })
+                continue
+            except Exception as e:
+                logger.warning(
+                    "kb_doc %s PDF read failed (%s) — falling back to raw_content",
+                    row.get("id"), e,
+                )
+
+        # Non-PDF, or PDF whose binary is unavailable: fall back to extracted text.
+        raw = (row.get("raw_content") or "").strip()
+        if raw:
+            text_chunks.append(f"### {title} ({filename})\n{raw}")
+
+    text_block = ""
+    if text_chunks:
+        text_block = (
+            "\n\n<attached_kb_docs>\n"
+            "Documents the user attached to THIS message from the persistent "
+            "knowledge base. Treat them the same as files attached to the "
+            "current conversation: answer from their contents directly, do "
+            "NOT call search_knowledge_base to re-fetch.\n\n"
+            f"{chr(10).join(text_chunks)}\n"
+            "</attached_kb_docs>"
+        )
+
+    return pdf_blocks, text_block
 
 
 # ---------------------------------------------------------------------------
@@ -1301,6 +1413,7 @@ async def chat_agent(
         kb_doc_context,
         doc_rag_context,
         conversation_file_ids,
+        kb_attached,
     ) = await asyncio.gather(
         asyncio.to_thread(_insert_user_message),
         asyncio.to_thread(_fetch_history),
@@ -1309,8 +1422,10 @@ async def chat_agent(
         _fetch_kb_doc_refs(db, data.content),
         _fetch_doc_rag_context(db, conversation_id, data.content),
         asyncio.to_thread(_fetch_conversation_file_ids),
+        _fetch_kb_attached_docs(db, data.kb_doc_ids, user_id),
         return_exceptions=False,
     )
+    kb_attached_pdf_blocks, kb_attached_text = kb_attached
 
     # The just-inserted user message is the last item; exclude it from history.
     history = [
@@ -1378,6 +1493,7 @@ async def chat_agent(
             system_prompt_base = (
                 f"{get_base_prompt()}\n\n{get_chat_prompt()}"
                 f"{file_context}{kb_context}{kb_doc_context}{doc_rag_context}"
+                f"{kb_attached_text}"
             )
 
             # ── YANG Autopilot: <learned_preferences> injection DISABLED ──
@@ -1488,10 +1604,16 @@ async def chat_agent(
             # previews on disk, pass them as Claude Vision image content blocks.
             # This lets the LLM literally SEE the slide designs, graphics, and
             # branding rather than only reading extracted text.
+            #
+            # KB-attached PDFs are also folded in here as native ``document``
+            # content blocks — they come BEFORE the user text so Claude reads
+            # the doc, then the instruction.
             pptx_vision_blocks = await _get_pptx_vision_blocks(db, conversation_id)
-            if pptx_vision_blocks:
+            if pptx_vision_blocks or kb_attached_pdf_blocks:
                 last_user_content: list = (
-                    [{"type": "text", "text": data.content}] + pptx_vision_blocks
+                    list(kb_attached_pdf_blocks)
+                    + [{"type": "text", "text": data.content}]
+                    + list(pptx_vision_blocks)
                 )
                 messages = sanitize_message_history(
                     history + [{"role": "user", "content": last_user_content}]
@@ -2998,12 +3120,18 @@ async def _chat_generic_endpoint(
     file_context = await _fetch_file_context(db, conversation_id)
     kb_context = await _fetch_kb_context(db, data.content, user_id=user_id)
     doc_rag_context = await _fetch_doc_rag_context(db, conversation_id, data.content)
+    # KB-attached docs from the composer. Non-Claude providers (OpenAI,
+    # OpenRouter, …) don't accept Anthropic-native document blocks, so the
+    # PDF blocks are dropped here and only the extracted-text fallback is
+    # injected. PDFs without raw_content will be invisible on these
+    # providers — acceptable since OpenAI users typically chat with text.
+    _, kb_attached_text = await _fetch_kb_attached_docs(db, data.kb_doc_ids, user_id)
 
     # Build system prompt
     system_prompt = (
         f"You are an expert AI assistant for financial analysis and trading. "
         f"Provide accurate, helpful responses. Use tools when appropriate."
-        f"{file_context}{kb_context}{doc_rag_context}"
+        f"{file_context}{kb_context}{doc_rag_context}{kb_attached_text}"
     )
 
     # Get tools for this provider
