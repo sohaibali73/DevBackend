@@ -68,6 +68,13 @@ COPY db/ ./db/
 COPY core/ ./core/
 COPY api/ ./api/
 
+# ── Norgate ticker universe dump (~12 MB) ─────────────────────────────────────
+# Consumed by core/norgate_index.py at startup. Path resolution there checks
+# <repo_root>/ALL NORGATE TICKERS.txt first, which on Railway resolves to
+# /app/ALL NORGATE TICKERS.txt. Without this COPY the lookup_norgate_ticker
+# tool fails at runtime with "Norgate ticker file not found".
+COPY ["ALL NORGATE TICKERS.txt", "./ALL NORGATE TICKERS.txt"]
+
 # ── Potomac skill assets (logos, templates) ───────────────────────────────────
 # ClaudeSkills/ contains the Potomac brand assets (logos, helpers.js, examples)
 # used by DocxSandbox and PptxSandbox for branded document generation.
