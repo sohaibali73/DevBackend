@@ -31,11 +31,55 @@ import logging
 import os
 import re
 import threading
+from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
 logger = logging.getLogger(__name__)
 
-DEFAULT_PATH = r"C:\Users\SohaibAli\Videos\Development\DevBackend\ALL NORGATE TICKERS.txt"
+# ── Path resolution ──────────────────────────────────────────────────────────
+# The Norgate dump is committed to the repo at the project root as
+# `ALL NORGATE TICKERS.txt` (12 MB). To make the same code work on Windows
+# dev AND Linux/Railway prod without forking, we resolve the path at module
+# load time by walking these candidates in order:
+#
+#   1. $NORGATE_TICKER_FILE env var (explicit override; wins always)
+#   2. <repo_root>/ALL NORGATE TICKERS.txt        — the committed location
+#   3. <repo_root>/data/norgate_tickers.txt       — alt slug if someone renames
+#   4. <repo_root>/ALL_NORGATE_TICKERS.txt        — underscored alt
+#   5. /data/norgate_tickers.txt                  — Railway volume convention
+#
+# The previously-hardcoded Windows path is kept only as a last-resort fallback
+# so existing local-dev workflows don't break.
+
+_REPO_ROOT = Path(__file__).resolve().parent.parent
+_LEGACY_WIN_PATH = r"C:\Users\SohaibAli\Videos\Development\DevBackend\ALL NORGATE TICKERS.txt"
+
+
+def _resolve_default_path() -> str:
+    env_path = os.environ.get("NORGATE_TICKER_FILE", "").strip()
+    if env_path:
+        return env_path
+
+    candidates = [
+        _REPO_ROOT / "ALL NORGATE TICKERS.txt",
+        _REPO_ROOT / "data" / "norgate_tickers.txt",
+        _REPO_ROOT / "ALL_NORGATE_TICKERS.txt",
+        Path("/data/norgate_tickers.txt"),
+        Path(_LEGACY_WIN_PATH),
+    ]
+    for p in candidates:
+        try:
+            if p.exists() and p.is_file():
+                return str(p)
+        except OSError:
+            continue
+
+    # Nothing found — return the repo-root candidate so the resulting error
+    # message at load time tells the operator where to drop the file.
+    return str(_REPO_ROOT / "ALL NORGATE TICKERS.txt")
+
+
+DEFAULT_PATH = _resolve_default_path()
 
 # Symbols use these prefixes by convention; surfaced in tool output so the
 # model can compose composite formulas (Foreign("&ES", "C") etc.) without
@@ -76,12 +120,28 @@ class NorgateIndex:
 
     @classmethod
     def get(cls, path: Optional[str] = None) -> "NorgateIndex":
-        """Return the process-wide singleton, building it on first call."""
+        """Return the process-wide singleton, building it on first call.
+
+        Path resolution order:
+          1. ``path`` argument (caller override)
+          2. ``$NORGATE_TICKER_FILE`` env var
+          3. ``DEFAULT_PATH`` from _resolve_default_path() — walks committed
+             repo locations + Railway volume conventions
+        """
         if cls._instance is not None:
             return cls._instance
         with cls._instance_lock:
             if cls._instance is None:
-                cls._instance = cls(path or os.environ.get("NORGATE_TICKER_FILE") or DEFAULT_PATH)
+                resolved = path or os.environ.get("NORGATE_TICKER_FILE") or DEFAULT_PATH
+                logger.info("NorgateIndex resolving ticker file at %s", resolved)
+                cls._instance = cls(resolved)
+                if cls._instance.error:
+                    logger.warning(
+                        "NorgateIndex unavailable (%s). Tried: $NORGATE_TICKER_FILE, "
+                        "<repo>/ALL NORGATE TICKERS.txt, <repo>/data/norgate_tickers.txt, "
+                        "/data/norgate_tickers.txt",
+                        cls._instance.error,
+                    )
         return cls._instance
 
     def __init__(self, path: str):
