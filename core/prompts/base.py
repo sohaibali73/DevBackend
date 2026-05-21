@@ -330,9 +330,18 @@ HOUSE_RULES = '''CODE QUALITY RULES (non-negotiable — the server-side validato
     after TimeFrameRestore(). Mixing raw higher-TF arrays with daily
     arrays produces silent corruption.
 
- 9. Always clean Buy/Sell pairs:
-      Buy  = ExRem(Buy,  Sell);
-      Sell = ExRem(Sell, Buy);
+ 9. Always clean Buy/Sell pairs AND explicitly disable shorting by default:
+      Buy   = ExRem(Buy,  Sell);
+      Sell  = ExRem(Sell, Buy);
+      Short = Cover = 0;          // MANDATORY — emit on EVERY strategy,
+                                  // including long-only. Without it, stale
+                                  // Short/Cover arrays from prior runs or
+                                  // included helpers can leak short trades
+                                  // into a "long only" backtest. If the
+                                  // strategy genuinely shorts, assign
+                                  // Short/Cover BEFORE this line and then
+                                  // ExRem the Short/Cover pair INSTEAD of
+                                  // zeroing them out.
 
 10. Every standalone strategy MUST call OptimizerSetEngine("trib"); — the
     Tribes (TRIB) engine is the house default. Place it once in the
@@ -384,7 +393,11 @@ RAG section order. Use _SECTION_BEGIN("Name") / _SECTION_END() markers.
   Section 1 — Strategy Parameters       (RAG varDefault/varMin/varMax/varStep + Param + Optimize)
   Section 2 — Backtest Settings         (SetOption, SetTradeDelays, OptimizerSetEngine("trib"))
   Section 3 — Indicators                (all indicator calculations)
-  Section 4 — Trading Logic             (Buy, Sell, Short, Cover; then ExRem on each pair)
+  Section 4 — Trading Logic             (Buy, Sell, then ExRem on the pair, then
+                                          ALWAYS `Short = Cover = 0;` — even on long-only
+                                          strategies. If the strategy actually shorts,
+                                          assign Short/Cover first and ExRem that pair
+                                          instead of zeroing.)
   Section 5 — Risk Management           (ApplyStop calls — at least stopTypeLoss + optional trailing)
   Section 6 — Chart Visualization       (Plot, PlotOHLC, PlotShapes for signal arrows)
   Section 7 — Exploration               (Filter + AddColumn / AddMultiTextColumn)
@@ -424,10 +437,11 @@ RSI_Val    = RSI(RSI_Period);
 _SECTION_END();
 
 _SECTION_BEGIN("Trading Logic");
-Buy  = Cross(FastMA_Val, SlowMA_Val) AND RSI_Val < 50;
-Sell = Cross(SlowMA_Val, FastMA_Val) OR  RSI_Val > 70;
-Buy  = ExRem(Buy,  Sell);
-Sell = ExRem(Sell, Buy);
+Buy   = Cross(FastMA_Val, SlowMA_Val) AND RSI_Val < 50;
+Sell  = Cross(SlowMA_Val, FastMA_Val) OR  RSI_Val > 70;
+Buy   = ExRem(Buy,  Sell);
+Sell  = ExRem(Sell, Buy);
+Short = Cover = 0;                                // long-only — disable shorting explicitly
 BuyPrice  = Close;
 SellPrice = Close;
 _SECTION_END();
@@ -501,8 +515,9 @@ Sell = IIf(votingMethod == 0, SellVotes > Active / 2,
        IIf(votingMethod == 1, SellVotes >= 1,
                               SellVotes == Active));
 
-Buy  = ExRem(Buy,  Sell);
-Sell = ExRem(Sell, Buy);
+Buy   = ExRem(Buy,  Sell);
+Sell  = ExRem(Sell, Buy);
+Short = Cover = 0;                  // long-only composite — disable shorting explicitly
 
 ApplyStop(stopTypeLoss, stopModePercent, _Risk_StopPct, True);
 

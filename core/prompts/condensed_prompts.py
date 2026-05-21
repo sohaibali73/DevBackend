@@ -94,6 +94,10 @@ Requirements:
 2. Correct syntax: RSI(14), MA(Close, 20), not RSI(Close, 14)
 3. All params use Optimize(): Optimize("Description", default, min, max, step)
 4. Signal cleanup: Buy = ExRem(Buy, Sell); Sell = ExRem(Sell, Buy);
+   Then ALWAYS append `Short = Cover = 0;` — even on long-only strategies —
+   to prevent stale Short/Cover arrays from leaking short trades into the
+   backtest. If the strategy genuinely shorts, assign Short/Cover first and
+   ExRem that pair instead of zeroing.
 5. Realistic defaults for good backtest results
 6. SetTradeDelays(), SetOption() for proper backtesting
 7. Plot() statements for visualization
