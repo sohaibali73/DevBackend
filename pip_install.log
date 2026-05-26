@@ -1,0 +1,842 @@
+Collecting fastapi (from -r requirements.txt (line 7))
+  Downloading fastapi-0.136.1-py3-none-any.whl.metadata (28 kB)
+Collecting gunicorn (from -r requirements.txt (line 9))
+  Downloading gunicorn-26.0.0-py3-none-any.whl.metadata (5.4 kB)
+Collecting anthropic>=0.84.0 (from -r requirements.txt (line 12))
+  Downloading anthropic-0.104.0-py3-none-any.whl.metadata (3.2 kB)
+Collecting openai>=1.0.0 (from -r requirements.txt (line 13))
+  Downloading openai-2.38.0-py3-none-any.whl.metadata (31 kB)
+Collecting httpx (from -r requirements.txt (line 14))
+  Downloading httpx-0.28.1-py3-none-any.whl.metadata (7.1 kB)
+Collecting h2 (from -r requirements.txt (line 15))
+  Downloading h2-4.3.0-py3-none-any.whl.metadata (5.1 kB)
+Collecting supabase (from -r requirements.txt (line 20))
+  Downloading supabase-2.30.0-py3-none-any.whl.metadata (4.6 kB)
+Collecting asyncpg>=0.29.0 (from -r requirements.txt (line 21))
+  Downloading asyncpg-0.31.0-cp314-cp314-win_amd64.whl.metadata (4.5 kB)
+Collecting redis>=5.0.0 (from -r requirements.txt (line 24))
+  Downloading redis-7.4.0-py3-none-any.whl.metadata (12 kB)
+Collecting PyJWT>=2.8.0 (from PyJWT[crypto]>=2.8.0->-r requirements.txt (line 27))
+  Downloading pyjwt-2.13.0-py3-none-any.whl.metadata (3.4 kB)
+Collecting tavily-python (from -r requirements.txt (line 30))
+  Downloading tavily_python-0.7.24-py3-none-any.whl.metadata (11 kB)
+Collecting yfinance (from -r requirements.txt (line 31))
+  Downloading yfinance-1.3.0-py2.py3-none-any.whl.metadata (6.1 kB)
+Collecting requests (from -r requirements.txt (line 32))
+  Downloading requests-2.34.2-py3-none-any.whl.metadata (4.8 kB)
+Collecting cryptography>=41.0 (from -r requirements.txt (line 37))
+  Downloading cryptography-48.0.0-cp311-abi3-win_amd64.whl.metadata (4.3 kB)
+Collecting pypdf (from -r requirements.txt (line 44))
+  Downloading pypdf-6.12.1-py3-none-any.whl.metadata (7.2 kB)
+Collecting python-docx (from -r requirements.txt (line 45))
+  Downloading python_docx-1.2.0-py3-none-any.whl.metadata (2.0 kB)
+Collecting PyMuPDF (from -r requirements.txt (line 46))
+  Downloading pymupdf-1.27.2.3-cp310-abi3-win_amd64.whl.metadata (24 kB)
+Collecting python-pptx>=0.6.21 (from -r requirements.txt (line 47))
+  Downloading python_pptx-1.0.2-py3-none-any.whl.metadata (2.5 kB)
+Collecting Pillow>=10.0.0 (from -r requirements.txt (line 48))
+  Downloading pillow-12.2.0-cp314-cp314-win_amd64.whl.metadata (9.0 kB)
+Collecting imagehash>=4.3.1 (from -r requirements.txt (line 51))
+  Downloading ImageHash-4.3.2-py2.py3-none-any.whl.metadata (8.4 kB)
+Collecting filetype (from -r requirements.txt (line 54))
+  Downloading filetype-1.2.0-py2.py3-none-any.whl.metadata (6.5 kB)
+Collecting pdfplumber (from -r requirements.txt (line 58))
+  Downloading pdfplumber-0.11.9-py3-none-any.whl.metadata (43 kB)
+Collecting openpyxl (from -r requirements.txt (line 59))
+  Downloading openpyxl-3.1.5-py2.py3-none-any.whl.metadata (2.5 kB)
+Collecting pytesseract (from -r requirements.txt (line 60))
+  Downloading pytesseract-0.3.13-py3-none-any.whl.metadata (11 kB)
+Collecting python-dotenv (from -r requirements.txt (line 66))
+  Downloading python_dotenv-1.2.2-py3-none-any.whl.metadata (27 kB)
+Collecting pydantic (from -r requirements.txt (line 67))
+  Downloading pydantic-2.13.4-py3-none-any.whl.metadata (109 kB)
+Collecting pydantic-settings (from -r requirements.txt (line 68))
+  Downloading pydantic_settings-2.14.1-py3-none-any.whl.metadata (3.4 kB)
+Collecting python-multipart (from -r requirements.txt (line 69))
+  Downloading python_multipart-0.0.29-py3-none-any.whl.metadata (2.1 kB)
+Collecting aiofiles (from -r requirements.txt (line 70))
+  Downloading aiofiles-25.1.0-py3-none-any.whl.metadata (6.3 kB)
+Collecting email-validator (from -r requirements.txt (line 71))
+  Downloading email_validator-2.3.0-py3-none-any.whl.metadata (26 kB)
+Collecting PyYAML>=6.0 (from -r requirements.txt (line 72))
+  Downloading pyyaml-6.0.3-cp314-cp314-win_amd64.whl.metadata (2.4 kB)
+Collecting numpy (from -r requirements.txt (line 78))
+  Downloading numpy-2.4.6-cp314-cp314-win_amd64.whl.metadata (6.6 kB)
+Collecting pandas (from -r requirements.txt (line 79))
+  Downloading pandas-3.0.3-cp314-cp314-win_amd64.whl.metadata (19 kB)
+Collecting edge-tts (from -r requirements.txt (line 85))
+  Downloading edge_tts-7.2.8-py3-none-any.whl.metadata (5.5 kB)
+Collecting SpeechRecognition (from -r requirements.txt (line 86))
+  Downloading speechrecognition-3.16.1-py3-none-any.whl.metadata (28 kB)
+Collecting pydub (from -r requirements.txt (line 87))
+  Downloading pydub-0.25.1-py2.py3-none-any.whl.metadata (1.4 kB)
+Collecting sentence-transformers==2.2.2 (from -r requirements.txt (line 93))
+  Downloading sentence-transformers-2.2.2.tar.gz (85 kB)
+  Installing build dependencies: started
+  Installing build dependencies: finished with status 'done'
+  Getting requirements to build wheel: started
+  Getting requirements to build wheel: finished with status 'done'
+  Preparing metadata (pyproject.toml): started
+  Preparing metadata (pyproject.toml): finished with status 'done'
+Collecting aiosqlite (from -r requirements.txt (line 99))
+  Downloading aiosqlite-0.22.1-py3-none-any.whl.metadata (4.3 kB)
+Collecting faker (from -r requirements.txt (line 100))
+  Downloading faker-40.18.0-py3-none-any.whl.metadata (16 kB)
+Collecting llm-sandbox (from -r requirements.txt (line 106))
+  Downloading llm_sandbox-0.3.39-py3-none-any.whl.metadata (31 kB)
+Collecting docker (from -r requirements.txt (line 107))
+  Downloading docker-7.1.0-py3-none-any.whl.metadata (3.8 kB)
+Collecting torch<3.0,>=2.0 (from -r requirements.txt (line 117))
+  Downloading torch-2.12.0-cp314-cp314-win_amd64.whl.metadata (31 kB)
+Collecting transformers<5.0,>=4.40 (from -r requirements.txt (line 118))
+  Downloading transformers-4.57.6-py3-none-any.whl.metadata (43 kB)
+Collecting uvicorn[standard] (from -r requirements.txt (line 8))
+  Downloading uvicorn-0.47.0-py3-none-any.whl.metadata (6.7 kB)
+Collecting python-jose[cryptography] (from -r requirements.txt (line 35))
+  Downloading python_jose-3.5.0-py2.py3-none-any.whl.metadata (5.5 kB)
+Collecting passlib[bcrypt] (from -r requirements.txt (line 36))
+  Downloading passlib-1.7.4-py2.py3-none-any.whl.metadata (1.7 kB)
+Collecting unstructured[all-docs] (from -r requirements.txt (line 55))
+  Downloading unstructured-0.18.32-py3-none-any.whl.metadata (25 kB)
+Collecting tqdm (from sentence-transformers==2.2.2->-r requirements.txt (line 93))
+  Downloading tqdm-4.67.3-py3-none-any.whl.metadata (57 kB)
+Collecting torchvision (from sentence-transformers==2.2.2->-r requirements.txt (line 93))
+  Downloading torchvision-0.27.0-cp314-cp314-win_amd64.whl.metadata (5.5 kB)
+Collecting scikit-learn (from sentence-transformers==2.2.2->-r requirements.txt (line 93))
+  Downloading scikit_learn-1.8.0-cp314-cp314-win_amd64.whl.metadata (11 kB)
+Collecting scipy (from sentence-transformers==2.2.2->-r requirements.txt (line 93))
+  Downloading scipy-1.17.1-cp314-cp314-win_amd64.whl.metadata (60 kB)
+Collecting nltk (from sentence-transformers==2.2.2->-r requirements.txt (line 93))
+  Downloading nltk-3.9.4-py3-none-any.whl.metadata (3.2 kB)
+Collecting sentencepiece (from sentence-transformers==2.2.2->-r requirements.txt (line 93))
+  Downloading sentencepiece-0.2.1-cp314-cp314-win_amd64.whl.metadata (10 kB)
+Collecting huggingface-hub>=0.4.0 (from sentence-transformers==2.2.2->-r requirements.txt (line 93))
+  Downloading huggingface_hub-1.16.1-py3-none-any.whl.metadata (14 kB)
+Collecting filelock (from torch<3.0,>=2.0->-r requirements.txt (line 117))
+  Downloading filelock-3.29.0-py3-none-any.whl.metadata (2.0 kB)
+Collecting typing-extensions>=4.10.0 (from torch<3.0,>=2.0->-r requirements.txt (line 117))
+  Downloading typing_extensions-4.15.0-py3-none-any.whl.metadata (3.3 kB)
+Collecting setuptools<82 (from torch<3.0,>=2.0->-r requirements.txt (line 117))
+  Downloading setuptools-81.0.0-py3-none-any.whl.metadata (6.6 kB)
+Collecting sympy>=1.13.3 (from torch<3.0,>=2.0->-r requirements.txt (line 117))
+  Downloading sympy-1.14.0-py3-none-any.whl.metadata (12 kB)
+Collecting networkx>=2.5.1 (from torch<3.0,>=2.0->-r requirements.txt (line 117))
+  Downloading networkx-3.6.1-py3-none-any.whl.metadata (6.8 kB)
+Collecting jinja2 (from torch<3.0,>=2.0->-r requirements.txt (line 117))
+  Downloading jinja2-3.1.6-py3-none-any.whl.metadata (2.9 kB)
+Collecting fsspec>=0.8.5 (from torch<3.0,>=2.0->-r requirements.txt (line 117))
+  Downloading fsspec-2026.4.0-py3-none-any.whl.metadata (10 kB)
+Collecting huggingface-hub>=0.4.0 (from sentence-transformers==2.2.2->-r requirements.txt (line 93))
+  Downloading huggingface_hub-0.36.2-py3-none-any.whl.metadata (15 kB)
+Requirement already satisfied: packaging>=20.0 in .\.venv\Lib\site-packages (from transformers<5.0,>=4.40->-r requirements.txt (line 118)) (26.2)
+Collecting regex!=2019.12.17 (from transformers<5.0,>=4.40->-r requirements.txt (line 118))
+  Downloading regex-2026.5.9-cp314-cp314-win_amd64.whl.metadata (41 kB)
+Collecting tokenizers<=0.23.0,>=0.22.0 (from transformers<5.0,>=4.40->-r requirements.txt (line 118))
+  Downloading tokenizers-0.22.2-cp39-abi3-win_amd64.whl.metadata (7.4 kB)
+Collecting safetensors>=0.4.3 (from transformers<5.0,>=4.40->-r requirements.txt (line 118))
+  Downloading safetensors-0.7.0-cp38-abi3-win_amd64.whl.metadata (4.2 kB)
+Collecting starlette>=0.46.0 (from fastapi->-r requirements.txt (line 7))
+  Downloading starlette-1.0.1-py3-none-any.whl.metadata (6.3 kB)
+Collecting typing-inspection>=0.4.2 (from fastapi->-r requirements.txt (line 7))
+  Downloading typing_inspection-0.4.2-py3-none-any.whl.metadata (2.6 kB)
+Collecting annotated-doc>=0.0.2 (from fastapi->-r requirements.txt (line 7))
+  Downloading annotated_doc-0.0.4-py3-none-any.whl.metadata (6.6 kB)
+Collecting click>=7.0 (from uvicorn[standard]->-r requirements.txt (line 8))
+  Downloading click-8.4.1-py3-none-any.whl.metadata (2.6 kB)
+Collecting h11>=0.8 (from uvicorn[standard]->-r requirements.txt (line 8))
+  Downloading h11-0.16.0-py3-none-any.whl.metadata (8.3 kB)
+Collecting colorama>=0.4 (from uvicorn[standard]->-r requirements.txt (line 8))
+  Downloading colorama-0.4.6-py2.py3-none-any.whl.metadata (17 kB)
+Collecting httptools>=0.6.3 (from uvicorn[standard]->-r requirements.txt (line 8))
+  Downloading httptools-0.7.1-cp314-cp314-win_amd64.whl.metadata (3.6 kB)
+Collecting watchfiles>=0.20 (from uvicorn[standard]->-r requirements.txt (line 8))
+  Downloading watchfiles-1.2.0-cp314-cp314-win_amd64.whl.metadata (5.0 kB)
+Collecting websockets>=10.4 (from uvicorn[standard]->-r requirements.txt (line 8))
+  Downloading websockets-16.0-cp314-cp314-win_amd64.whl.metadata (7.0 kB)
+Collecting anyio<5,>=3.5.0 (from anthropic>=0.84.0->-r requirements.txt (line 12))
+  Downloading anyio-4.13.0-py3-none-any.whl.metadata (4.5 kB)
+Collecting distro<2,>=1.7.0 (from anthropic>=0.84.0->-r requirements.txt (line 12))
+  Downloading distro-1.9.0-py3-none-any.whl.metadata (6.8 kB)
+Collecting docstring-parser<1,>=0.15 (from anthropic>=0.84.0->-r requirements.txt (line 12))
+  Downloading docstring_parser-0.18.0-py3-none-any.whl.metadata (3.5 kB)
+Collecting jiter<1,>=0.4.0 (from anthropic>=0.84.0->-r requirements.txt (line 12))
+  Downloading jiter-0.15.0-cp314-cp314-win_amd64.whl.metadata (5.3 kB)
+Collecting sniffio (from anthropic>=0.84.0->-r requirements.txt (line 12))
+  Downloading sniffio-1.3.1-py3-none-any.whl.metadata (3.9 kB)
+Collecting certifi (from httpx->-r requirements.txt (line 14))
+  Downloading certifi-2026.5.20-py3-none-any.whl.metadata (2.5 kB)
+Collecting httpcore==1.* (from httpx->-r requirements.txt (line 14))
+  Downloading httpcore-1.0.9-py3-none-any.whl.metadata (21 kB)
+Collecting idna (from httpx->-r requirements.txt (line 14))
+  Downloading idna-3.16-py3-none-any.whl.metadata (6.4 kB)
+Collecting annotated-types>=0.6.0 (from pydantic->-r requirements.txt (line 67))
+  Downloading annotated_types-0.7.0-py3-none-any.whl.metadata (15 kB)
+Collecting pydantic-core==2.46.4 (from pydantic->-r requirements.txt (line 67))
+  Downloading pydantic_core-2.46.4-cp314-cp314-win_amd64.whl.metadata (6.7 kB)
+Collecting hyperframe<7,>=6.1 (from h2->-r requirements.txt (line 15))
+  Downloading hyperframe-6.1.0-py3-none-any.whl.metadata (4.3 kB)
+Collecting hpack<5,>=4.1 (from h2->-r requirements.txt (line 15))
+  Downloading hpack-4.1.0-py3-none-any.whl.metadata (4.6 kB)
+Collecting realtime==2.30.0 (from supabase->-r requirements.txt (line 20))
+  Downloading realtime-2.30.0-py3-none-any.whl.metadata (7.0 kB)
+Collecting supabase-functions==2.30.0 (from supabase->-r requirements.txt (line 20))
+  Downloading supabase_functions-2.30.0-py3-none-any.whl.metadata (2.4 kB)
+Collecting storage3==2.30.0 (from supabase->-r requirements.txt (line 20))
+  Downloading storage3-2.30.0-py3-none-any.whl.metadata (2.1 kB)
+Collecting supabase-auth==2.30.0 (from supabase->-r requirements.txt (line 20))
+  Downloading supabase_auth-2.30.0-py3-none-any.whl.metadata (6.4 kB)
+Collecting postgrest==2.30.0 (from supabase->-r requirements.txt (line 20))
+  Downloading postgrest-2.30.0-py3-none-any.whl.metadata (3.4 kB)
+Collecting yarl>=1.22.0 (from supabase->-r requirements.txt (line 20))
+  Downloading yarl-1.24.2-cp314-cp314-win_amd64.whl.metadata (97 kB)
+Collecting deprecation>=2.1.0 (from postgrest==2.30.0->supabase->-r requirements.txt (line 20))
+  Downloading deprecation-2.1.0-py2.py3-none-any.whl.metadata (4.6 kB)
+Collecting websockets>=10.4 (from uvicorn[standard]->-r requirements.txt (line 8))
+  Downloading websockets-15.0.1-py3-none-any.whl.metadata (6.8 kB)
+Collecting pyiceberg>=0.10.0 (from storage3==2.30.0->supabase->-r requirements.txt (line 20))
+  Downloading pyiceberg-0.11.1.tar.gz (1.1 MB)
+     ---------------------------------------- 1.1/1.1 MB 9.4 MB/s  0:00:00
+  Installing build dependencies: started
+  Installing build dependencies: finished with status 'done'
+  Getting requirements to build wheel: started
+  Getting requirements to build wheel: finished with status 'done'
+  Preparing metadata (pyproject.toml): started
+  Preparing metadata (pyproject.toml): finished with status 'done'
+Collecting strenum>=0.4.15 (from supabase-functions==2.30.0->supabase->-r requirements.txt (line 20))
+  Downloading StrEnum-0.4.15-py3-none-any.whl.metadata (5.3 kB)
+Collecting tiktoken>=0.5.1 (from tavily-python->-r requirements.txt (line 30))
+  Downloading tiktoken-0.13.0-cp314-cp314-win_amd64.whl.metadata (6.8 kB)
+Collecting multitasking>=0.0.7 (from yfinance->-r requirements.txt (line 31))
+  Downloading multitasking-0.0.13-py3-none-any.whl.metadata (16 kB)
+Collecting platformdirs>=2.0.0 (from yfinance->-r requirements.txt (line 31))
+  Downloading platformdirs-4.9.6-py3-none-any.whl.metadata (4.7 kB)
+Collecting pytz>=2022.5 (from yfinance->-r requirements.txt (line 31))
+  Downloading pytz-2026.2-py2.py3-none-any.whl.metadata (22 kB)
+Collecting frozendict>=2.3.4 (from yfinance->-r requirements.txt (line 31))
+  Downloading frozendict-2.4.7-py3-none-any.whl.metadata (23 kB)
+Collecting peewee>=3.16.2 (from yfinance->-r requirements.txt (line 31))
+  Downloading peewee-4.0.6-py3-none-any.whl.metadata (8.6 kB)
+Collecting beautifulsoup4>=4.11.1 (from yfinance->-r requirements.txt (line 31))
+  Downloading beautifulsoup4-4.14.3-py3-none-any.whl.metadata (3.8 kB)
+Collecting curl_cffi>=0.15 (from yfinance->-r requirements.txt (line 31))
+  Downloading curl_cffi-0.15.0-cp310-abi3-win_amd64.whl.metadata (18 kB)
+Collecting protobuf>=3.19.0 (from yfinance->-r requirements.txt (line 31))
+  Downloading protobuf-7.35.0-cp310-abi3-win_amd64.whl.metadata (595 bytes)
+Collecting charset_normalizer<4,>=2 (from requests->-r requirements.txt (line 32))
+  Downloading charset_normalizer-3.4.7-cp314-cp314-win_amd64.whl.metadata (41 kB)
+Collecting urllib3<3,>=1.26 (from requests->-r requirements.txt (line 32))
+  Downloading urllib3-2.7.0-py3-none-any.whl.metadata (6.9 kB)
+Collecting ecdsa!=0.15 (from python-jose[cryptography]->-r requirements.txt (line 35))
+  Downloading ecdsa-0.19.2-py2.py3-none-any.whl.metadata (29 kB)
+Collecting rsa!=4.1.1,!=4.4,<5.0,>=4.0 (from python-jose[cryptography]->-r requirements.txt (line 35))
+  Downloading rsa-4.9.1-py3-none-any.whl.metadata (5.6 kB)
+Collecting pyasn1>=0.5.0 (from python-jose[cryptography]->-r requirements.txt (line 35))
+  Downloading pyasn1-0.6.3-py3-none-any.whl.metadata (8.4 kB)
+Collecting bcrypt>=3.1.0 (from passlib[bcrypt]->-r requirements.txt (line 36))
+  Downloading bcrypt-5.0.0-cp39-abi3-win_amd64.whl.metadata (10 kB)
+Collecting cffi>=2.0.0 (from cryptography>=41.0->-r requirements.txt (line 37))
+  Downloading cffi-2.0.0-cp314-cp314-win_amd64.whl.metadata (2.6 kB)
+Collecting lxml>=3.1.0 (from python-docx->-r requirements.txt (line 45))
+  Downloading lxml-6.1.1-cp314-cp314-win_amd64.whl.metadata (3.6 kB)
+Collecting XlsxWriter>=0.5.7 (from python-pptx>=0.6.21->-r requirements.txt (line 47))
+  Downloading xlsxwriter-3.2.9-py3-none-any.whl.metadata (2.7 kB)
+Collecting PyWavelets (from imagehash>=4.3.1->-r requirements.txt (line 51))
+  Downloading pywavelets-1.9.0-cp314-cp314-win_amd64.whl.metadata (7.6 kB)
+Collecting python-magic (from unstructured[all-docs]->-r requirements.txt (line 55))
+  Downloading python_magic-0.4.27-py2.py3-none-any.whl.metadata (5.8 kB)
+Collecting emoji (from unstructured[all-docs]->-r requirements.txt (line 55))
+  Downloading emoji-2.15.0-py3-none-any.whl.metadata (5.7 kB)
+Collecting dataclasses-json (from unstructured[all-docs]->-r requirements.txt (line 55))
+  Downloading dataclasses_json-0.6.7-py3-none-any.whl.metadata (25 kB)
+Collecting python-iso639 (from unstructured[all-docs]->-r requirements.txt (line 55))
+  Downloading python_iso639-2026.4.20-py3-none-any.whl.metadata (15 kB)
+Collecting langdetect (from unstructured[all-docs]->-r requirements.txt (line 55))
+  Downloading langdetect-1.0.9.tar.gz (981 kB)
+     ---------------------------------------- 981.5/981.5 kB 9.7 MB/s  0:00:00
+  Installing build dependencies: started
+  Installing build dependencies: finished with status 'done'
+  Getting requirements to build wheel: started
+  Getting requirements to build wheel: finished with status 'done'
+  Preparing metadata (pyproject.toml): started
+  Preparing metadata (pyproject.toml): finished with status 'done'
+Collecting rapidfuzz (from unstructured[all-docs]->-r requirements.txt (line 55))
+  Downloading rapidfuzz-3.14.5-cp314-cp314-win_amd64.whl.metadata (12 kB)
+Collecting backoff (from unstructured[all-docs]->-r requirements.txt (line 55))
+  Downloading backoff-2.2.1-py3-none-any.whl.metadata (14 kB)
+Collecting unstructured-client (from unstructured[all-docs]->-r requirements.txt (line 55))
+  Downloading unstructured_client-0.44.0-py3-none-any.whl.metadata (22 kB)
+Collecting wrapt (from unstructured[all-docs]->-r requirements.txt (line 55))
+  Downloading wrapt-2.2.0-cp314-cp314-win_amd64.whl.metadata (7.6 kB)
+Collecting psutil (from unstructured[all-docs]->-r requirements.txt (line 55))
+  Downloading psutil-7.2.2-cp37-abi3-win_amd64.whl.metadata (22 kB)
+Collecting python-oxmsg (from unstructured[all-docs]->-r requirements.txt (line 55))
+  Downloading python_oxmsg-0.0.2-py3-none-any.whl.metadata (5.0 kB)
+Collecting html5lib (from unstructured[all-docs]->-r requirements.txt (line 55))
+  Downloading html5lib-1.1-py2.py3-none-any.whl.metadata (16 kB)
+Collecting numba (from unstructured[all-docs]->-r requirements.txt (line 55))
+  Downloading numba-0.65.1-cp314-cp314-win_amd64.whl.metadata (3.0 kB)
+Collecting onnxruntime>=1.19.0 (from unstructured[all-docs]->-r requirements.txt (line 55))
+  Downloading onnxruntime-1.26.0-cp314-cp314-win_amd64.whl.metadata (5.5 kB)
+Collecting unstructured.pytesseract>=0.3.12 (from unstructured[all-docs]->-r requirements.txt (line 55))
+  Downloading unstructured.pytesseract-0.3.15-py3-none-any.whl.metadata (11 kB)
+Collecting markdown (from unstructured[all-docs]->-r requirements.txt (line 55))
+  Downloading markdown-3.10.2-py3-none-any.whl.metadata (5.1 kB)
+Collecting pikepdf (from unstructured[all-docs]->-r requirements.txt (line 55))
+  Downloading pikepdf-10.7.1-cp314-abi3-win_amd64.whl.metadata (10 kB)
+Collecting pdf2image (from unstructured[all-docs]->-r requirements.txt (line 55))
+  Downloading pdf2image-1.17.0-py3-none-any.whl.metadata (6.2 kB)
+Collecting pi_heif (from unstructured[all-docs]->-r requirements.txt (line 55))
+  Downloading pi_heif-1.3.0-cp314-cp314-win_amd64.whl.metadata (6.5 kB)
+Collecting google-cloud-vision (from unstructured[all-docs]->-r requirements.txt (line 55))
+  Downloading google_cloud_vision-3.14.0-py3-none-any.whl.metadata (9.5 kB)
+Collecting msoffcrypto-tool (from unstructured[all-docs]->-r requirements.txt (line 55))
+  Downloading msoffcrypto_tool-6.0.0-py3-none-any.whl.metadata (10 kB)
+Collecting effdet (from unstructured[all-docs]->-r requirements.txt (line 55))
+  Downloading effdet-0.4.1-py3-none-any.whl.metadata (33 kB)
+Collecting pypandoc (from unstructured[all-docs]->-r requirements.txt (line 55))
+  Downloading pypandoc-1.17-py3-none-any.whl.metadata (18 kB)
+Collecting onnx>=1.17.0 (from unstructured[all-docs]->-r requirements.txt (line 55))
+  Downloading onnx-1.21.0-cp312-abi3-win_amd64.whl.metadata (8.7 kB)
+Collecting xlrd (from unstructured[all-docs]->-r requirements.txt (line 55))
+  Downloading xlrd-2.0.2-py2.py3-none-any.whl.metadata (3.5 kB)
+Collecting pdfminer.six (from unstructured[all-docs]->-r requirements.txt (line 55))
+  Downloading pdfminer_six-20260107-py3-none-any.whl.metadata (4.3 kB)
+Collecting unstructured-inference>=1.1.1 (from unstructured[all-docs]->-r requirements.txt (line 55))
+  Downloading unstructured_inference-1.2.0-py3-none-any.whl.metadata (5.5 kB)
+Collecting pdfminer.six (from unstructured[all-docs]->-r requirements.txt (line 55))
+  Downloading pdfminer_six-20251230-py3-none-any.whl.metadata (4.3 kB)
+Collecting pypdfium2>=4.18.0 (from pdfplumber->-r requirements.txt (line 58))
+  Downloading pypdfium2-5.8.0-py3-none-win_amd64.whl.metadata (68 kB)
+Collecting et-xmlfile (from openpyxl->-r requirements.txt (line 59))
+  Downloading et_xmlfile-2.0.0-py3-none-any.whl.metadata (2.7 kB)
+Collecting dnspython>=2.0.0 (from email-validator->-r requirements.txt (line 71))
+  Downloading dnspython-2.8.0-py3-none-any.whl.metadata (5.7 kB)
+Collecting python-dateutil>=2.8.2 (from pandas->-r requirements.txt (line 79))
+  Downloading python_dateutil-2.9.0.post0-py2.py3-none-any.whl.metadata (8.4 kB)
+Collecting tzdata (from pandas->-r requirements.txt (line 79))
+  Downloading tzdata-2026.2-py2.py3-none-any.whl.metadata (1.4 kB)
+Collecting aiohttp<4.0.0,>=3.8.0 (from edge-tts->-r requirements.txt (line 85))
+  Downloading aiohttp-3.13.5-cp314-cp314-win_amd64.whl.metadata (8.4 kB)
+Collecting tabulate<1.0.0,>=0.4.4 (from edge-tts->-r requirements.txt (line 85))
+  Downloading tabulate-0.10.0-py3-none-any.whl.metadata (40 kB)
+Collecting aiohappyeyeballs>=2.5.0 (from aiohttp<4.0.0,>=3.8.0->edge-tts->-r requirements.txt (line 85))
+  Downloading aiohappyeyeballs-2.6.2-py3-none-any.whl.metadata (5.9 kB)
+Collecting aiosignal>=1.4.0 (from aiohttp<4.0.0,>=3.8.0->edge-tts->-r requirements.txt (line 85))
+  Downloading aiosignal-1.4.0-py3-none-any.whl.metadata (3.7 kB)
+Collecting attrs>=17.3.0 (from aiohttp<4.0.0,>=3.8.0->edge-tts->-r requirements.txt (line 85))
+  Downloading attrs-26.1.0-py3-none-any.whl.metadata (8.8 kB)
+Collecting frozenlist>=1.1.1 (from aiohttp<4.0.0,>=3.8.0->edge-tts->-r requirements.txt (line 85))
+  Downloading frozenlist-1.8.0-cp314-cp314-win_amd64.whl.metadata (21 kB)
+Collecting multidict<7.0,>=4.5 (from aiohttp<4.0.0,>=3.8.0->edge-tts->-r requirements.txt (line 85))
+  Downloading multidict-6.7.1-cp314-cp314-win_amd64.whl.metadata (5.5 kB)
+Collecting propcache>=0.2.0 (from aiohttp<4.0.0,>=3.8.0->edge-tts->-r requirements.txt (line 85))
+  Downloading propcache-0.5.2-cp314-cp314-win_amd64.whl.metadata (17 kB)
+Collecting standard-aifc (from SpeechRecognition->-r requirements.txt (line 86))
+  Downloading standard_aifc-3.13.0-py3-none-any.whl.metadata (969 bytes)
+Collecting audioop-lts (from SpeechRecognition->-r requirements.txt (line 86))
+  Downloading audioop_lts-0.2.2-cp313-abi3-win_amd64.whl.metadata (2.0 kB)
+Collecting pywin32>=304 (from docker->-r requirements.txt (line 107))
+  Downloading pywin32-311-cp314-cp314-win_amd64.whl.metadata (10 kB)
+Collecting soupsieve>=1.6.1 (from beautifulsoup4>=4.11.1->yfinance->-r requirements.txt (line 31))
+  Downloading soupsieve-2.8.3-py3-none-any.whl.metadata (4.6 kB)
+Collecting pycparser (from cffi>=2.0.0->cryptography>=41.0->-r requirements.txt (line 37))
+  Downloading pycparser-3.0-py3-none-any.whl.metadata (8.2 kB)
+Collecting rich (from curl_cffi>=0.15->yfinance->-r requirements.txt (line 31))
+  Downloading rich-15.0.0-py3-none-any.whl.metadata (18 kB)
+Collecting six>=1.9.0 (from ecdsa!=0.15->python-jose[cryptography]->-r requirements.txt (line 35))
+  Downloading six-1.17.0-py2.py3-none-any.whl.metadata (1.7 kB)
+Collecting ml_dtypes>=0.5.0 (from onnx>=1.17.0->unstructured[all-docs]->-r requirements.txt (line 55))
+  Downloading ml_dtypes-0.5.4-cp314-cp314-win_amd64.whl.metadata (9.2 kB)
+Collecting flatbuffers (from onnxruntime>=1.19.0->unstructured[all-docs]->-r requirements.txt (line 55))
+  Downloading flatbuffers-25.12.19-py2.py3-none-any.whl.metadata (1.0 kB)
+Collecting mmh3<6.0.0,>=4.0.0 (from pyiceberg>=0.10.0->storage3==2.30.0->supabase->-r requirements.txt (line 20))
+  Downloading mmh3-5.2.1-cp314-cp314-win_amd64.whl.metadata (15 kB)
+Collecting rich (from curl_cffi>=0.15->yfinance->-r requirements.txt (line 31))
+  Downloading rich-14.3.4-py3-none-any.whl.metadata (18 kB)
+Collecting strictyaml<2.0.0,>=1.7.0 (from pyiceberg>=0.10.0->storage3==2.30.0->supabase->-r requirements.txt (line 20))
+  Downloading strictyaml-1.7.3-py3-none-any.whl.metadata (11 kB)
+Collecting pyparsing<4.0.0,>=3.1.0 (from pyiceberg>=0.10.0->storage3==2.30.0->supabase->-r requirements.txt (line 20))
+  Downloading pyparsing-3.3.2-py3-none-any.whl.metadata (5.8 kB)
+Collecting tenacity<10.0.0,>=8.2.3 (from pyiceberg>=0.10.0->storage3==2.30.0->supabase->-r requirements.txt (line 20))
+  Downloading tenacity-9.1.4-py3-none-any.whl.metadata (1.2 kB)
+Collecting pyroaring<2.0.0,>=1.0.0 (from pyiceberg>=0.10.0->storage3==2.30.0->supabase->-r requirements.txt (line 20))
+  Downloading pyroaring-1.1.0-cp314-cp314-win_amd64.whl.metadata (12 kB)
+Collecting cachetools<7.0,>=5.5 (from pyiceberg>=0.10.0->storage3==2.30.0->supabase->-r requirements.txt (line 20))
+  Downloading cachetools-6.2.6-py3-none-any.whl.metadata (5.6 kB)
+Collecting zstandard<1.0.0,>=0.13.0 (from pyiceberg>=0.10.0->storage3==2.30.0->supabase->-r requirements.txt (line 20))
+  Downloading zstandard-0.25.0-cp314-cp314-win_amd64.whl.metadata (3.3 kB)
+Collecting markdown-it-py>=2.2.0 (from rich->curl_cffi>=0.15->yfinance->-r requirements.txt (line 31))
+  Downloading markdown_it_py-4.2.0-py3-none-any.whl.metadata (7.4 kB)
+Collecting pygments<3.0.0,>=2.13.0 (from rich->curl_cffi>=0.15->yfinance->-r requirements.txt (line 31))
+  Downloading pygments-2.20.0-py3-none-any.whl.metadata (2.5 kB)
+Collecting mdurl~=0.1 (from markdown-it-py>=2.2.0->rich->curl_cffi>=0.15->yfinance->-r requirements.txt (line 31))
+  Downloading mdurl-0.1.2-py3-none-any.whl.metadata (1.6 kB)
+Collecting mpmath<1.4,>=1.1.0 (from sympy>=1.13.3->torch<3.0,>=2.0->-r requirements.txt (line 117))
+  Downloading mpmath-1.3.0-py3-none-any.whl.metadata (8.6 kB)
+Collecting opencv-python>=4.13.0.90 (from unstructured-inference>=1.1.1->unstructured[all-docs]->-r requirements.txt (line 55))
+  Downloading opencv_python-4.13.0.92-cp37-abi3-win_amd64.whl.metadata (20 kB)
+Collecting matplotlib (from unstructured-inference>=1.1.1->unstructured[all-docs]->-r requirements.txt (line 55))
+  Downloading matplotlib-3.10.9-cp314-cp314-win_amd64.whl.metadata (52 kB)
+Collecting timm (from unstructured-inference>=1.1.1->unstructured[all-docs]->-r requirements.txt (line 55))
+  Downloading timm-1.0.27-py3-none-any.whl.metadata (40 kB)
+Collecting accelerate (from unstructured-inference>=1.1.1->unstructured[all-docs]->-r requirements.txt (line 55))
+  Downloading accelerate-1.13.0-py3-none-any.whl.metadata (19 kB)
+Collecting marshmallow<4.0.0,>=3.18.0 (from dataclasses-json->unstructured[all-docs]->-r requirements.txt (line 55))
+  Downloading marshmallow-3.26.2-py3-none-any.whl.metadata (7.3 kB)
+Collecting typing-inspect<1,>=0.4.0 (from dataclasses-json->unstructured[all-docs]->-r requirements.txt (line 55))
+  Downloading typing_inspect-0.9.0-py3-none-any.whl.metadata (1.5 kB)
+Collecting mypy-extensions>=0.3.0 (from typing-inspect<1,>=0.4.0->dataclasses-json->unstructured[all-docs]->-r requirements.txt (line 55))
+  Downloading mypy_extensions-1.1.0-py3-none-any.whl.metadata (1.1 kB)
+Collecting pycocotools>=2.0.2 (from effdet->unstructured[all-docs]->-r requirements.txt (line 55))
+  Downloading pycocotools-2.0.11-cp312-abi3-win_amd64.whl.metadata (1.3 kB)
+Collecting omegaconf>=2.0 (from effdet->unstructured[all-docs]->-r requirements.txt (line 55))
+  Downloading omegaconf-2.3.0-py3-none-any.whl.metadata (3.9 kB)
+Collecting antlr4-python3-runtime==4.9.* (from omegaconf>=2.0->effdet->unstructured[all-docs]->-r requirements.txt (line 55))
+  Downloading antlr4-python3-runtime-4.9.3.tar.gz (117 kB)
+  Installing build dependencies: started
+  Installing build dependencies: finished with status 'done'
+  Getting requirements to build wheel: started
+  Getting requirements to build wheel: finished with status 'done'
+  Preparing metadata (pyproject.toml): started
+  Preparing metadata (pyproject.toml): finished with status 'done'
+Collecting google-api-core<3.0.0,>=2.11.0 (from google-api-core[grpc]<3.0.0,>=2.11.0->google-cloud-vision->unstructured[all-docs]->-r requirements.txt (line 55))
+  Downloading google_api_core-2.30.3-py3-none-any.whl.metadata (3.1 kB)
+Collecting google-auth!=2.24.0,!=2.25.0,<3.0.0,>=2.14.1 (from google-cloud-vision->unstructured[all-docs]->-r requirements.txt (line 55))
+  Downloading google_auth-2.53.0-py3-none-any.whl.metadata (5.5 kB)
+Collecting grpcio<2.0.0,>=1.33.2 (from google-cloud-vision->unstructured[all-docs]->-r requirements.txt (line 55))
+  Downloading grpcio-1.80.0-cp314-cp314-win_amd64.whl.metadata (3.9 kB)
+Collecting proto-plus<2.0.0,>=1.22.3 (from google-cloud-vision->unstructured[all-docs]->-r requirements.txt (line 55))
+  Downloading proto_plus-1.28.0-py3-none-any.whl.metadata (2.2 kB)
+Collecting googleapis-common-protos<2.0.0,>=1.63.2 (from google-api-core<3.0.0,>=2.11.0->google-api-core[grpc]<3.0.0,>=2.11.0->google-cloud-vision->unstructured[all-docs]->-r requirements.txt (line 55))
+  Downloading googleapis_common_protos-1.75.0-py3-none-any.whl.metadata (8.6 kB)
+Collecting grpcio-status<2.0.0,>=1.33.2 (from google-api-core[grpc]<3.0.0,>=2.11.0->google-cloud-vision->unstructured[all-docs]->-r requirements.txt (line 55))
+  Downloading grpcio_status-1.80.0-py3-none-any.whl.metadata (1.3 kB)
+Collecting pyasn1-modules>=0.2.1 (from google-auth!=2.24.0,!=2.25.0,<3.0.0,>=2.14.1->google-cloud-vision->unstructured[all-docs]->-r requirements.txt (line 55))
+  Downloading pyasn1_modules-0.4.2-py3-none-any.whl.metadata (3.5 kB)
+Collecting protobuf>=3.19.0 (from yfinance->-r requirements.txt (line 31))
+  Downloading protobuf-6.33.6-cp310-abi3-win_amd64.whl.metadata (593 bytes)
+Collecting webencodings (from html5lib->unstructured[all-docs]->-r requirements.txt (line 55))
+  Downloading webencodings-0.5.1-py2.py3-none-any.whl.metadata (2.1 kB)
+Collecting MarkupSafe>=2.0 (from jinja2->torch<3.0,>=2.0->-r requirements.txt (line 117))
+  Downloading markupsafe-3.0.3-cp314-cp314-win_amd64.whl.metadata (2.8 kB)
+Collecting contourpy>=1.0.1 (from matplotlib->unstructured-inference>=1.1.1->unstructured[all-docs]->-r requirements.txt (line 55))
+  Downloading contourpy-1.3.3-cp314-cp314-win_amd64.whl.metadata (5.5 kB)
+Collecting cycler>=0.10 (from matplotlib->unstructured-inference>=1.1.1->unstructured[all-docs]->-r requirements.txt (line 55))
+  Downloading cycler-0.12.1-py3-none-any.whl.metadata (3.8 kB)
+Collecting fonttools>=4.22.0 (from matplotlib->unstructured-inference>=1.1.1->unstructured[all-docs]->-r requirements.txt (line 55))
+  Downloading fonttools-4.63.0-cp314-cp314-win_amd64.whl.metadata (121 kB)
+Collecting kiwisolver>=1.3.1 (from matplotlib->unstructured-inference>=1.1.1->unstructured[all-docs]->-r requirements.txt (line 55))
+  Downloading kiwisolver-1.5.0-cp314-cp314-win_amd64.whl.metadata (5.2 kB)
+Collecting olefile>=0.46 (from msoffcrypto-tool->unstructured[all-docs]->-r requirements.txt (line 55))
+  Downloading olefile-0.47-py2.py3-none-any.whl.metadata (9.7 kB)
+Collecting joblib (from nltk->sentence-transformers==2.2.2->-r requirements.txt (line 93))
+  Downloading joblib-1.5.3-py3-none-any.whl.metadata (5.5 kB)
+Collecting llvmlite<0.48,>=0.47.0dev0 (from numba->unstructured[all-docs]->-r requirements.txt (line 55))
+  Downloading llvmlite-0.47.0-cp314-cp314-win_amd64.whl.metadata (5.1 kB)
+Collecting threadpoolctl>=3.2.0 (from scikit-learn->sentence-transformers==2.2.2->-r requirements.txt (line 93))
+  Downloading threadpoolctl-3.6.0-py3-none-any.whl.metadata (13 kB)
+Collecting standard-chunk (from standard-aifc->SpeechRecognition->-r requirements.txt (line 86))
+  Downloading standard_chunk-3.13.0-py3-none-any.whl.metadata (860 bytes)
+Collecting requests-toolbelt>=1.0.0 (from unstructured-client->unstructured[all-docs]->-r requirements.txt (line 55))
+  Downloading requests_toolbelt-1.0.0-py2.py3-none-any.whl.metadata (14 kB)
+Downloading torch-2.12.0-cp314-cp314-win_amd64.whl (123.0 MB)
+   ---------------------------------------- 123.0/123.0 MB 25.6 MB/s  0:00:04
+Downloading transformers-4.57.6-py3-none-any.whl (12.0 MB)
+   ---------------------------------------- 12.0/12.0 MB 20.7 MB/s  0:00:00
+Downloading huggingface_hub-0.36.2-py3-none-any.whl (566 kB)
+   ---------------------------------------- 566.4/566.4 kB 17.4 MB/s  0:00:00
+Downloading setuptools-81.0.0-py3-none-any.whl (1.1 MB)
+   ---------------------------------------- 1.1/1.1 MB 23.3 MB/s  0:00:00
+Downloading tokenizers-0.22.2-cp39-abi3-win_amd64.whl (2.7 MB)
+   ---------------------------------------- 2.7/2.7 MB 24.2 MB/s  0:00:00
+Downloading fastapi-0.136.1-py3-none-any.whl (117 kB)
+Downloading uvicorn-0.47.0-py3-none-any.whl (71 kB)
+Downloading gunicorn-26.0.0-py3-none-any.whl (212 kB)
+Downloading anthropic-0.104.0-py3-none-any.whl (832 kB)
+   ---------------------------------------- 832.9/832.9 kB 23.4 MB/s  0:00:00
+Downloading httpx-0.28.1-py3-none-any.whl (73 kB)
+Downloading pydantic-2.13.4-py3-none-any.whl (472 kB)
+Downloading pydantic_core-2.46.4-cp314-cp314-win_amd64.whl (2.1 MB)
+   ---------------------------------------- 2.1/2.1 MB 24.3 MB/s  0:00:00
+Downloading anyio-4.13.0-py3-none-any.whl (114 kB)
+Downloading distro-1.9.0-py3-none-any.whl (20 kB)
+Downloading docstring_parser-0.18.0-py3-none-any.whl (22 kB)
+Downloading httpcore-1.0.9-py3-none-any.whl (78 kB)
+Downloading jiter-0.15.0-cp314-cp314-win_amd64.whl (197 kB)
+Downloading typing_extensions-4.15.0-py3-none-any.whl (44 kB)
+Downloading openai-2.38.0-py3-none-any.whl (1.3 MB)
+   ---------------------------------------- 1.3/1.3 MB 23.0 MB/s  0:00:00
+Downloading h2-4.3.0-py3-none-any.whl (61 kB)
+Downloading hpack-4.1.0-py3-none-any.whl (34 kB)
+Downloading hyperframe-6.1.0-py3-none-any.whl (13 kB)
+Downloading supabase-2.30.0-py3-none-any.whl (16 kB)
+Downloading postgrest-2.30.0-py3-none-any.whl (23 kB)
+Downloading realtime-2.30.0-py3-none-any.whl (22 kB)
+Downloading storage3-2.30.0-py3-none-any.whl (28 kB)
+Downloading supabase_auth-2.30.0-py3-none-any.whl (48 kB)
+Downloading supabase_functions-2.30.0-py3-none-any.whl (8.8 kB)
+Downloading websockets-15.0.1-py3-none-any.whl (169 kB)
+Downloading asyncpg-0.31.0-cp314-cp314-win_amd64.whl (604 kB)
+   ---------------------------------------- 604.9/604.9 kB 18.6 MB/s  0:00:00
+Downloading redis-7.4.0-py3-none-any.whl (409 kB)
+Downloading pyjwt-2.13.0-py3-none-any.whl (31 kB)
+Downloading tavily_python-0.7.24-py3-none-any.whl (20 kB)
+Downloading yfinance-1.3.0-py2.py3-none-any.whl (133 kB)
+Downloading requests-2.34.2-py3-none-any.whl (73 kB)
+Downloading charset_normalizer-3.4.7-cp314-cp314-win_amd64.whl (159 kB)
+Downloading idna-3.16-py3-none-any.whl (74 kB)
+Downloading urllib3-2.7.0-py3-none-any.whl (131 kB)
+Downloading python_jose-3.5.0-py2.py3-none-any.whl (34 kB)
+Downloading rsa-4.9.1-py3-none-any.whl (34 kB)
+Downloading passlib-1.7.4-py2.py3-none-any.whl (525 kB)
+   ---------------------------------------- 525.6/525.6 kB 22.7 MB/s  0:00:00
+Downloading cryptography-48.0.0-cp311-abi3-win_amd64.whl (3.8 MB)
+   ---------------------------------------- 3.8/3.8 MB 25.4 MB/s  0:00:00
+Downloading pypdf-6.12.1-py3-none-any.whl (343 kB)
+Downloading python_docx-1.2.0-py3-none-any.whl (252 kB)
+Downloading pymupdf-1.27.2.3-cp310-abi3-win_amd64.whl (19.2 MB)
+   ---------------------------------------- 19.2/19.2 MB 23.4 MB/s  0:00:00
+Downloading python_pptx-1.0.2-py3-none-any.whl (472 kB)
+Downloading pillow-12.2.0-cp314-cp314-win_amd64.whl (7.2 MB)
+   ---------------------------------------- 7.2/7.2 MB 24.1 MB/s  0:00:00
+Downloading ImageHash-4.3.2-py2.py3-none-any.whl (296 kB)
+Downloading filetype-1.2.0-py2.py3-none-any.whl (19 kB)
+Downloading unstructured-0.18.32-py3-none-any.whl (1.8 MB)
+   ---------------------------------------- 1.8/1.8 MB 23.9 MB/s  0:00:00
+Downloading pdfplumber-0.11.9-py3-none-any.whl (60 kB)
+Downloading pdfminer_six-20251230-py3-none-any.whl (6.6 MB)
+   ---------------------------------------- 6.6/6.6 MB 24.0 MB/s  0:00:00
+Downloading openpyxl-3.1.5-py2.py3-none-any.whl (250 kB)
+Downloading pytesseract-0.3.13-py3-none-any.whl (14 kB)
+Downloading python_dotenv-1.2.2-py3-none-any.whl (22 kB)
+Downloading pydantic_settings-2.14.1-py3-none-any.whl (60 kB)
+Downloading python_multipart-0.0.29-py3-none-any.whl (29 kB)
+Downloading aiofiles-25.1.0-py3-none-any.whl (14 kB)
+Downloading email_validator-2.3.0-py3-none-any.whl (35 kB)
+Downloading pyyaml-6.0.3-cp314-cp314-win_amd64.whl (156 kB)
+Downloading numpy-2.4.6-cp314-cp314-win_amd64.whl (12.5 MB)
+   ---------------------------------------- 12.5/12.5 MB 26.5 MB/s  0:00:00
+Downloading pandas-3.0.3-cp314-cp314-win_amd64.whl (9.9 MB)
+   ---------------------------------------- 9.9/9.9 MB 27.0 MB/s  0:00:00
+Downloading edge_tts-7.2.8-py3-none-any.whl (31 kB)
+Downloading aiohttp-3.13.5-cp314-cp314-win_amd64.whl (464 kB)
+Downloading multidict-6.7.1-cp314-cp314-win_amd64.whl (45 kB)
+Downloading tabulate-0.10.0-py3-none-any.whl (39 kB)
+Downloading yarl-1.24.2-cp314-cp314-win_amd64.whl (94 kB)
+Downloading speechrecognition-3.16.1-py3-none-any.whl (32.9 MB)
+   ---------------------------------------- 32.9/32.9 MB 25.0 MB/s  0:00:01
+Downloading pydub-0.25.1-py2.py3-none-any.whl (32 kB)
+Downloading aiosqlite-0.22.1-py3-none-any.whl (17 kB)
+Downloading faker-40.18.0-py3-none-any.whl (2.0 MB)
+   ---------------------------------------- 2.0/2.0 MB 27.1 MB/s  0:00:00
+Downloading llm_sandbox-0.3.39-py3-none-any.whl (108 kB)
+Downloading docker-7.1.0-py3-none-any.whl (147 kB)
+Downloading aiohappyeyeballs-2.6.2-py3-none-any.whl (15 kB)
+Downloading aiosignal-1.4.0-py3-none-any.whl (7.5 kB)
+Downloading annotated_doc-0.0.4-py3-none-any.whl (5.3 kB)
+Downloading annotated_types-0.7.0-py3-none-any.whl (13 kB)
+Downloading attrs-26.1.0-py3-none-any.whl (67 kB)
+Downloading bcrypt-5.0.0-cp39-abi3-win_amd64.whl (150 kB)
+Downloading beautifulsoup4-4.14.3-py3-none-any.whl (107 kB)
+Downloading certifi-2026.5.20-py3-none-any.whl (134 kB)
+Downloading cffi-2.0.0-cp314-cp314-win_amd64.whl (185 kB)
+Downloading click-8.4.1-py3-none-any.whl (116 kB)
+Downloading colorama-0.4.6-py2.py3-none-any.whl (25 kB)
+Downloading curl_cffi-0.15.0-cp310-abi3-win_amd64.whl (1.7 MB)
+   ---------------------------------------- 1.7/1.7 MB 26.0 MB/s  0:00:00
+Downloading deprecation-2.1.0-py2.py3-none-any.whl (11 kB)
+Downloading dnspython-2.8.0-py3-none-any.whl (331 kB)
+Downloading ecdsa-0.19.2-py2.py3-none-any.whl (150 kB)
+Downloading frozendict-2.4.7-py3-none-any.whl (16 kB)
+Downloading frozenlist-1.8.0-cp314-cp314-win_amd64.whl (44 kB)
+Downloading fsspec-2026.4.0-py3-none-any.whl (203 kB)
+Downloading h11-0.16.0-py3-none-any.whl (37 kB)
+Downloading httptools-0.7.1-cp314-cp314-win_amd64.whl (88 kB)
+Downloading lxml-6.1.1-cp314-cp314-win_amd64.whl (4.1 MB)
+   ---------------------------------------- 4.1/4.1 MB 28.4 MB/s  0:00:00
+Downloading multitasking-0.0.13-py3-none-any.whl (16 kB)
+Downloading networkx-3.6.1-py3-none-any.whl (2.1 MB)
+   ---------------------------------------- 2.1/2.1 MB 27.8 MB/s  0:00:00
+Downloading onnx-1.21.0-cp312-abi3-win_amd64.whl (16.4 MB)
+   ---------------------------------------- 16.4/16.4 MB 23.5 MB/s  0:00:00
+Downloading ml_dtypes-0.5.4-cp314-cp314-win_amd64.whl (221 kB)
+Downloading onnxruntime-1.26.0-cp314-cp314-win_amd64.whl (13.3 MB)
+   ---------------------------------------- 13.3/13.3 MB 21.8 MB/s  0:00:00
+Downloading peewee-4.0.6-py3-none-any.whl (146 kB)
+Downloading platformdirs-4.9.6-py3-none-any.whl (21 kB)
+Downloading propcache-0.5.2-cp314-cp314-win_amd64.whl (42 kB)
+Downloading pyasn1-0.6.3-py3-none-any.whl (83 kB)
+Downloading cachetools-6.2.6-py3-none-any.whl (11 kB)
+Downloading mmh3-5.2.1-cp314-cp314-win_amd64.whl (42 kB)
+Downloading pyparsing-3.3.2-py3-none-any.whl (122 kB)
+Downloading pyroaring-1.1.0-cp314-cp314-win_amd64.whl (270 kB)
+Downloading rich-14.3.4-py3-none-any.whl (310 kB)
+Downloading pygments-2.20.0-py3-none-any.whl (1.2 MB)
+   ---------------------------------------- 1.2/1.2 MB 24.1 MB/s  0:00:00
+Downloading strictyaml-1.7.3-py3-none-any.whl (123 kB)
+Downloading tenacity-9.1.4-py3-none-any.whl (28 kB)
+Downloading zstandard-0.25.0-cp314-cp314-win_amd64.whl (516 kB)
+Downloading markdown_it_py-4.2.0-py3-none-any.whl (91 kB)
+Downloading mdurl-0.1.2-py3-none-any.whl (10.0 kB)
+Downloading pypdfium2-5.8.0-py3-none-win_amd64.whl (3.8 MB)
+   ---------------------------------------- 3.8/3.8 MB 22.6 MB/s  0:00:00
+Downloading python_dateutil-2.9.0.post0-py2.py3-none-any.whl (229 kB)
+Downloading pytz-2026.2-py2.py3-none-any.whl (510 kB)
+Downloading pywin32-311-cp314-cp314-win_amd64.whl (9.7 MB)
+   ---------------------------------------- 9.7/9.7 MB 23.7 MB/s  0:00:00
+Downloading regex-2026.5.9-cp314-cp314-win_amd64.whl (280 kB)
+Downloading safetensors-0.7.0-cp38-abi3-win_amd64.whl (341 kB)
+Downloading six-1.17.0-py2.py3-none-any.whl (11 kB)
+Downloading soupsieve-2.8.3-py3-none-any.whl (37 kB)
+Downloading starlette-1.0.1-py3-none-any.whl (72 kB)
+Downloading StrEnum-0.4.15-py3-none-any.whl (8.9 kB)
+Downloading sympy-1.14.0-py3-none-any.whl (6.3 MB)
+   ---------------------------------------- 6.3/6.3 MB 23.2 MB/s  0:00:00
+Downloading mpmath-1.3.0-py3-none-any.whl (536 kB)
+   ---------------------------------------- 536.2/536.2 kB 23.0 MB/s  0:00:00
+Downloading tiktoken-0.13.0-cp314-cp314-win_amd64.whl (918 kB)
+   ---------------------------------------- 918.7/918.7 kB 23.7 MB/s  0:00:00
+Downloading tqdm-4.67.3-py3-none-any.whl (78 kB)
+Downloading typing_inspection-0.4.2-py3-none-any.whl (14 kB)
+Downloading unstructured_inference-1.2.0-py3-none-any.whl (49 kB)
+Downloading opencv_python-4.13.0.92-cp37-abi3-win_amd64.whl (40.2 MB)
+   ---------------------------------------- 40.2/40.2 MB 25.9 MB/s  0:00:01
+Downloading unstructured.pytesseract-0.3.15-py3-none-any.whl (14 kB)
+Downloading watchfiles-1.2.0-cp314-cp314-win_amd64.whl (288 kB)
+Downloading xlsxwriter-3.2.9-py3-none-any.whl (175 kB)
+Downloading accelerate-1.13.0-py3-none-any.whl (383 kB)
+Downloading audioop_lts-0.2.2-cp313-abi3-win_amd64.whl (30 kB)
+Downloading backoff-2.2.1-py3-none-any.whl (15 kB)
+Downloading dataclasses_json-0.6.7-py3-none-any.whl (28 kB)
+Downloading marshmallow-3.26.2-py3-none-any.whl (50 kB)
+Downloading typing_inspect-0.9.0-py3-none-any.whl (8.8 kB)
+Downloading mypy_extensions-1.1.0-py3-none-any.whl (5.0 kB)
+Downloading effdet-0.4.1-py3-none-any.whl (112 kB)
+Downloading omegaconf-2.3.0-py3-none-any.whl (79 kB)
+Downloading pycocotools-2.0.11-cp312-abi3-win_amd64.whl (77 kB)
+Downloading timm-1.0.27-py3-none-any.whl (2.6 MB)
+   ---------------------------------------- 2.6/2.6 MB 22.9 MB/s  0:00:00
+Downloading emoji-2.15.0-py3-none-any.whl (608 kB)
+   ---------------------------------------- 608.4/608.4 kB 13.1 MB/s  0:00:00
+Downloading et_xmlfile-2.0.0-py3-none-any.whl (18 kB)
+Downloading filelock-3.29.0-py3-none-any.whl (39 kB)
+Downloading flatbuffers-25.12.19-py2.py3-none-any.whl (26 kB)
+Downloading google_cloud_vision-3.14.0-py3-none-any.whl (543 kB)
+   ---------------------------------------- 543.1/543.1 kB 23.2 MB/s  0:00:00
+Downloading google_api_core-2.30.3-py3-none-any.whl (173 kB)
+Downloading google_auth-2.53.0-py3-none-any.whl (246 kB)
+Downloading googleapis_common_protos-1.75.0-py3-none-any.whl (300 kB)
+Downloading grpcio-1.80.0-cp314-cp314-win_amd64.whl (5.0 MB)
+   ---------------------------------------- 5.0/5.0 MB 28.1 MB/s  0:00:00
+Downloading grpcio_status-1.80.0-py3-none-any.whl (14 kB)
+Downloading proto_plus-1.28.0-py3-none-any.whl (50 kB)
+Downloading protobuf-6.33.6-cp310-abi3-win_amd64.whl (437 kB)
+Downloading pyasn1_modules-0.4.2-py3-none-any.whl (181 kB)
+Downloading html5lib-1.1-py2.py3-none-any.whl (112 kB)
+Downloading jinja2-3.1.6-py3-none-any.whl (134 kB)
+Downloading markupsafe-3.0.3-cp314-cp314-win_amd64.whl (15 kB)
+Downloading markdown-3.10.2-py3-none-any.whl (108 kB)
+Downloading matplotlib-3.10.9-cp314-cp314-win_amd64.whl (8.3 MB)
+   ---------------------------------------- 8.3/8.3 MB 27.1 MB/s  0:00:00
+Downloading contourpy-1.3.3-cp314-cp314-win_amd64.whl (232 kB)
+Downloading cycler-0.12.1-py3-none-any.whl (8.3 kB)
+Downloading fonttools-4.63.0-cp314-cp314-win_amd64.whl (2.3 MB)
+   ---------------------------------------- 2.3/2.3 MB 28.1 MB/s  0:00:00
+Downloading kiwisolver-1.5.0-cp314-cp314-win_amd64.whl (75 kB)
+Downloading msoffcrypto_tool-6.0.0-py3-none-any.whl (48 kB)
+Downloading olefile-0.47-py2.py3-none-any.whl (114 kB)
+Downloading nltk-3.9.4-py3-none-any.whl (1.6 MB)
+   ---------------------------------------- 1.6/1.6 MB 26.9 MB/s  0:00:00
+Downloading joblib-1.5.3-py3-none-any.whl (309 kB)
+Downloading numba-0.65.1-cp314-cp314-win_amd64.whl (2.8 MB)
+   ---------------------------------------- 2.8/2.8 MB 24.9 MB/s  0:00:00
+Downloading llvmlite-0.47.0-cp314-cp314-win_amd64.whl (39.2 MB)
+   ---------------------------------------- 39.2/39.2 MB 29.5 MB/s  0:00:01
+Downloading pdf2image-1.17.0-py3-none-any.whl (11 kB)
+Downloading pi_heif-1.3.0-cp314-cp314-win_amd64.whl (2.0 MB)
+   ---------------------------------------- 2.0/2.0 MB 22.7 MB/s  0:00:00
+Downloading pikepdf-10.7.1-cp314-abi3-win_amd64.whl (3.2 MB)
+   ---------------------------------------- 3.2/3.2 MB 29.3 MB/s  0:00:00
+Downloading psutil-7.2.2-cp37-abi3-win_amd64.whl (137 kB)
+Downloading pycparser-3.0-py3-none-any.whl (48 kB)
+Downloading pypandoc-1.17-py3-none-any.whl (23 kB)
+Downloading python_iso639-2026.4.20-py3-none-any.whl (167 kB)
+Downloading python_magic-0.4.27-py2.py3-none-any.whl (13 kB)
+Downloading python_oxmsg-0.0.2-py3-none-any.whl (31 kB)
+Downloading pywavelets-1.9.0-cp314-cp314-win_amd64.whl (4.2 MB)
+   ---------------------------------------- 4.2/4.2 MB 25.5 MB/s  0:00:00
+Downloading rapidfuzz-3.14.5-cp314-cp314-win_amd64.whl (1.6 MB)
+   ---------------------------------------- 1.6/1.6 MB 29.5 MB/s  0:00:00
+Downloading scikit_learn-1.8.0-cp314-cp314-win_amd64.whl (8.1 MB)
+   ---------------------------------------- 8.1/8.1 MB 29.9 MB/s  0:00:00
+Downloading scipy-1.17.1-cp314-cp314-win_amd64.whl (37.3 MB)
+   ---------------------------------------- 37.3/37.3 MB 23.8 MB/s  0:00:01
+Downloading threadpoolctl-3.6.0-py3-none-any.whl (18 kB)
+Downloading sentencepiece-0.2.1-cp314-cp314-win_amd64.whl (1.2 MB)
+   ---------------------------------------- 1.2/1.2 MB 18.2 MB/s  0:00:00
+Downloading sniffio-1.3.1-py3-none-any.whl (10 kB)
+Downloading standard_aifc-3.13.0-py3-none-any.whl (10 kB)
+Downloading standard_chunk-3.13.0-py3-none-any.whl (4.9 kB)
+Downloading torchvision-0.27.0-cp314-cp314-win_amd64.whl (4.1 MB)
+   ---------------------------------------- 4.1/4.1 MB 24.2 MB/s  0:00:00
+Downloading tzdata-2026.2-py2.py3-none-any.whl (349 kB)
+Downloading unstructured_client-0.44.0-py3-none-any.whl (158 kB)
+Downloading requests_toolbelt-1.0.0-py2.py3-none-any.whl (54 kB)
+Downloading webencodings-0.5.1-py2.py3-none-any.whl (11 kB)
+Downloading wrapt-2.2.0-cp314-cp314-win_amd64.whl (81 kB)
+Downloading xlrd-2.0.2-py2.py3-none-any.whl (96 kB)
+Building wheels for collected packages: sentence-transformers, pyiceberg, antlr4-python3-runtime, langdetect
+  Building wheel for sentence-transformers (pyproject.toml): started
+  Building wheel for sentence-transformers (pyproject.toml): finished with status 'done'
+  Created wheel for sentence-transformers: filename=sentence_transformers-2.2.2-py3-none-any.whl size=125860 sha256=05f5d8010de3dbabf75ab1aa754e071a2c0c848d66efcd3503faa65982693d5e
+  Stored in directory: c:\users\sohaibali\appdata\local\pip\cache\wheels\4d\c8\31\c2c17df67b3e176b7295504614f9ca1beba57e995e74c507bd
+  Building wheel for pyiceberg (pyproject.toml): started
+  Building wheel for pyiceberg (pyproject.toml): finished with status 'error'
+  error: subprocess-exited-with-error
+  
+  Building wheel for pyiceberg (pyproject.toml) did not run successfully.
+  exit code: 1
+  
+  [123 lines of output]
+  running bdist_wheel
+  running build
+  running build_py
+  creating build\lib.win-amd64-cpython-314\pyiceberg
+  copying .\pyiceberg\conversions.py -> build\lib.win-amd64-cpython-314\pyiceberg
+  copying .\pyiceberg\exceptions.py -> build\lib.win-amd64-cpython-314\pyiceberg
+  copying .\pyiceberg\manifest.py -> build\lib.win-amd64-cpython-314\pyiceberg
+  copying .\pyiceberg\partitioning.py -> build\lib.win-amd64-cpython-314\pyiceberg
+  copying .\pyiceberg\schema.py -> build\lib.win-amd64-cpython-314\pyiceberg
+  copying .\pyiceberg\serializers.py -> build\lib.win-amd64-cpython-314\pyiceberg
+  copying .\pyiceberg\transforms.py -> build\lib.win-amd64-cpython-314\pyiceberg
+  copying .\pyiceberg\typedef.py -> build\lib.win-amd64-cpython-314\pyiceberg
+  copying .\pyiceberg\types.py -> build\lib.win-amd64-cpython-314\pyiceberg
+  copying .\pyiceberg\__init__.py -> build\lib.win-amd64-cpython-314\pyiceberg
+  creating build\lib.win-amd64-cpython-314\pyiceberg\avro
+  copying .\pyiceberg\avro\decoder.py -> build\lib.win-amd64-cpython-314\pyiceberg\avro
+  copying .\pyiceberg\avro\encoder.py -> build\lib.win-amd64-cpython-314\pyiceberg\avro
+  copying .\pyiceberg\avro\file.py -> build\lib.win-amd64-cpython-314\pyiceberg\avro
+  copying .\pyiceberg\avro\reader.py -> build\lib.win-amd64-cpython-314\pyiceberg\avro
+  copying .\pyiceberg\avro\resolver.py -> build\lib.win-amd64-cpython-314\pyiceberg\avro
+  copying .\pyiceberg\avro\writer.py -> build\lib.win-amd64-cpython-314\pyiceberg\avro
+  copying .\pyiceberg\avro\__init__.py -> build\lib.win-amd64-cpython-314\pyiceberg\avro
+  creating build\lib.win-amd64-cpython-314\pyiceberg\catalog
+  copying .\pyiceberg\catalog\bigquery_metastore.py -> build\lib.win-amd64-cpython-314\pyiceberg\catalog
+  copying .\pyiceberg\catalog\dynamodb.py -> build\lib.win-amd64-cpython-314\pyiceberg\catalog
+  copying .\pyiceberg\catalog\glue.py -> build\lib.win-amd64-cpython-314\pyiceberg\catalog
+  copying .\pyiceberg\catalog\hive.py -> build\lib.win-amd64-cpython-314\pyiceberg\catalog
+  copying .\pyiceberg\catalog\memory.py -> build\lib.win-amd64-cpython-314\pyiceberg\catalog
+  copying .\pyiceberg\catalog\noop.py -> build\lib.win-amd64-cpython-314\pyiceberg\catalog
+  copying .\pyiceberg\catalog\sql.py -> build\lib.win-amd64-cpython-314\pyiceberg\catalog
+  copying .\pyiceberg\catalog\__init__.py -> build\lib.win-amd64-cpython-314\pyiceberg\catalog
+  creating build\lib.win-amd64-cpython-314\pyiceberg\cli
+  copying .\pyiceberg\cli\console.py -> build\lib.win-amd64-cpython-314\pyiceberg\cli
+  copying .\pyiceberg\cli\output.py -> build\lib.win-amd64-cpython-314\pyiceberg\cli
+  copying .\pyiceberg\cli\__init__.py -> build\lib.win-amd64-cpython-314\pyiceberg\cli
+  creating build\lib.win-amd64-cpython-314\pyiceberg\expressions
+  copying .\pyiceberg\expressions\literals.py -> build\lib.win-amd64-cpython-314\pyiceberg\expressions
+  copying .\pyiceberg\expressions\parser.py -> build\lib.win-amd64-cpython-314\pyiceberg\expressions
+  copying .\pyiceberg\expressions\visitors.py -> build\lib.win-amd64-cpython-314\pyiceberg\expressions
+  copying .\pyiceberg\expressions\__init__.py -> build\lib.win-amd64-cpython-314\pyiceberg\expressions
+  creating build\lib.win-amd64-cpython-314\pyiceberg\io
+  copying .\pyiceberg\io\fsspec.py -> build\lib.win-amd64-cpython-314\pyiceberg\io
+  copying .\pyiceberg\io\pyarrow.py -> build\lib.win-amd64-cpython-314\pyiceberg\io
+  copying .\pyiceberg\io\__init__.py -> build\lib.win-amd64-cpython-314\pyiceberg\io
+  creating build\lib.win-amd64-cpython-314\pyiceberg\table
+  copying .\pyiceberg\table\delete_file_index.py -> build\lib.win-amd64-cpython-314\pyiceberg\table
+  copying .\pyiceberg\table\inspect.py -> build\lib.win-amd64-cpython-314\pyiceberg\table
+  copying .\pyiceberg\table\locations.py -> build\lib.win-amd64-cpython-314\pyiceberg\table
+  copying .\pyiceberg\table\maintenance.py -> build\lib.win-amd64-cpython-314\pyiceberg\table
+  copying .\pyiceberg\table\metadata.py -> build\lib.win-amd64-cpython-314\pyiceberg\table
+  copying .\pyiceberg\table\name_mapping.py -> build\lib.win-amd64-cpython-314\pyiceberg\table
+  copying .\pyiceberg\table\puffin.py -> build\lib.win-amd64-cpython-314\pyiceberg\table
+  copying .\pyiceberg\table\refs.py -> build\lib.win-amd64-cpython-314\pyiceberg\table
+  copying .\pyiceberg\table\snapshots.py -> build\lib.win-amd64-cpython-314\pyiceberg\table
+  copying .\pyiceberg\table\sorting.py -> build\lib.win-amd64-cpython-314\pyiceberg\table
+  copying .\pyiceberg\table\statistics.py -> build\lib.win-amd64-cpython-314\pyiceberg\table
+  copying .\pyiceberg\table\upsert_util.py -> build\lib.win-amd64-cpython-314\pyiceberg\table
+  copying .\pyiceberg\table\__init__.py -> build\lib.win-amd64-cpython-314\pyiceberg\table
+  creating build\lib.win-amd64-cpython-314\pyiceberg\utils
+  copying .\pyiceberg\utils\bin_packing.py -> build\lib.win-amd64-cpython-314\pyiceberg\utils
+  copying .\pyiceberg\utils\concurrent.py -> build\lib.win-amd64-cpython-314\pyiceberg\utils
+  copying .\pyiceberg\utils\config.py -> build\lib.win-amd64-cpython-314\pyiceberg\utils
+  copying .\pyiceberg\utils\datetime.py -> build\lib.win-amd64-cpython-314\pyiceberg\utils
+  copying .\pyiceberg\utils\decimal.py -> build\lib.win-amd64-cpython-314\pyiceberg\utils
+  copying .\pyiceberg\utils\deprecated.py -> build\lib.win-amd64-cpython-314\pyiceberg\utils
+  copying .\pyiceberg\utils\lazydict.py -> build\lib.win-amd64-cpython-314\pyiceberg\utils
+  copying .\pyiceberg\utils\parsing.py -> build\lib.win-amd64-cpython-314\pyiceberg\utils
+  copying .\pyiceberg\utils\properties.py -> build\lib.win-amd64-cpython-314\pyiceberg\utils
+  copying .\pyiceberg\utils\schema_conversion.py -> build\lib.win-amd64-cpython-314\pyiceberg\utils
+  copying .\pyiceberg\utils\singleton.py -> build\lib.win-amd64-cpython-314\pyiceberg\utils
+  copying .\pyiceberg\utils\truncate.py -> build\lib.win-amd64-cpython-314\pyiceberg\utils
+  copying .\pyiceberg\utils\__init__.py -> build\lib.win-amd64-cpython-314\pyiceberg\utils
+  creating build\lib.win-amd64-cpython-314\pyiceberg\avro\codecs
+  copying .\pyiceberg\avro\codecs\bzip2.py -> build\lib.win-amd64-cpython-314\pyiceberg\avro\codecs
+  copying .\pyiceberg\avro\codecs\codec.py -> build\lib.win-amd64-cpython-314\pyiceberg\avro\codecs
+  copying .\pyiceberg\avro\codecs\deflate.py -> build\lib.win-amd64-cpython-314\pyiceberg\avro\codecs
+  copying .\pyiceberg\avro\codecs\snappy_codec.py -> build\lib.win-amd64-cpython-314\pyiceberg\avro\codecs
+  copying .\pyiceberg\avro\codecs\zstandard_codec.py -> build\lib.win-amd64-cpython-314\pyiceberg\avro\codecs
+  copying .\pyiceberg\avro\codecs\__init__.py -> build\lib.win-amd64-cpython-314\pyiceberg\avro\codecs
+  creating build\lib.win-amd64-cpython-314\pyiceberg\catalog\rest
+  copying .\pyiceberg\catalog\rest\auth.py -> build\lib.win-amd64-cpython-314\pyiceberg\catalog\rest
+  copying .\pyiceberg\catalog\rest\response.py -> build\lib.win-amd64-cpython-314\pyiceberg\catalog\rest
+  copying .\pyiceberg\catalog\rest\scan_planning.py -> build\lib.win-amd64-cpython-314\pyiceberg\catalog\rest
+  copying .\pyiceberg\catalog\rest\__init__.py -> build\lib.win-amd64-cpython-314\pyiceberg\catalog\rest
+  creating build\lib.win-amd64-cpython-314\pyiceberg\table\update
+  copying .\pyiceberg\table\update\schema.py -> build\lib.win-amd64-cpython-314\pyiceberg\table\update
+  copying .\pyiceberg\table\update\snapshot.py -> build\lib.win-amd64-cpython-314\pyiceberg\table\update
+  copying .\pyiceberg\table\update\sorting.py -> build\lib.win-amd64-cpython-314\pyiceberg\table\update
+  copying .\pyiceberg\table\update\spec.py -> build\lib.win-amd64-cpython-314\pyiceberg\table\update
+  copying .\pyiceberg\table\update\statistics.py -> build\lib.win-amd64-cpython-314\pyiceberg\table\update
+  copying .\pyiceberg\table\update\validate.py -> build\lib.win-amd64-cpython-314\pyiceberg\table\update
+  copying .\pyiceberg\table\update\__init__.py -> build\lib.win-amd64-cpython-314\pyiceberg\table\update
+  creating build\lib.win-amd64-cpython-314\fb303
+  copying vendor\fb303\constants.py -> build\lib.win-amd64-cpython-314\fb303
+  copying vendor\fb303\FacebookService.py -> build\lib.win-amd64-cpython-314\fb303
+  copying vendor\fb303\ttypes.py -> build\lib.win-amd64-cpython-314\fb303
+  copying vendor\fb303\__init__.py -> build\lib.win-amd64-cpython-314\fb303
+  creating build\lib.win-amd64-cpython-314\hive_metastore
+  copying vendor\hive_metastore\constants.py -> build\lib.win-amd64-cpython-314\hive_metastore
+  copying vendor\hive_metastore\ThriftHiveMetastore.py -> build\lib.win-amd64-cpython-314\hive_metastore
+  copying vendor\hive_metastore\ttypes.py -> build\lib.win-amd64-cpython-314\hive_metastore
+  copying vendor\hive_metastore\__init__.py -> build\lib.win-amd64-cpython-314\hive_metastore
+  running egg_info
+  writing pyiceberg.egg-info\PKG-INFO
+  writing dependency_links to pyiceberg.egg-info\dependency_links.txt
+  writing entry points to pyiceberg.egg-info\entry_points.txt
+  writing requirements to pyiceberg.egg-info\requires.txt
+  writing top-level names to pyiceberg.egg-info\top_level.txt
+  reading manifest file 'pyiceberg.egg-info\SOURCES.txt'
+  reading manifest template 'MANIFEST.in'
+  warning: no previously-included files matching '*\__pycache__\*' found anywhere in distribution
+  no previously-included directories found matching '.venv'
+  no previously-included directories found matching 'build'
+  no previously-included directories found matching 'dist'
+  no previously-included directories found matching '.pytest_cache'
+  adding license file 'LICENSE'
+  adding license file 'NOTICE'
+  writing manifest file 'pyiceberg.egg-info\SOURCES.txt'
+  copying .\pyiceberg\py.typed -> build\lib.win-amd64-cpython-314\pyiceberg
+  copying .\pyiceberg\avro\decoder_fast.pyi -> build\lib.win-amd64-cpython-314\pyiceberg\avro
+  running build_ext
+  building 'pyiceberg.avro.decoder_fast' extension
+  error: Microsoft Visual C++ 14.0 or greater is required. Get it with "Microsoft C++ Build Tools": https://visualstudio.microsoft.com/visual-cpp-build-tools/
+  [end of output]
+  
+  note: This error originates from a subprocess, and is likely not a problem with pip.
+  ERROR: Failed building wheel for pyiceberg
+  Building wheel for antlr4-python3-runtime (pyproject.toml): started
+  Building wheel for antlr4-python3-runtime (pyproject.toml): finished with status 'done'
+  Created wheel for antlr4-python3-runtime: filename=antlr4_python3_runtime-4.9.3-py3-none-any.whl size=144616 sha256=e4070514c86526f478c682fcc9d05eb6c9948a4acf19e93c299a2c39bf15394a
+  Stored in directory: c:\users\sohaibali\appdata\local\pip\cache\wheels\ea\ca\a6\5ad163e6c66e23b25d4e6a81dba06bce77047ef6257d643728
+  Building wheel for langdetect (pyproject.toml): started
+  Building wheel for langdetect (pyproject.toml): finished with status 'done'
+  Created wheel for langdetect: filename=langdetect-1.0.9-py3-none-any.whl size=1019155 sha256=bd997cdf6170faf6296513c44b55e722c3cbdf7675d320800007e6bab9b8a080
+  Stored in directory: c:\users\sohaibali\appdata\local\pip\cache\wheels\13\60\5a\f2012969b3f7413b62b7b7063d6c9b45c93004a978cbe8ea2f
+Successfully built sentence-transformers antlr4-python3-runtime langdetect
+Failed to build pyiceberg
+error: failed-wheel-build-for-install
+
+Failed to build installable wheels for some pyproject.toml based projects
+
+pyiceberg

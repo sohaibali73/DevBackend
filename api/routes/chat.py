@@ -3055,6 +3055,96 @@ async def chat_agent_ui_stream(
 
 
 # ---------------------------------------------------------------------------
+# Hidden Dev Endpoint — NO SYSTEM PROMPT, no tools, no persistence
+# ---------------------------------------------------------------------------
+# Internal development sandbox for raw model behavior testing. Hidden from
+# the OpenAPI schema so it does not appear in /docs. Still requires auth.
+
+class DevRawMessage(BaseModel):
+    role: Literal["user", "assistant"]
+    content: str
+
+
+class DevRawRequest(BaseModel):
+    messages: List[DevRawMessage]
+    model: Optional[str] = "claude-opus-4-7"
+    max_tokens: int = 4096
+    temperature: Optional[float] = None
+    top_p: Optional[float] = None
+    stream: bool = True
+
+
+@router.post("/dev/raw", include_in_schema=False)
+async def chat_dev_raw(
+    data: DevRawRequest,
+    user_id: str = Depends(get_current_user_id),
+    api_keys: dict = Depends(get_user_api_keys),
+):
+    """
+    Hidden development endpoint: raw Claude chat with NO system prompt,
+    no tools, no RAG, no DB persistence. Intended for testing baseline
+    model behavior.
+    """
+    if not api_keys or not api_keys.get("claude"):
+        raise HTTPException(status_code=401, detail="Claude API key required")
+
+    client = anthropic.AsyncAnthropic(
+        api_key=api_keys["claude"],
+        timeout=httpx.Timeout(timeout=600.0, connect=30.0, read=600.0, write=60.0),
+    )
+
+    model_to_use = get_pinned_model((data.model or "claude-opus-4-7").strip())
+    model_config = get_model_config(model_to_use)
+
+    api_params: Dict = {
+        "model": model_to_use,
+        "max_tokens": min(data.max_tokens, model_config["max_output_tokens"]),
+        "messages": [m.model_dump() for m in data.messages],
+    }
+    if data.temperature is not None:
+        api_params["temperature"] = data.temperature
+    if data.top_p is not None:
+        api_params["top_p"] = data.top_p
+
+    if not data.stream:
+        msg = await client.messages.create(**api_params)
+        text = "".join(
+            b.text for b in msg.content if getattr(b, "type", None) == "text"
+        )
+        return {
+            "content": text,
+            "model": model_to_use,
+            "stop_reason": msg.stop_reason,
+            "usage": {
+                "input_tokens": msg.usage.input_tokens,
+                "output_tokens": msg.usage.output_tokens,
+            },
+        }
+
+    async def stream_text():
+        try:
+            async with client.messages.stream(**api_params) as stream:
+                async for event in stream:
+                    if (
+                        event.type == "content_block_delta"
+                        and hasattr(event.delta, "type")
+                        and event.delta.type == "text_delta"
+                    ):
+                        yield event.delta.text
+        except Exception as e:
+            yield f"\n\n[dev/raw error] {type(e).__name__}: {e}"
+
+    return StreamingResponse(
+        stream_text(),
+        media_type="text/plain; charset=utf-8",
+        headers={
+            "Cache-Control": "no-cache",
+            "X-Dev-Endpoint": "raw",
+        },
+    )
+
+
+# ---------------------------------------------------------------------------
 # Generic Multi-Provider Chat Endpoint
 # ---------------------------------------------------------------------------
 
