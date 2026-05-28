@@ -80,8 +80,9 @@ class StrategyType(str, Enum):
 
 class ClaudeModel(str, Enum):
     """Available Claude models for AFL generation."""
-    OPUS_4_7 = "claude-opus-4-7"   # Latest — most capable, agentic coding
-    OPUS_4   = "claude-opus-4-6"   # Previous Opus generation
+    OPUS_4_8 = "claude-opus-4-8"   # Latest — most capable, agentic coding
+    OPUS_4_7 = "claude-opus-4-7"   # Previous Opus generation
+    OPUS_4   = "claude-opus-4-6"   # Older Opus generation
     SONNET_4 = "claude-sonnet-4-6"
     HAIKU_4  = "claude-haiku-4-5-20251001"
 
@@ -92,15 +93,21 @@ class ClaudeModel(str, Enum):
             if model.value == model_str:
                 return model
         if "opus" in normalized:
-            # Prefer latest Opus unless caller explicitly named 4-6
-            return cls.OPUS_4 if "4-6" in normalized else cls.OPUS_4_7
+            # Pin to an explicitly-named Opus minor version when present,
+            # otherwise default to the latest Opus generation (4.8).
+            if "4-6" in normalized or "4.6" in normalized:
+                return cls.OPUS_4
+            if "4-7" in normalized or "4.7" in normalized:
+                return cls.OPUS_4_7
+            return cls.OPUS_4_8
         elif "haiku" in normalized:
             return cls.HAIKU_4
         return cls.SONNET_4
 
     @classmethod
     def supports_extended_thinking(cls, model: "ClaudeModel") -> bool:
-        return model in (cls.OPUS_4_7, cls.OPUS_4, cls.SONNET_4)
+        return model in (cls.OPUS_4_8, cls.OPUS_4_7, cls.OPUS_4, cls.SONNET_4)
+
 
 class ThinkingMode(str, Enum):
     DISABLED = "disabled"
@@ -125,10 +132,12 @@ MAX_TOKENS          = 32768   # Fallback for unrecognised models
 
 # Per-model maximum output tokens — no artificial cap, use the model's full capability
 MODEL_MAX_TOKENS: Dict[str, int] = {
+    "claude-opus-4-8":             128000,
     "claude-opus-4-7":             128000,
     "claude-opus-4-6":             128000,
     "claude-sonnet-4-6":            64000,
     "claude-opus-4-5-20251101":     16384,
+
     "claude-opus-4-5":              16384,
     "claude-sonnet-4-5-20250929":    8192,
     "claude-sonnet-4-5":             8192,
