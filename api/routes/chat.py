@@ -1231,7 +1231,11 @@ async def get_conversation_messages(
         if not _raw_content:
             _has_parts = bool(m.get("parts")) or bool(((m.get("metadata") or {}).get("parts")))
             _has_tools = bool(((m.get("metadata") or {}).get("tools_used")))
-            if not _has_parts and not _has_tools:
+            # A turn whose connection dropped before the final text was saved may
+            # still have completed tool_results linked to it — keep the row so its
+            # Generative UI card (e.g. the AFL strategy) rehydrates on reload.
+            _has_tool_results = m["id"] in tool_results_by_msg
+            if not _has_parts and not _has_tools and not _has_tool_results:
                 continue
         msg = {
             "id": m["id"],
@@ -1832,6 +1836,36 @@ async def chat_agent(
                 # the client sends a smaller value.
                 max_iterations = max(data.max_iterations, 15)
 
+            # ── Durable assistant message (incremental persistence) ───────────
+            # Create the assistant row lazily the first time we have something
+            # worth persisting (a tool result). Linking tool_results to a real
+            # message_id immediately — instead of backfilling only at end-of-turn
+            # — means a completed tool's Generative UI card (e.g. the AFL strategy
+            # card) survives a mid-turn disconnect or browser refresh. Pure-text
+            # turns never trigger this, so TTFT on the common path is unchanged.
+            assistant_message_id: Optional[str] = None
+
+            def _create_assistant_placeholder() -> Optional[str]:
+                try:
+                    _r = db.table("messages").insert({
+                        "conversation_id": conversation_id,
+                        "role": "assistant",
+                        "content": "",
+                        "parts": [],
+                        "metadata": {"status": "streaming", "model": model_to_use},
+                    }).execute()
+                    return _r.data[0]["id"] if _r.data else None
+                except Exception as _ph_err:
+                    print(f"[chat/agent] ⚠ assistant placeholder insert failed (non-fatal): {_ph_err}")
+                    return None
+
+            async def ensure_assistant_message() -> Optional[str]:
+                """Return the durable assistant message id, creating it once."""
+                nonlocal assistant_message_id
+                if assistant_message_id is None:
+                    assistant_message_id = await asyncio.to_thread(_create_assistant_placeholder)
+                return assistant_message_id
+
             iteration = 0
 
             # NEW: Build thinking configuration based on model capabilities
@@ -2036,9 +2070,11 @@ async def chat_agent(
                                     # Persist to tool_results for replay / audit.
                                     try:
                                         _dt_state = "error" if isinstance(result_data, dict) and result_data.get("error") else "completed"
+                                        _dt_amid = await ensure_assistant_message()
                                         db.table("tool_results").insert({
                                             "user_id":         user_id,
                                             "conversation_id": conversation_id,
+                                            "message_id":      _dt_amid,
                                             "tool_call_id":    tool_call_id,
                                             "tool_name":       tool_name,
                                             "input":           tool_input,
@@ -2307,9 +2343,11 @@ async def chat_agent(
                                 # assistant message row is created.
                                 try:
                                     _tr_state = "error" if isinstance(result_data, dict) and result_data.get("error") else "completed"
+                                    _tr_amid = await ensure_assistant_message()
                                     db.table("tool_results").insert({
                                         "user_id": user_id,
                                         "conversation_id": conversation_id,
+                                        "message_id": _tr_amid,
                                         "tool_call_id": tool_call_id,
                                         "tool_name": tool_name,
                                         "input": tool_input,
@@ -2572,7 +2610,10 @@ async def chat_agent(
                             "pending": len(deferred_tool_calls),
                         })
 
-                    # Process results (in input order — guaranteed by executor)
+                    # Process results (in input order — guaranteed by executor).
+                    # Link every persisted tool_result to a durable assistant
+                    # message id so completed cards survive a refresh.
+                    _par_amid = await ensure_assistant_message()
                     for par_res in par_results:
                         _pid   = par_res["id"]
                         _pname = par_res["name"]
@@ -2594,6 +2635,7 @@ async def chat_agent(
                             db.table("tool_results").insert({
                                 "user_id":         user_id,
                                 "conversation_id": conversation_id,
+                                "message_id":      _par_amid,
                                 "tool_call_id":    _pid,
                                 "tool_name":       _pname,
                                 "input":           _pinp,
@@ -2781,47 +2823,64 @@ async def chat_agent(
             all_parts = tool_parts + parts
 
             if accumulated_content or tools_used:
+                _msg_payload = {
+                    "content": accumulated_content or "(Tool results returned)",
+                    # ── top-level parts column for fast AI SDK rehydration ──
+                    "parts": all_parts,
+                    "metadata": {
+                        "parts": all_parts,        # kept for backwards-compat
+                        "artifacts": artifacts,
+                        "has_artifacts": len(artifacts) > 0,
+                        "tools_used": tools_used,
+                        "usage": total_usage,
+                        "model": model_to_use,
+                        "iterations": iteration,
+                        "status": "complete",
+                    },
+                }
                 try:
-                    _msg_insert = db.table("messages").insert({
-                        "conversation_id": conversation_id,
-                        "role": "assistant",
-                        "content": accumulated_content or "(Tool results returned)",
-                        # ── NEW: top-level parts column for fast AI SDK rehydration ──
-                        "parts": all_parts,
-                        "metadata": {
-                            "parts": all_parts,        # kept for backwards-compat
-                            "artifacts": artifacts,
-                            "has_artifacts": len(artifacts) > 0,
-                            "tools_used": tools_used,
-                            "usage": total_usage,
-                            "model": model_to_use,
-                            "iterations": iteration,
-                        },
-                    }).execute()
-                    print(f"[chat/agent] ✓ Saved assistant message to DB for conv {conversation_id}")
+                    if assistant_message_id:
+                        # Finalize the durable row created earlier this turn. Its
+                        # tool_results are already linked via message_id, so there
+                        # is nothing to backfill.
+                        db.table("messages").update(_msg_payload).eq(
+                            "id", assistant_message_id
+                        ).execute()
+                        print(f"[chat/agent] ✓ Finalized assistant message {assistant_message_id} for conv {conversation_id}")
+                    else:
+                        # Pure-text turn (no tools ran) — no placeholder exists yet.
+                        _msg_payload["conversation_id"] = conversation_id
+                        _msg_payload["role"] = "assistant"
+                        _msg_insert = db.table("messages").insert(_msg_payload).execute()
+                        print(f"[chat/agent] ✓ Saved assistant message to DB for conv {conversation_id}")
 
-                    # ── Backfill message_id into tool_results rows ────────────────
-                    # The tool_results rows were inserted during streaming without a
-                    # message_id because the message didn't exist yet. Now that the
-                    # message is saved we link them so the history endpoint can return
-                    # Generative UI data keyed by message.
-                    if tools_used and _msg_insert.data:
-                        _saved_msg_id = _msg_insert.data[0]["id"]
-                        _tool_call_ids = [t["toolCallId"] for t in tools_used]
-                        try:
-                            db.table("tool_results").update({
-                                "message_id": _saved_msg_id
-                            }).eq("conversation_id", conversation_id).in_(
-                                "tool_call_id", _tool_call_ids
-                            ).execute()
-                            print(f"[chat/agent] ✓ Linked {len(_tool_call_ids)} tool_results → message {_saved_msg_id}")
-                        except Exception as _link_err:
-                            print(f"[chat/agent] ⚠ tool_results message_id backfill failed (non-fatal): {_link_err}")
+                        # Safety net: link any tool_results that were somehow
+                        # persisted without a message_id on this path.
+                        if tools_used and _msg_insert.data:
+                            _saved_msg_id = _msg_insert.data[0]["id"]
+                            _tool_call_ids = [t["toolCallId"] for t in tools_used]
+                            try:
+                                db.table("tool_results").update({
+                                    "message_id": _saved_msg_id
+                                }).eq("conversation_id", conversation_id).in_(
+                                    "tool_call_id", _tool_call_ids
+                                ).execute()
+                                print(f"[chat/agent] ✓ Linked {len(_tool_call_ids)} tool_results → message {_saved_msg_id}")
+                            except Exception as _link_err:
+                                print(f"[chat/agent] ⚠ tool_results message_id backfill failed (non-fatal): {_link_err}")
 
                 except Exception as db_err:
                     import traceback as _tb
                     print(f"[chat/agent] ✗ FAILED to save assistant message: {db_err}")
                     print(f"[chat/agent] DB traceback: {_tb.format_exc()[:800]}")
+            elif assistant_message_id:
+                # A placeholder was created (a tool started) but the turn produced
+                # no content and no completed tools — remove the empty row so it
+                # doesn't render as a ghost bubble on reload.
+                try:
+                    db.table("messages").delete().eq("id", assistant_message_id).execute()
+                except Exception as _del_err:
+                    print(f"[chat/agent] ⚠ placeholder cleanup failed (non-fatal): {_del_err}")
 
             try:
                 db.table("conversations").update({"updated_at": "now()"}).eq(
