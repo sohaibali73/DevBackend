@@ -853,8 +853,11 @@ async def _fetch_kb_context(db, user_content: str, user_id: Optional[str] = None
                 "match_brain_chunks",
                 {
                     "query_embedding": query_vec,
-                    "match_threshold": 0.4,
-                    "match_count":     8,
+                    # 0.7 floor: 0.4 was so permissive that tangential matches
+                    # (e.g. a fund prospectus matching the word "fund" at ~0.68)
+                    # got injected. KB RAG should only fire on strong matches.
+                    "match_threshold": 0.7,
+                    "match_count":     4,
                     "p_user_id":       user_id,
                     "p_category":      None,
                 },
@@ -867,16 +870,30 @@ async def _fetch_kb_context(db, user_content: str, user_id: Optional[str] = None
         if not rows:
             return ""
 
-        # Reuse the formatter from file_rag, mapping fields to its expected schema
-        chunks = [
-            {
+        # Cap the injected context: few, short, high-similarity passages only.
+        # KB RAG is a hint, not a document dump — keeping it tight stops the
+        # system prompt from ballooning (and bounds the cache-busting cost).
+        MAX_CHUNKS      = 4
+        MAX_CHUNK_CHARS = 1200
+        MAX_TOTAL_CHARS = 6000
+
+        chunks = []
+        _total = 0
+        for r in rows[:MAX_CHUNKS]:
+            _content = (r.get("content", "") or "")[:MAX_CHUNK_CHARS]
+            if not _content:
+                continue
+            if _total + len(_content) > MAX_TOTAL_CHARS:
+                break
+            _total += len(_content)
+            chunks.append({
                 "filename":    r.get("title") or r.get("filename") or "knowledge base",
                 "chunk_index": r.get("chunk_index", 0),
-                "content":     r.get("content", ""),
+                "content":     _content,
                 "similarity":  r.get("similarity"),
-            }
-            for r in rows
-        ]
+            })
+        if not chunks:
+            return ""
         block = format_chunks_for_prompt(chunks)
         if not block:
             return ""
@@ -1420,6 +1437,18 @@ async def chat_agent(
         except Exception:
             return []
 
+    # Skip cross-conversation KB vector RAG on explicit AFL code-gen turns.
+    # Those route to generate_afl_code, which builds its OWN system prompt in
+    # ClaudeAFLEngine — any KB passages injected here would only bloat the chat
+    # prompt (and cost an embedding call) without ever being used.
+    _AFL_CODEGEN_SKILLS = {"afl-developer", "amibroker-afl-developer", "afl"}
+    _skip_kb_rag = (data.skill_slug or "").strip().lower() in _AFL_CODEGEN_SKILLS
+
+    async def _maybe_kb_context():
+        if _skip_kb_rag:
+            return ""
+        return await _fetch_kb_context(db, data.content, user_id=user_id)
+
     (
         _ins,
         history_rows,
@@ -1433,7 +1462,7 @@ async def chat_agent(
         asyncio.to_thread(_insert_user_message),
         asyncio.to_thread(_fetch_history),
         _fetch_file_context(db, conversation_id),
-        _fetch_kb_context(db, data.content, user_id=user_id),
+        _maybe_kb_context(),
         _fetch_kb_doc_refs(db, data.content),
         _fetch_doc_rag_context(db, conversation_id, data.content),
         asyncio.to_thread(_fetch_conversation_file_ids),
@@ -1505,10 +1534,21 @@ async def chat_agent(
                 _dt.log_model_resolved(model_to_use)
 
             # Build system prompt with optional caching markers
+            # Cached prefix: only stable content (the static AFL reference +
+            # per-conversation file context). file_context is stable across a
+            # conversation's turns, so it doesn't bust the cache.
             system_prompt_base = (
                 f"{get_base_prompt()}\n\n{get_chat_prompt()}"
-                f"{file_context}{kb_context}{kb_doc_context}{doc_rag_context}"
-                f"{kb_attached_text}"
+                f"{file_context}"
+            )
+            # Per-message retrieval (vector KB RAG, [kb-doc:] refs, conversation
+            # doc RAG, explicitly-attached KB docs) is assembled separately and
+            # appended as an UNCACHED block below. Folding it into the cached
+            # prefix would invalidate the cache EVERY turn, because the retrieved
+            # passages change with each user message — re-billing the ~43k-char
+            # base prompt at full price each time.
+            retrieval_context = (
+                f"{kb_context}{kb_doc_context}{doc_rag_context}{kb_attached_text}"
             )
 
             # ── YANG Autopilot: <learned_preferences> injection DISABLED ──
@@ -1600,7 +1640,7 @@ async def chat_agent(
 
             # ── Debug: log full assembled system prompt ───────────────────────
             if _dt:
-                _dt.log_system_prompt(system_prompt_base)
+                _dt.log_system_prompt(system_prompt_base + retrieval_context)
 
             # NEW: Use system blocks with prompt caching for Claude 4.6+
             if data.use_prompt_caching and model_config["supports_prompt_caching"]:
@@ -1611,8 +1651,15 @@ async def chat_agent(
                         "cache_control": {"type": "ephemeral"}  # Cache this stable content
                     }
                 ]
+                # Per-message retrieval as a SEPARATE, uncached block so it never
+                # invalidates the cached base prefix above.
+                if retrieval_context:
+                    system_prompt.append({
+                        "type": "text",
+                        "text": retrieval_context,
+                    })
             else:
-                system_prompt = system_prompt_base
+                system_prompt = system_prompt_base + retrieval_context
 
             # ── PPTX Vision: inject rendered slide images into last user message ──
             # If any PPTX files attached to this conversation have rendered slide
