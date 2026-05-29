@@ -831,6 +831,10 @@ async def _fetch_kb_context(db, user_content: str, user_id: Optional[str] = None
     (scoped to this user via match_brain_chunks RPC), and return a system
     prompt block with the top-k passages.
 
+    NOTE: Currently UNUSED — automatic KB injection is disabled in chat_agent
+    in favour of the deliberate `search_knowledge_base` tool. Kept (with tuned
+    threshold/caps) so passive injection can be re-enabled if ever wanted.
+
     Safe no-op if:
       * VOYAGE_API_KEY is unset (no embedding can be generated)
       * The match_brain_chunks RPC is missing or the table is empty
@@ -1437,23 +1441,20 @@ async def chat_agent(
         except Exception:
             return []
 
-    # Skip cross-conversation KB vector RAG on explicit AFL code-gen turns.
-    # Those route to generate_afl_code, which builds its OWN system prompt in
-    # ClaudeAFLEngine — any KB passages injected here would only bloat the chat
-    # prompt (and cost an embedding call) without ever being used.
-    _AFL_CODEGEN_SKILLS = {"afl-developer", "amibroker-afl-developer", "afl"}
-    _skip_kb_rag = (data.skill_slug or "").strip().lower() in _AFL_CODEGEN_SKILLS
-
-    async def _maybe_kb_context():
-        if _skip_kb_rag:
-            return ""
-        return await _fetch_kb_context(db, data.content, user_id=user_id)
+    # Automatic KB vector-RAG injection is DISABLED by design. The persistent
+    # knowledge base is reached deliberately via the `search_knowledge_base`
+    # tool — the model decides when it's relevant using the precedence rules in
+    # the system prompt. Passive injection on every turn bloated the prompt with
+    # tangential matches (e.g. a fund prospectus matching "mutual fund /
+    # allocation / strategies" at 0.74+) and busted the prompt cache. The
+    # `_fetch_kb_context` helper is retained but intentionally unused so this can
+    # be re-enabled later if needed.
+    kb_context = ""
 
     (
         _ins,
         history_rows,
         file_context,
-        kb_context,
         kb_doc_context,
         doc_rag_context,
         conversation_file_ids,
@@ -1462,7 +1463,6 @@ async def chat_agent(
         asyncio.to_thread(_insert_user_message),
         asyncio.to_thread(_fetch_history),
         _fetch_file_context(db, conversation_id),
-        _maybe_kb_context(),
         _fetch_kb_doc_refs(db, data.content),
         _fetch_doc_rag_context(db, conversation_id, data.content),
         asyncio.to_thread(_fetch_conversation_file_ids),
