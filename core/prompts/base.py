@@ -103,6 +103,13 @@ Rule: if lookup_norgate_ticker returns no result for what you intended,
 DO NOT fall back to a guessed symbol. Either pick the closest suggestion
 the tool surfaces or ask the user. Never write Foreign("XXX") for an XXX
 the lookup tool has not confirmed exists.
+
+WHY THIS MATTERS — a wrong symbol does NOT raise an error. Foreign() on a
+non-existent symbol returns an empty/zero array, and if that array feeds a
+Buy/Sell condition the whole signal collapses to zero on every bar — the
+strategy backtests to ~0% CAR with no obvious cause. Guessing `&BRN` when
+the real symbol is `&BRN_CCB` (or `$USDX` when it is `$DXY`) is exactly how
+a plausible-looking strategy ends up never trading. See HOUSE RULE 15.
 '''
 
 
@@ -246,11 +253,18 @@ Examples:
 CRITICAL: ApplyStop parameters must be SCALARS, not arrays. Do not pass
 IIf() values to type/mode — they will silently misbehave.
 
-Position sizing:
+Position sizing — READ THE SIGN CAREFULLY, this is the #1 cause of ~0% returns:
   SetPositionSize(amount, mode)
     mode = spsPercentOfEquity | spsShares | spsValue | spsPercentOfPosition
-  PositionSize = 100;          // 100% of available equity per slot (with MaxOpenPositions>1)
-  PositionSize = -10;          // 10% of equity per slot (legacy syntax — negative = pct)
+  SetPositionSize(100, spsPercentOfEquity);  // 100% of equity — the explicit, correct form
+  PositionSize = -100;         // 100% of equity per slot   (NEGATIVE = percent)
+  PositionSize = -10;          //  10% of equity per slot   (NEGATIVE = percent)
+  PositionSize =  100;         // DANGER: this is $100, a DOLLAR amount — NOT 100%.
+
+A POSITIVE PositionSize is a dollar value. `PositionSize = 100;` buys $100 of
+stock (often 1–2 shares) on a $100,000 account => ~0.1% exposure => the
+strategy backtests to ~0% CAR no matter how good the signals are. To go fully
+invested, ALWAYS use SetPositionSize(100, spsPercentOfEquity) or PositionSize = -100.
 '''
 
 COLOR_PALETTE = '''COLOR PALETTE — ONLY these constants exist in AFL.
@@ -382,6 +396,63 @@ HOUSE_RULES = '''CODE QUALITY RULES (non-negotiable — the server-side validato
     Ref() lookbacks (use Ref(Close, -1), never Ref(Close, +1)), function
     arguments, comparisons, assignments. If the value is positive, omit
     the sign.
+
+15. EXTERNAL DATA HYGIENE — Foreign(), composites and other cross-symbol
+    series fail SILENTLY. When a Foreign("X") symbol is missing, suspended,
+    or has no history on a given bar, AmiBroker returns an EMPTY/zero array,
+    not an error. The #1 cause of a strategy that backtests to ~0% CAR is an
+    empty external series dragging the entry condition to zero on every bar.
+
+    Therefore:
+      a. NEVER gate Buy/Sell directly on a raw Foreign() array. Wrap every
+         external series the moment you read it:
+             BrentRaw = Foreign("&BRN_CCB", "C");
+             Brent    = Nz(BrentRaw);          // empty/NULL -> 0, no leaks
+         and only ever compare the wrapped copy.
+      b. A "data is present" check is a DIAGNOSTIC, never an entry
+         precondition. Do NOT write `Buy = trend AND vol AND (Foreign>0)`.
+         If you must know whether macro data exists, surface it in the
+         Exploration section (AddColumn) — keep it OUT of Buy/Sell.
+      c. Use IsEmpty()/IsNull()/Nz() for presence tests, NOT `> 0`. A real
+         price can legitimately be 0 after an adjustment, and `Foreign>0`
+         silently nukes every bar when the symbol is missing.
+      d. Prefer back-adjusted continuous-future symbols (the _CCB variant,
+         e.g. "&CL_CCB") for ratios/spreads — raw &-continuous series carry
+         roll gaps that distort EMA/ROC comparisons.
+
+16. ENTRY MUST ACTUALLY FIRE — a strategy with zero trades is a bug, not a
+    conservative result. Deeply stacked AND-gates (trend AND vol AND macro
+    AND regime AND ...) routinely multiply down to a Buy that is true on
+    almost no bars. Guard against silent over-filtering:
+      a. Keep the hard entry to TWO core conditions. Express additional
+         confluence as a SCORE with a tunable threshold, not more ANDs:
+             Score     = cond1 + cond2 + cond3 + cond4;   // 0..N
+             MinScore  = Optimize("Min Score", 2, 1, 4, 1);
+             Buy       = Score >= MinScore;                // loosen via param
+         This lets the user dial selectivity instead of getting 0 trades.
+      b. ALWAYS make entry frequency observable: in the Exploration section
+         set `Filter = Buy OR Sell;` and add a running trade counter, e.g.
+             AddColumn(Cum(Buy), "Cumulative Entries", 1.0);
+         so a zero-trade strategy is obvious at a glance rather than hiding
+         behind a flat equity curve.
+      c. After writing the logic, sanity-check: roughly how often is Buy
+         true? If the honest answer is "almost never," loosen the gate or
+         convert filters to a score BEFORE returning the strategy.
+
+17. POSITIONSIZE SIGN — the single most common cause of a strategy that
+    backtests to ~0% CAR. In AmiBroker the SIGN of PositionSize changes its
+    meaning entirely:
+      - POSITIVE  -> a DOLLAR amount.  `PositionSize = 100;` buys $100 of stock
+        (1–2 shares) on a $100k account => ~0.1% exposure => the account barely
+        moves even when every trade is a big % winner.
+      - NEGATIVE  -> a PERCENT of equity.  `PositionSize = -100;` = 100% of
+        equity; `PositionSize = -10;` = 10%.
+    NEVER write a bare positive `PositionSize = 100;` expecting "fully
+    invested." To allocate a fraction of the account, use the explicit,
+    self-documenting form:
+        SetPositionSize(100, spsPercentOfEquity);   // 100% of equity per slot
+    or the negative-percent shorthand `PositionSize = -100;`. If you ever
+    intend a literal dollar amount, comment it so it is not mistaken for a bug.
 '''
 
 
@@ -427,7 +498,10 @@ SetOption("CommissionAmount",             0.0005);
 SetOption("UsePrevBarEquityForPosSizing",   True);
 SetOption("AllowPositionShrinking",         True);
 SetOption("AccountMargin",                   100);
-PositionSize = 100;
+SetPositionSize(100, spsPercentOfEquity);        // 100% of equity per slot.
+                                                 // NOT `PositionSize = 100;` — a positive
+                                                 // PositionSize is a DOLLAR amount ($100),
+                                                 // which trades ~0% of the account.
 _SECTION_END();
 
 _SECTION_BEGIN("Indicators");
@@ -498,7 +572,8 @@ SetOption("CommissionMode",                    2);
 SetOption("CommissionAmount",             0.0005);
 SetOption("UsePrevBarEquityForPosSizing",   True);
 SetOption("AllowPositionShrinking",         True);
-PositionSize = 100;
+SetPositionSize(100, spsPercentOfEquity);        // 100% of equity per slot — NOT
+                                                 // `PositionSize = 100;` (that means $100).
 _SECTION_END();
 
 // Helpers expose _Mom_Buy / _Mom_Sell / _Trend_Up / _Trend_Down arrays.

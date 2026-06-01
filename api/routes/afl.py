@@ -34,8 +34,10 @@ class BacktestSettingsInput(BaseModel):
     """User-provided backtest settings for AFL generation."""
     initial_equity: float = 100000
     position_size: str = "100"
-    # FIX-02: position_size_type kept for API compatibility but BacktestSettings.to_afl()
-    # no longer uses it — PositionSize is now a plain assignment, not SetPositionSize().
+    # position_size_type IS used: BacktestSettings.to_afl() emits
+    # SetPositionSize(position_size, position_size_type). Default
+    # spsPercentOfEquity => `SetPositionSize(100, spsPercentOfEquity)` = 100% of
+    # equity. (A bare `PositionSize = 100;` would mean $100, not 100%.)
     position_size_type: str = "spsPercentOfEquity"
     max_positions: int = 10
     # FIX-02: commission default corrected from 0.001 to 0.0005 (0.05% per trade).

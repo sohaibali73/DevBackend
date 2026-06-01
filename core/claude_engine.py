@@ -182,7 +182,12 @@ class BacktestSettings:
             f'SetOption("AllowPositionShrinking", True);\n'
             f'SetOption("AccountMargin", {self.margin_requirement});\n'
             f'SetTradeDelays({d[0]}, {d[1]}, {d[2]}, {d[3]});\n'
-            f'PositionSize = {self.position_size};\n'
+            # Use SetPositionSize(amount, mode) so position_size_type is honored.
+            # A bare `PositionSize = 100;` is a DOLLAR amount ($100) in AmiBroker,
+            # NOT 100% of equity — that sizes every trade at ~0.1% of a $100k
+            # account and makes the strategy backtest to ~0% CAR regardless of
+            # signal quality. (Reverts the regression that dropped SetPositionSize.)
+            f'SetPositionSize({self.position_size}, {self.position_size_type});\n'
         )
 
 
