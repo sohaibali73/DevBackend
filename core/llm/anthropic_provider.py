@@ -325,10 +325,75 @@ class AnthropicProvider(BaseLLMProvider):
 
     def normalize_messages(self, messages: List[Dict]) -> List[Dict]:
         """
-        Messages are already in Anthropic format in our system.
-        Pass through unchanged.
+        Convert canonical (OpenAI-flavored) tool messages into Anthropic format.
+
+        The SkillExecutor tool loop emits a provider-agnostic shape:
+          • assistant turns carry ``tool_calls=[{id,name,args}]``
+          • tool results arrive as a separate ``{"role": "tool", ...}`` message
+
+        Anthropic instead expects tool calls as ``tool_use`` content blocks on
+        the assistant turn, and tool results as ``tool_result`` blocks inside a
+        ``user`` turn. Without this conversion the API rejects the request with
+        ``Unexpected role "tool"``.
+
+        Messages already in Anthropic shape (plain string content, or a content
+        block list, with no ``tool_calls`` key and no ``role == "tool"``) pass
+        through untouched — so the main chat path is unaffected.
         """
-        return messages
+        out: List[Dict] = []
+        pending_tool_results: List[Dict] = []
+
+        def _flush_tool_results() -> None:
+            # Anthropic wants all tool_result blocks for a turn grouped into one
+            # user message (handles parallel tool calls correctly).
+            if pending_tool_results:
+                out.append({"role": "user", "content": list(pending_tool_results)})
+                pending_tool_results.clear()
+
+        for msg in messages:
+            role = msg.get("role")
+
+            # OpenAI-style tool result → Anthropic tool_result block
+            if role == "tool":
+                content = msg.get("content", "")
+                if not isinstance(content, str):
+                    try:
+                        content = json.dumps(content)
+                    except Exception:
+                        content = str(content)
+                pending_tool_results.append({
+                    "type": "tool_result",
+                    "tool_use_id": msg.get("tool_call_id") or msg.get("id") or "",
+                    "content": content,
+                })
+                continue
+
+            # Any non-tool message closes the current tool-result group.
+            _flush_tool_results()
+
+            # Assistant turn carrying canonical tool_calls → tool_use blocks
+            if role == "assistant" and msg.get("tool_calls"):
+                blocks: List[Dict] = []
+                text = msg.get("content")
+                if isinstance(text, str) and text.strip():
+                    blocks.append({"type": "text", "text": text})
+                elif isinstance(text, list):
+                    blocks.extend(text)
+                for tc in msg["tool_calls"]:
+                    blocks.append({
+                        "type": "tool_use",
+                        "id": tc.get("id", ""),
+                        "name": tc.get("name", ""),
+                        "input": tc.get("args", tc.get("input", {})) or {},
+                    })
+                out.append({"role": "assistant", "content": blocks})
+                continue
+
+            # Already-Anthropic message (or plain user/assistant text) — keep as-is.
+            out.append(msg)
+
+        _flush_tool_results()
+        return out
 
     def normalize_tools(self, tools: List[Dict]) -> List[Dict]:
         """

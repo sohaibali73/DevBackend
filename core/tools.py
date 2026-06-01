@@ -5894,6 +5894,50 @@ def _invoke_skill(tool_input: Dict, api_key: str) -> Dict:
             }
 
 
+        # ── Forgiving slug resolution ───────────────────────────────────────
+        # The registry is user-defined (uploads). Even with a live tool catalog,
+        # the model can still mistype or guess a slug. Resolve tolerantly:
+        #   1. exact / normalized match  → canonicalize to the real slug
+        #   2. single close match        → auto-correct (logged)
+        #   3. multiple close matches    → return a 'did you mean' for retry
+        #   4. nothing close             → fall through; router lists what exists
+        try:
+            from core.skills.loader import get_skill as _sk_get, suggest_skills as _sk_suggest
+
+            _resolved = _sk_get(skill_slug)
+            if _resolved is not None:
+                if _resolved.slug != skill_slug:
+                    logger.info(
+                        "invoke_skill: normalized slug '%s' → '%s'", skill_slug, _resolved.slug
+                    )
+                skill_slug = _resolved.slug
+            else:
+                _suggestions = _sk_suggest(skill_slug, n=3)
+                if len(_suggestions) == 1:
+                    logger.info(
+                        "invoke_skill: '%s' not found — auto-resolving to closest match '%s'",
+                        skill_slug, _suggestions[0],
+                    )
+                    skill_slug = _suggestions[0]
+                elif _suggestions:
+                    logger.info(
+                        "invoke_skill: '%s' not found — suggesting %s", skill_slug, _suggestions
+                    )
+                    return {
+                        "success": False,
+                        "tool": "invoke_skill",
+                        "skill": skill_slug,
+                        "error": (
+                            f"No skill registered under '{skill_slug}'. "
+                            f"Did you mean one of these? {_suggestions}. "
+                            "Call invoke_skill again with one of these EXACT slugs."
+                        ),
+                        "did_you_mean": _suggestions,
+                    }
+                # no close match → let the router return the full available list
+        except Exception as _res_err:  # pragma: no cover - defensive
+            logger.warning("invoke_skill slug pre-resolution skipped: %s", _res_err)
+
         # Accept any reasonable field name for the user message — Claude sometimes
         # uses "instructions", "prompt", "request", "description", "task", "text",
         # "input", "task_description", or other variations instead of "message".
@@ -7130,6 +7174,80 @@ def handle_tool_call(
 # The response may include server_tool_use and tool_search_tool_result blocks.
 # Use handle_tool_result_block() to route them correctly.
 
+# ── Dynamic invoke_skill catalog ─────────────────────────────────────────────
+# The set of specialist skills is user-defined at runtime (uploaded from the
+# front end → materialized on disk → loader cache). A hardcoded slug menu in the
+# invoke_skill description drifts out of sync the moment a skill is uploaded,
+# renamed, or removed — which is exactly how the model ends up calling a
+# non-existent slug like 'quant-analyst'. So we build the specialist portion of
+# the description live from list_skills() — the SAME source that powers
+# GET /skills and the front-end ChatSkillSelector. One source of truth for both
+# the user (picker) and the model (tool description).
+
+# Stable infrastructure slugs that route to dedicated handlers (NOT drift-prone).
+_INVOKE_SKILL_STATIC_HEADER = (
+    "Invoke a registered skill by its slug. Use this for document generation, "
+    "presentation creation, Excel spreadsheets, and specialist analysis. "
+    "Document/spreadsheet/presentation slugs (route to dedicated handlers):\n"
+    "- 'potomac-docx-skill': Potomac-branded Word documents (.docx)\n"
+    "- 'potomac-pptx': Potomac-branded PowerPoint presentations (.pptx)\n"
+    "- 'potomac-xlsx': Potomac-branded Excel spreadsheets (.xlsx)\n"
+    "- 'xlsx' / 'pptx' / 'docx' / 'pdf': general Office/PDF creation and editing"
+)
+
+
+def _build_invoke_skill_description() -> str:
+    """Build the invoke_skill description with a LIVE specialist-skill catalog.
+
+    Deterministic (slugs sorted) so the string is stable between uploads and the
+    Anthropic prompt cache stays warm; it only changes when the registry changes.
+    Best-effort: any failure falls back to the static header so chat never breaks.
+    """
+    try:
+        from core.skills import list_skills
+
+        # Infra slugs already covered by the static header — don't duplicate.
+        _covered = {
+            "potomac-docx-skill", "potomac-pptx", "potomac-xlsx",
+            "xlsx", "pptx", "docx", "pdf",
+        }
+        rows = []
+        for skill in sorted(list_skills(enabled_only=True), key=lambda s: s.slug):
+            if skill.slug in _covered:
+                continue
+            desc = " ".join((skill.description or "").split())
+            if len(desc) > 160:
+                desc = desc[:157] + "..."
+            cat = f" [{skill.category}]" if skill.category and skill.category != "general" else ""
+            rows.append(f"- '{skill.slug}'{cat}: {desc}")
+        if not rows:
+            return _INVOKE_SKILL_STATIC_HEADER
+        return (
+            _INVOKE_SKILL_STATIC_HEADER
+            + "\n\nSpecialist skills (live registry — reflects user uploads; "
+            "use these EXACT slugs):\n"
+            + "\n".join(rows)
+        )
+    except Exception as e:  # pragma: no cover - defensive
+        logger.warning("invoke_skill dynamic catalog build failed: %s", e)
+        return _INVOKE_SKILL_STATIC_HEADER
+
+
+def _with_dynamic_invoke_skill(tools: List[Dict]) -> List[Dict]:
+    """Return a copy of ``tools`` with the invoke_skill entry's description
+    refreshed from the live registry. Non-mutating: the shared ALL_TOOLS
+    constant is never modified."""
+    desc = _build_invoke_skill_description()
+    if not desc:
+        return tools
+    out: List[Dict] = []
+    for t in tools:
+        if t.get("name") == "invoke_skill":
+            t = {**t, "description": desc}
+        out.append(t)
+    return out
+
+
 def get_tools_for_api(
     tool_search: bool = False,
     variant: str = "regex",
@@ -7150,7 +7268,7 @@ def get_tools_for_api(
         List of tool dicts for the API ``tools`` parameter.
     """
     if not tool_search:
-        return ALL_TOOLS
+        return _with_dynamic_invoke_skill(ALL_TOOLS)
 
     search_entry = (
         TOOL_SEARCH_REGEX_ENTRY if variant == "regex" else TOOL_SEARCH_BM25_ENTRY
@@ -7167,7 +7285,7 @@ def get_tools_for_api(
         else:
             result.append(tool)
 
-    return result
+    return _with_dynamic_invoke_skill(result)
 
 
 def handle_tool_result_block(block: Dict[str, Any]) -> Optional[str]:

@@ -12,6 +12,7 @@ from core.skills.loader import (
     load_skills,
     get_skill,
     list_skills,
+    suggest_skills,
     invalidate_cache,
     SkillDefinition,
 )
@@ -24,6 +25,7 @@ __all__ = [
     "load_skills",
     "get_skill",
     "list_skills",
+    "suggest_skills",
     "invalidate_cache",
     "SkillDefinition",
 ]
