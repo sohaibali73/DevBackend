@@ -12,6 +12,7 @@ The executor:
 
 import json
 import logging
+import os
 import time
 import asyncio
 from typing import Dict, Any, List, Optional
@@ -74,6 +75,21 @@ class SkillExecutor:
         # Get tools available to this skill
         tools = self._get_skill_tools(skill)
 
+        # Effective timeout: the skill's own value, but allow ops to raise the
+        # floor globally without editing every skill (e.g. heavy multi-round
+        # tool loops on Opus). SKILL_EXECUTION_TIMEOUT_S only ever *raises* the
+        # budget — a skill that asks for more still gets more.
+        effective_timeout = skill.timeout
+        floor = os.getenv("SKILL_EXECUTION_TIMEOUT_S")
+        if floor:
+            try:
+                effective_timeout = max(effective_timeout, int(floor))
+            except ValueError:
+                logger.warning("Invalid SKILL_EXECUTION_TIMEOUT_S=%r — ignoring", floor)
+
+        # Mutable progress holder so partial output survives a timeout cancel.
+        progress: Dict[str, Any] = {"text": "", "usage": {}, "iterations": 0}
+
         # Run the tool loop
         try:
             result = await asyncio.wait_for(
@@ -83,14 +99,28 @@ class SkillExecutor:
                     tools=tools,
                     max_tokens=skill.max_tokens,
                     model=model,
+                    progress=progress,
                 ),
-                timeout=skill.timeout,
+                timeout=effective_timeout,
             )
         except asyncio.TimeoutError:
+            partial = (progress.get("text") or "").strip()
+            logger.warning(
+                "Skill '%s' timed out after %ss (%d rounds, %d chars partial)",
+                skill.slug, effective_timeout, progress.get("iterations", 0), len(partial),
+            )
             return {
                 "success": False,
-                "error": f"Skill execution timed out after {skill.timeout}s",
+                "error": (
+                    f"Skill '{skill.slug}' timed out after {effective_timeout}s. "
+                    "It's a heavy multi-round skill — raise its `timeout` in the skill "
+                    "definition (or set SKILL_EXECUTION_TIMEOUT_S) to give it more time."
+                ),
                 "skill": skill.slug,
+                "text": partial,          # surface whatever was produced
+                "partial": bool(partial),
+                "usage": progress.get("usage", {}),
+                "iterations": progress.get("iterations", 0),
             }
 
         elapsed = round((time.time() - start_time) * 1000, 2)
@@ -107,12 +137,17 @@ class SkillExecutor:
         tools: List[Dict],
         max_tokens: int,
         model: str,
+        progress: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
         """
         Multi-turn tool loop: call model -> execute tools -> feed back.
 
         This is the CORE of the universal skill system.
         Works with ANY provider because tools are normalized.
+
+        ``progress`` (optional): a mutable dict the caller can read after a
+        timeout cancel to recover partial output. Updated each round with
+        ``text`` / ``usage`` / ``iterations``.
         """
         accumulated_text = ""
         total_usage = {"input_tokens": 0, "output_tokens": 0}
@@ -148,6 +183,12 @@ class SkillExecutor:
             # If text response, accumulate it
             if response.text:
                 accumulated_text += response.text
+
+            # Mirror running state so a timeout cancel can recover partial output
+            if progress is not None:
+                progress["text"] = accumulated_text
+                progress["usage"] = dict(total_usage)
+                progress["iterations"] = iteration + 1
 
             # If no tool calls, we're done
             if not response.tool_calls:

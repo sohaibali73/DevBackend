@@ -144,7 +144,7 @@ def _load_lightweight(folder: Path) -> Optional[SkillDefinition]:
         tools=list(meta.get("tools") or []),
         output_type=meta.get("output_type", "text"),
         max_tokens=int(meta.get("max_tokens", 8192)),
-        timeout=int(meta.get("timeout", 120)),
+        timeout=int(meta.get("timeout", 240)),
         enabled=bool(meta.get("enabled", True)),
         aliases=list(meta.get("aliases") or []),
         tags=list(meta.get("tags") or []),
@@ -181,7 +181,7 @@ def _load_bundle(folder: Path) -> Optional[SkillDefinition]:
         tools=list(fm.get("allowed-tools") or fm.get("tools") or []),
         output_type=fm.get("output_type", "text"),
         max_tokens=int(fm.get("max_tokens", 16384)),
-        timeout=int(fm.get("timeout", 180)),
+        timeout=int(fm.get("timeout", 300)),
         enabled=bool(fm.get("enabled", True)),
         aliases=list(fm.get("aliases") or []),
         tags=list(tags),
@@ -277,9 +277,57 @@ def load_skills() -> Dict[str, SkillDefinition]:
     return dict(_REGISTRY)
 
 
+def _normalize_slug(slug: str) -> str:
+    """Canonicalize a slug for tolerant matching: lowercase, trim, and treat
+    whitespace/underscores as hyphens. Mirrors the front end's slug
+    normalization in tool-registry.tsx (lowercase + hyphen/underscore folding)
+    so the model, the picker, and result-card routing all agree."""
+    return re.sub(r"[\s_]+", "-", (slug or "").strip().lower())
+
+
 def get_skill(slug: str) -> Optional[SkillDefinition]:
+    """Resolve a skill by exact slug/alias, then by normalized match.
+
+    Exact lookup is tried first (fast path, preserves existing behavior).
+    If that misses, we fall back to a case/hyphen/underscore-insensitive
+    match so reasonable variants (e.g. 'Quant_Analyst') still resolve.
+    Fuzzy 'did you mean' suggestions live in suggest_skills(), not here —
+    this function never guesses, it only normalizes.
+    """
     _load_all()
-    return _REGISTRY.get(slug)
+    if not slug:
+        return None
+    exact = _REGISTRY.get(slug)
+    if exact is not None:
+        return exact
+    norm = _normalize_slug(slug)
+    if not norm:
+        return None
+    for key, skill in _REGISTRY.items():
+        if _normalize_slug(key) == norm:
+            return skill
+    return None
+
+
+def suggest_skills(slug: str, n: int = 3, cutoff: float = 0.6) -> List[str]:
+    """Return up to ``n`` registered slugs closest to ``slug`` (canonical
+    slugs only, never aliases). Used to build a 'did you mean' hint when a
+    skill lookup misses — so the model can retry with a real slug instead of
+    failing hard. Returns [] if nothing is close enough."""
+    import difflib
+
+    _load_all()
+    norm = _normalize_slug(slug)
+    if not norm:
+        return []
+    # Map normalized form → canonical slug (dedupe alias entries).
+    canon: Dict[str, str] = {}
+    for skill in _REGISTRY.values():
+        if not skill.enabled:
+            continue
+        canon.setdefault(_normalize_slug(skill.slug), skill.slug)
+    matches = difflib.get_close_matches(norm, list(canon.keys()), n=n, cutoff=cutoff)
+    return [canon[m] for m in matches]
 
 
 def list_skills(
