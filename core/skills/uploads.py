@@ -549,10 +549,21 @@ def _write_bundle(p: ParsedBundle, target_dir: Path) -> None:
         )
 
 
+def _yaml_dq(s: str) -> str:
+    """Render a string as a YAML double-quoted scalar (handles names with
+    colons, quotes, etc.). The loader reads the display name straight from
+    this frontmatter, so it must round-trip safely."""
+    return '"' + (s or "").replace("\\", "\\\\").replace('"', '\\"') + '"'
+
+
 def _synthesize_skill_md(p: ParsedBundle) -> str:
+    # Emit the human `name` and the kebab `slug` as SEPARATE fields. The loader
+    # derives the display name from `name` and the id from `slug`; collapsing
+    # them (name = slug) made uploaded skills show their slug as their name.
     lines = [
         "---",
-        f"name: {p.slug}",
+        f"name: {_yaml_dq(p.name)}",
+        f"slug: {p.slug}",
         "description: >",
     ]
     for line in _wrap_yaml_block(p.description, indent=2):
