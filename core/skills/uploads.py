@@ -247,9 +247,11 @@ def synthesize_inline_bundle(
         raise SkillUploadError("BAD_SLUG", f"Invalid slug '{slug}'.")
 
     tags = tags or []
+    # Emit human `name` (YAML-quoted) and `slug` separately — see _synthesize_skill_md.
     fm_lines = [
         "---",
-        f"name: {slug}",
+        f"name: {_yaml_dq(name)}",
+        f"slug: {slug}",
         "description: >",
     ]
     for line in _wrap_yaml_block(description, indent=2):
