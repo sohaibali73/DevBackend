@@ -1541,7 +1541,9 @@ TOOL_DEFINITIONS = [
             "- 'dcf-model': Build DCF valuation models in Excel\n"
             "- 'initiating-coverage': Institutional equity research initiation reports\n"
             "- 'datapack-builder': Financial data packs for M&A/PE due diligence\n"
-            "- 'artifacts-builder': Complex multi-component React/HTML artifacts"
+            "- 'artifacts-builder': Complex multi-component React/HTML artifacts\n"
+            "- 'economist-analyst': Analyze events, policies, and markets through an economic lens — "
+            "supply/demand, incentives, game theory, multiple schools of thought, distributional effects"
         ),
         "input_schema": {
             "type": "object",
