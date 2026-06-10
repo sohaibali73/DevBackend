@@ -1,0 +1,446 @@
+{
+  "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+  "contentVersion": "1.0.0.0",
+  "metadata": {
+    "_generator": {
+      "name": "bicep",
+      "version": "0.43.8.12551",
+      "templateHash": "17236841761204586979"
+    }
+  },
+  "parameters": {
+    "location": {
+      "type": "string",
+      "defaultValue": "[resourceGroup().location]",
+      "metadata": {
+        "description": "Azure region for most resources"
+      }
+    },
+    "pgLocation": {
+      "type": "string",
+      "defaultValue": "[parameters('location')]",
+      "metadata": {
+        "description": "Region for PostgreSQL (some subscriptions are offer-restricted in the primary region; override if needed)"
+      }
+    },
+    "pgServerName": {
+      "type": "string",
+      "defaultValue": "[format('{0}-pg', parameters('namePrefix'))]",
+      "metadata": {
+        "description": "PostgreSQL server name (override to avoid name/location collisions from a prior failed deploy)"
+      }
+    },
+    "namePrefix": {
+      "type": "string",
+      "defaultValue": "pfmai",
+      "metadata": {
+        "description": "Prefix for resource names (lowercase, <= 11 chars)"
+      }
+    },
+    "backendImage": {
+      "type": "string",
+      "metadata": {
+        "description": "Container image for the backend, e.g. ghcr.io/sohaibali73/potomac-backend:latest"
+      }
+    },
+    "frontendImage": {
+      "type": "string",
+      "metadata": {
+        "description": "Container image for the frontend, e.g. ghcr.io/sohaibali73/analyst-frontend:latest"
+      }
+    },
+    "registryServer": {
+      "type": "string",
+      "defaultValue": "ghcr.io",
+      "metadata": {
+        "description": "Container registry server (e.g. ghcr.io)"
+      }
+    },
+    "registryUsername": {
+      "type": "string",
+      "defaultValue": ""
+    },
+    "registryPassword": {
+      "type": "securestring",
+      "defaultValue": ""
+    },
+    "pgAdminUser": {
+      "type": "string",
+      "defaultValue": "pfmadmin",
+      "metadata": {
+        "description": "PostgreSQL admin login + password"
+      }
+    },
+    "pgAdminPassword": {
+      "type": "securestring"
+    },
+    "secretKey": {
+      "type": "securestring",
+      "metadata": {
+        "description": "JWT signing secret (python -c \"import secrets;print(secrets.token_urlsafe(48))\")"
+      }
+    },
+    "encryptionKey": {
+      "type": "securestring",
+      "metadata": {
+        "description": "AES key for encrypting user API keys at rest"
+      }
+    },
+    "appSecrets": {
+      "type": "secureObject",
+      "defaultValue": {},
+      "metadata": {
+        "description": "Map of sensitive ENV_NAME -> value (API keys, etc). Each becomes a Container App secret + env var."
+      }
+    },
+    "appEnv": {
+      "type": "object",
+      "defaultValue": {},
+      "metadata": {
+        "description": "Map of non-sensitive ENV_NAME -> value (flags, pool sizes, etc)."
+      }
+    },
+    "adminEmails": {
+      "type": "string",
+      "defaultValue": ""
+    },
+    "webConcurrency": {
+      "type": "string",
+      "defaultValue": "2",
+      "metadata": {
+        "description": "uvicorn worker count"
+      }
+    }
+  },
+  "variables": {
+    "copy": [
+      {
+        "name": "appSecretDefs",
+        "count": "[length(variables('appSecretItems'))]",
+        "input": {
+          "name": "[toLower(replace(variables('appSecretItems')[copyIndex('appSecretDefs')].key, '_', '-'))]",
+          "value": "[variables('appSecretItems')[copyIndex('appSecretDefs')].value]"
+        }
+      },
+      {
+        "name": "appSecretEnv",
+        "count": "[length(variables('appSecretItems'))]",
+        "input": {
+          "name": "[variables('appSecretItems')[copyIndex('appSecretEnv')].key]",
+          "secretRef": "[toLower(replace(variables('appSecretItems')[copyIndex('appSecretEnv')].key, '_', '-'))]"
+        }
+      },
+      {
+        "name": "appPlainEnv",
+        "count": "[length(items(parameters('appEnv')))]",
+        "input": {
+          "name": "[items(parameters('appEnv'))[copyIndex('appPlainEnv')].key]",
+          "value": "[items(parameters('appEnv'))[copyIndex('appPlainEnv')].value]"
+        }
+      }
+    ],
+    "pgDbName": "potomac",
+    "storageAccountName": "[toLower(format('{0}stg{1}', parameters('namePrefix'), uniqueString(resourceGroup().id)))]",
+    "blobContainers": [
+      "user-uploads",
+      "presentations",
+      "brain-docs",
+      "skills-bundles"
+    ],
+    "appSecretItems": "[items(parameters('appSecrets'))]",
+    "registrySecrets": "[if(empty(parameters('registryPassword')), createArray(), createArray(createObject('name', 'registry-password', 'value', parameters('registryPassword'))))]",
+    "registryConfig": "[if(empty(parameters('registryPassword')), createArray(), createArray(createObject('server', parameters('registryServer'), 'username', parameters('registryUsername'), 'passwordSecretRef', 'registry-password')))]"
+  },
+  "resources": [
+    {
+      "type": "Microsoft.OperationalInsights/workspaces",
+      "apiVersion": "2023-09-01",
+      "name": "[format('{0}-logs', parameters('namePrefix'))]",
+      "location": "[parameters('location')]",
+      "properties": {
+        "retentionInDays": 30,
+        "sku": {
+          "name": "PerGB2018"
+        }
+      }
+    },
+    {
+      "type": "Microsoft.Storage/storageAccounts",
+      "apiVersion": "2023-01-01",
+      "name": "[variables('storageAccountName')]",
+      "location": "[parameters('location')]",
+      "sku": {
+        "name": "Standard_LRS"
+      },
+      "kind": "StorageV2",
+      "properties": {
+        "allowBlobPublicAccess": false,
+        "minimumTlsVersion": "TLS1_2"
+      }
+    },
+    {
+      "type": "Microsoft.Storage/storageAccounts/blobServices",
+      "apiVersion": "2023-01-01",
+      "name": "[format('{0}/{1}', variables('storageAccountName'), 'default')]",
+      "dependsOn": [
+        "[resourceId('Microsoft.Storage/storageAccounts', variables('storageAccountName'))]"
+      ]
+    },
+    {
+      "copy": {
+        "name": "containers",
+        "count": "[length(variables('blobContainers'))]"
+      },
+      "type": "Microsoft.Storage/storageAccounts/blobServices/containers",
+      "apiVersion": "2023-01-01",
+      "name": "[format('{0}/{1}/{2}', variables('storageAccountName'), 'default', variables('blobContainers')[copyIndex()])]",
+      "dependsOn": [
+        "[resourceId('Microsoft.Storage/storageAccounts/blobServices', variables('storageAccountName'), 'default')]"
+      ]
+    },
+    {
+      "type": "Microsoft.Storage/storageAccounts/fileServices",
+      "apiVersion": "2023-01-01",
+      "name": "[format('{0}/{1}', variables('storageAccountName'), 'default')]",
+      "dependsOn": [
+        "[resourceId('Microsoft.Storage/storageAccounts', variables('storageAccountName'))]"
+      ]
+    },
+    {
+      "type": "Microsoft.Storage/storageAccounts/fileServices/shares",
+      "apiVersion": "2023-01-01",
+      "name": "[format('{0}/{1}/{2}', variables('storageAccountName'), 'default', 'potomac-data')]",
+      "properties": {
+        "shareQuota": 100
+      },
+      "dependsOn": [
+        "[resourceId('Microsoft.Storage/storageAccounts/fileServices', variables('storageAccountName'), 'default')]"
+      ]
+    },
+    {
+      "type": "Microsoft.DBforPostgreSQL/flexibleServers",
+      "apiVersion": "2023-06-01-preview",
+      "name": "[parameters('pgServerName')]",
+      "location": "[parameters('pgLocation')]",
+      "sku": {
+        "name": "Standard_B2ms",
+        "tier": "Burstable"
+      },
+      "properties": {
+        "version": "16",
+        "administratorLogin": "[parameters('pgAdminUser')]",
+        "administratorLoginPassword": "[parameters('pgAdminPassword')]",
+        "storage": {
+          "storageSizeGB": 32
+        },
+        "backup": {
+          "backupRetentionDays": 7
+        },
+        "highAvailability": {
+          "mode": "Disabled"
+        }
+      }
+    },
+    {
+      "type": "Microsoft.DBforPostgreSQL/flexibleServers/databases",
+      "apiVersion": "2023-06-01-preview",
+      "name": "[format('{0}/{1}', parameters('pgServerName'), variables('pgDbName'))]",
+      "dependsOn": [
+        "[resourceId('Microsoft.DBforPostgreSQL/flexibleServers', parameters('pgServerName'))]"
+      ]
+    },
+    {
+      "type": "Microsoft.DBforPostgreSQL/flexibleServers/firewallRules",
+      "apiVersion": "2023-06-01-preview",
+      "name": "[format('{0}/{1}', parameters('pgServerName'), 'AllowAllAzure')]",
+      "properties": {
+        "startIpAddress": "0.0.0.0",
+        "endIpAddress": "0.0.0.0"
+      },
+      "dependsOn": [
+        "[resourceId('Microsoft.DBforPostgreSQL/flexibleServers', parameters('pgServerName'))]"
+      ]
+    },
+    {
+      "type": "Microsoft.DBforPostgreSQL/flexibleServers/configurations",
+      "apiVersion": "2023-06-01-preview",
+      "name": "[format('{0}/{1}', parameters('pgServerName'), 'azure.extensions')]",
+      "properties": {
+        "value": "VECTOR,CITEXT,PGCRYPTO",
+        "source": "user-override"
+      },
+      "dependsOn": [
+        "[resourceId('Microsoft.DBforPostgreSQL/flexibleServers', parameters('pgServerName'))]"
+      ]
+    },
+    {
+      "type": "Microsoft.App/managedEnvironments",
+      "apiVersion": "2024-03-01",
+      "name": "[format('{0}-env', parameters('namePrefix'))]",
+      "location": "[parameters('location')]",
+      "properties": {
+        "appLogsConfiguration": {
+          "destination": "log-analytics",
+          "logAnalyticsConfiguration": {
+            "customerId": "[reference(resourceId('Microsoft.OperationalInsights/workspaces', format('{0}-logs', parameters('namePrefix'))), '2023-09-01').customerId]",
+            "sharedKey": "[listKeys(resourceId('Microsoft.OperationalInsights/workspaces', format('{0}-logs', parameters('namePrefix'))), '2023-09-01').primarySharedKey]"
+          }
+        }
+      },
+      "dependsOn": [
+        "[resourceId('Microsoft.OperationalInsights/workspaces', format('{0}-logs', parameters('namePrefix')))]"
+      ]
+    },
+    {
+      "type": "Microsoft.App/managedEnvironments/storages",
+      "apiVersion": "2024-03-01",
+      "name": "[format('{0}/{1}', format('{0}-env', parameters('namePrefix')), 'potomac-data')]",
+      "properties": {
+        "azureFile": {
+          "accountName": "[variables('storageAccountName')]",
+          "accountKey": "[listKeys(resourceId('Microsoft.Storage/storageAccounts', variables('storageAccountName')), '2023-01-01').keys[0].value]",
+          "shareName": "potomac-data",
+          "accessMode": "ReadWrite"
+        }
+      },
+      "dependsOn": [
+        "[resourceId('Microsoft.Storage/storageAccounts/fileServices/shares', variables('storageAccountName'), 'default', 'potomac-data')]",
+        "[resourceId('Microsoft.App/managedEnvironments', format('{0}-env', parameters('namePrefix')))]",
+        "[resourceId('Microsoft.Storage/storageAccounts', variables('storageAccountName'))]"
+      ]
+    },
+    {
+      "type": "Microsoft.App/containerApps",
+      "apiVersion": "2024-03-01",
+      "name": "[format('{0}-backend', parameters('namePrefix'))]",
+      "location": "[parameters('location')]",
+      "properties": {
+        "managedEnvironmentId": "[resourceId('Microsoft.App/managedEnvironments', format('{0}-env', parameters('namePrefix')))]",
+        "configuration": {
+          "ingress": {
+            "external": true,
+            "targetPort": 8000,
+            "transport": "auto",
+            "allowInsecure": false
+          },
+          "registries": "[variables('registryConfig')]",
+          "secrets": "[concat(variables('registrySecrets'), createArray(createObject('name', 'database-url', 'value', format('postgresql://{0}:{1}@{2}:5432/{3}?sslmode=require', parameters('pgAdminUser'), parameters('pgAdminPassword'), reference(resourceId('Microsoft.DBforPostgreSQL/flexibleServers', parameters('pgServerName')), '2023-06-01-preview').fullyQualifiedDomainName, variables('pgDbName'))), createObject('name', 'secret-key', 'value', parameters('secretKey')), createObject('name', 'encryption-key', 'value', parameters('encryptionKey')), createObject('name', 'storage-connection-string', 'value', format('DefaultEndpointsProtocol=https;AccountName={0};AccountKey={1};EndpointSuffix={2}', variables('storageAccountName'), listKeys(resourceId('Microsoft.Storage/storageAccounts', variables('storageAccountName')), '2023-01-01').keys[0].value, environment().suffixes.storage))), variables('appSecretDefs'))]"
+        },
+        "template": {
+          "containers": [
+            {
+              "name": "backend",
+              "image": "[parameters('backendImage')]",
+              "resources": {
+                "cpu": "[json('2.0')]",
+                "memory": "4Gi"
+              },
+              "command": [
+                "/bin/sh"
+              ],
+              "args": [
+                "-c",
+                "[format('python scripts/apply_migrations.py || true; exec uvicorn main:app --host 0.0.0.0 --port 8000 --workers {0}', parameters('webConcurrency'))]"
+              ],
+              "env": "[concat(createArray(createObject('name', 'ENVIRONMENT', 'value', 'production'), createObject('name', 'PORT', 'value', '8000'), createObject('name', 'STORAGE_ROOT', 'value', '/data'), createObject('name', 'DATABASE_URL', 'secretRef', 'database-url'), createObject('name', 'SECRET_KEY', 'secretRef', 'secret-key'), createObject('name', 'ENCRYPTION_KEY', 'secretRef', 'encryption-key'), createObject('name', 'ADMIN_EMAILS', 'value', parameters('adminEmails')), createObject('name', 'AZURE_STORAGE_CONNECTION_STRING', 'secretRef', 'storage-connection-string'), createObject('name', 'AZURE_STORAGE_USE_MANAGED_IDENTITY', 'value', 'false')), variables('appPlainEnv'), variables('appSecretEnv'))]",
+              "volumeMounts": [
+                {
+                  "volumeName": "data",
+                  "mountPath": "/data"
+                }
+              ]
+            }
+          ],
+          "scale": {
+            "minReplicas": 1,
+            "maxReplicas": 1
+          },
+          "volumes": [
+            {
+              "name": "data",
+              "storageType": "AzureFile",
+              "storageName": "potomac-data"
+            }
+          ]
+        }
+      },
+      "dependsOn": [
+        "[resourceId('Microsoft.App/managedEnvironments', format('{0}-env', parameters('namePrefix')))]",
+        "[resourceId('Microsoft.App/managedEnvironments/storages', format('{0}-env', parameters('namePrefix')), 'potomac-data')]",
+        "[resourceId('Microsoft.DBforPostgreSQL/flexibleServers', parameters('pgServerName'))]",
+        "[resourceId('Microsoft.Storage/storageAccounts', variables('storageAccountName'))]"
+      ]
+    },
+    {
+      "type": "Microsoft.App/containerApps",
+      "apiVersion": "2024-03-01",
+      "name": "[format('{0}-frontend', parameters('namePrefix'))]",
+      "location": "[parameters('location')]",
+      "properties": {
+        "managedEnvironmentId": "[resourceId('Microsoft.App/managedEnvironments', format('{0}-env', parameters('namePrefix')))]",
+        "configuration": {
+          "ingress": {
+            "external": true,
+            "targetPort": 3000,
+            "transport": "auto",
+            "allowInsecure": false
+          },
+          "registries": "[variables('registryConfig')]",
+          "secrets": "[variables('registrySecrets')]"
+        },
+        "template": {
+          "containers": [
+            {
+              "name": "frontend",
+              "image": "[parameters('frontendImage')]",
+              "resources": {
+                "cpu": "[json('0.5')]",
+                "memory": "1Gi"
+              },
+              "env": [
+                {
+                  "name": "NODE_ENV",
+                  "value": "production"
+                },
+                {
+                  "name": "PORT",
+                  "value": "3000"
+                },
+                {
+                  "name": "NEXT_PUBLIC_API_URL",
+                  "value": "[format('https://{0}', reference(resourceId('Microsoft.App/containerApps', format('{0}-backend', parameters('namePrefix'))), '2024-03-01').configuration.ingress.fqdn)]"
+                }
+              ]
+            }
+          ],
+          "scale": {
+            "minReplicas": 1,
+            "maxReplicas": 3
+          }
+        }
+      },
+      "dependsOn": [
+        "[resourceId('Microsoft.App/containerApps', format('{0}-backend', parameters('namePrefix')))]",
+        "[resourceId('Microsoft.App/managedEnvironments', format('{0}-env', parameters('namePrefix')))]"
+      ]
+    }
+  ],
+  "outputs": {
+    "backendUrl": {
+      "type": "string",
+      "value": "[format('https://{0}', reference(resourceId('Microsoft.App/containerApps', format('{0}-backend', parameters('namePrefix'))), '2024-03-01').configuration.ingress.fqdn)]"
+    },
+    "frontendUrl": {
+      "type": "string",
+      "value": "[format('https://{0}', reference(resourceId('Microsoft.App/containerApps', format('{0}-frontend', parameters('namePrefix'))), '2024-03-01').configuration.ingress.fqdn)]"
+    },
+    "postgresFqdn": {
+      "type": "string",
+      "value": "[reference(resourceId('Microsoft.DBforPostgreSQL/flexibleServers', parameters('pgServerName')), '2023-06-01-preview').fullyQualifiedDomainName]"
+    },
+    "storageAccount": {
+      "type": "string",
+      "value": "[variables('storageAccountName')]"
+    }
+  }
+}

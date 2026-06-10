@@ -16,24 +16,27 @@ h2                      # enables httpx HTTP/2 multiplexing for LLM calls
 
 
 
-# Database
-supabase
+# Database (Azure Database for PostgreSQL)
 asyncpg>=0.29.0          # direct async Postgres driver for hot-path queries
+psycopg[binary,pool]>=3.1  # sync driver backing the PostgREST-compatible shim
 
-# Cache
+# Object storage (Azure Blob)
+azure-storage-blob>=12.19
+azure-identity>=1.15       # Managed Identity / DefaultAzureCredential
+
+# Cache (OPTIONAL — falls back to in-process LRU when REDIS_URL is unset)
 redis>=5.0.0             # async Redis client (uses redis.asyncio)
 
-# JWT (local decode for fast auth — avoids round-trip to Supabase on every request)
+# JWT (self-hosted token issuance + local verification)
 PyJWT[crypto]>=2.8.0
+bcrypt>=4.0              # password hashing
 
 # Research
 tavily-python
 yfinance
 requests
 
-# Auth & Encryption
-python-jose[cryptography]
-passlib[bcrypt]
+# Encryption
 cryptography>=41.0
 
 # =============================================================================

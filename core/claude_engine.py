@@ -132,6 +132,7 @@ MAX_TOKENS          = 32768   # Fallback for unrecognised models
 
 # Per-model maximum output tokens — no artificial cap, use the model's full capability
 MODEL_MAX_TOKENS: Dict[str, int] = {
+    "claude-fable-5":              128000,
     "claude-opus-4-8":             128000,
     "claude-opus-4-7":             128000,
     "claude-opus-4-6":             128000,

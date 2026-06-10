@@ -1,104 +1,87 @@
 # =============================================================================
-# Dockerfile — BULLETPROOF EDITION
-# FastAPI backend on Railway
+# Multi-Stage Dockerfile — FastAPI Backend (Analyst by Potomac)
 # =============================================================================
 
-# Use Python 3.11 slim image
+# STAGE 1: Builder — compile dependencies
+FROM python:3.11-slim as builder
+
+WORKDIR /build
+
+# System dependencies for building Python wheels
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential \
+    libffi-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+# Copy requirements and build wheels.
+# NOTE: no --no-deps — we need wheels for transitive deps too (e.g. tqdm), so the
+# offline `pip install --no-index` in the runtime stage can resolve everything.
+COPY requirements.txt .
+RUN pip install --no-cache-dir --upgrade pip && \
+    pip wheel --no-cache-dir --wheel-dir /build/wheels -r requirements.txt
+
+
+# STAGE 2: Runtime — minimal production image
 FROM python:3.11-slim
 
-# Set working directory
 WORKDIR /app
 
-# Prevents Python from writing .pyc files and keeps logs moving in real-time
-ENV PYTHONDONTWRITEBYTECODE=1
-ENV PYTHONUNBUFFERED=1
-ENV PORT=8000
+# Environment configuration
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PORT=8000 \
+    PIP_NO_CACHE_DIR=1
 
-# =============================================================================
-# SYSTEM DEPENDENCIES
-# =============================================================================
-
-RUN apt-get update && apt-get install -y \
-    # Build tools
-    gcc \
-    libffi-dev \
+# System dependencies for runtime
+RUN apt-get update && apt-get install -y --no-install-recommends \
     curl \
     # OCR (required by pytesseract + unstructured)
     tesseract-ocr \
     tesseract-ocr-eng \
     # Magic byte detection (required by filetype + unstructured)
     libmagic1 \
-    # PyMuPDF system libs (crashes without these)
+    # PyMuPDF system libs
     libgl1 \
     libglib2.0-0 \
     # PDF parsing (required by pdfplumber + unstructured)
     poppler-utils \
-    # Old Office format conversion .doc/.ppt/.xls (required by unstructured)
+    # Office format conversion
     libreoffice \
     # Audio processing (required by pydub)
     ffmpeg \
+    # Health check
+    ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 
-# =============================================================================
-# NODE.JS + PPTXGENJS
-# =============================================================================
-
+# Install Node.js + tools for PPTX generation
 RUN curl -fsSL https://deb.nodesource.com/setup_18.x | bash - && \
-    apt-get install -y nodejs && \
+    apt-get install -y --no-install-recommends nodejs && \
     npm install -g pptxgenjs docx && \
+    npm cache clean --force && \
     rm -rf /var/lib/apt/lists/*
 
-
-# =============================================================================
-# PYTHON DEPENDENCIES
-# =============================================================================
-
-COPY requirements.txt .
-
+# Copy wheels from builder and install
+COPY --from=builder /build/wheels /wheels
+COPY --from=builder /build/requirements.txt .
 RUN pip install --no-cache-dir --upgrade pip && \
-    pip install --no-cache-dir -r requirements.txt
+    pip install --no-cache-dir --no-index --find-links=/wheels -r requirements.txt && \
+    rm -rf /wheels
 
-# =============================================================================
-# APPLICATION CODE
-# Ordered least-changed to most-changed for optimal layer caching
-# =============================================================================
-
+# Copy application code (ordered by change frequency)
 COPY config.py .
 COPY db/ ./db/
 COPY core/ ./core/
 COPY api/ ./api/
-
-# ── Norgate ticker universe dump (~12 MB) ─────────────────────────────────────
-# Consumed by core/norgate_index.py at startup. Path resolution there checks
-# <repo_root>/ALL NORGATE TICKERS.txt first, which on Railway resolves to
-# /app/ALL NORGATE TICKERS.txt. Without this COPY the lookup_norgate_ticker
-# tool fails at runtime with "Norgate ticker file not found".
+COPY scripts/ ./scripts/
 COPY ["ALL NORGATE TICKERS.txt", "./ALL NORGATE TICKERS.txt"]
-
-# ── Potomac skill assets (logos, templates) ───────────────────────────────────
-# ClaudeSkills/ contains the Potomac brand assets (logos, helpers.js, examples)
-# used by DocxSandbox and PptxSandbox for branded document generation.
 COPY ClaudeSkills/ ./ClaudeSkills/
-
 COPY main.py .
 
-# =============================================================================
-# RUNTIME
-# =============================================================================
+# Health check
+HEALTHCHECK --interval=30s --timeout=10s --start-period=40s --retries=3 \
+    CMD curl -f http://localhost:${PORT}/health || exit 1
 
-# Railway manages port binding via $PORT env var
-EXPOSE 8000
+EXPOSE ${PORT}
 
-# Gunicorn with UvicornWorker for production-grade async handling
-# WEB_CONCURRENCY env var (set in Railway) controls worker count; defaults to 2.
-# --timeout 300: background tasks (PPTX parsing, OCR, slide rendering) can take
-#   several minutes on large files; this prevents gunicorn from killing workers.
-# --worker-connections 1000: allow many concurrent async streams per worker.
-CMD ["sh", "-c", "gunicorn main:app \
-     --worker-class uvicorn.workers.UvicornWorker \
-     --workers ${WEB_CONCURRENCY:-2} \
-     --bind 0.0.0.0:${PORT:-8000} \
-     --timeout 300 \
-     --keep-alive 120 \
-     --graceful-timeout 60 \
-     --worker-connections 1000"]
+# Run with uvicorn directly (simpler for containerized environments)
+CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "2"]

@@ -30,6 +30,8 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 
 CLAUDE_MODELS = [
+    # Fable 5 (1M context, 128k max output, adaptive thinking always on)
+    "claude-fable-5",
     "claude-opus-4-6",
     "claude-sonnet-4-6",
     "claude-haiku-4-5-20251001",
@@ -41,6 +43,12 @@ CLAUDE_MODELS = [
     "claude-sonnet-4-20250514",
     "claude-haiku-3-5-20241022",
 ]
+
+# Per-model max output tokens (defaults to 128000 for unknown models when
+# capped). Fable 5 supports 128k output and a 1M-token context window.
+MODEL_MAX_OUTPUT = {
+    "claude-fable-5": 128000,
+}
 
 # Maps finish_reason from Anthropic → canonical
 _FINISH_REASON_MAP = {

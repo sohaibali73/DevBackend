@@ -50,7 +50,9 @@ class Task(str, Enum):
 _HAIKU  = "claude-haiku-4-5-20251001"
 # Default workhorse
 _SONNET = "claude-sonnet-4-5"
-# Hardest reasoning
+# Hardest reasoning — Fable 5 (most capable widely-released model). Override with
+# LLM_MODEL_REASONING / LLM_MODEL_DEEP_ANALYSIS to fall back to Opus if desired.
+_FABLE  = "claude-fable-5"
 _OPUS   = "claude-opus-4-6"
 
 
@@ -68,8 +70,8 @@ _DEFAULT_MAP: dict[Task, str] = {
     Task.TOOL_USE:       _SONNET,
     Task.REVISION:       _SONNET,
 
-    Task.REASONING:      _OPUS,
-    Task.DEEP_ANALYSIS:  _OPUS,
+    Task.REASONING:      _FABLE,
+    Task.DEEP_ANALYSIS:  _FABLE,
 }
 
 
@@ -99,3 +101,4 @@ def pick_model(task: Task | str) -> str:
 def haiku() -> str:  return _HAIKU
 def sonnet() -> str: return _SONNET
 def opus() -> str:   return _OPUS
+def fable() -> str:  return _FABLE

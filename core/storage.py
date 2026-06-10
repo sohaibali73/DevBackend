@@ -17,9 +17,13 @@ import os
 import uuid
 import logging
 from typing import Optional, Dict, Any, Tuple, List
-from supabase import Client
+
+from core import azure_blob
 
 logger = logging.getLogger(__name__)
+
+# `Client` was the supabase-py client type; the shim's client is duck-typed.
+Client = Any
 
 # Allowed MIME types per bucket
 ALLOWED_MIME_TYPES = {
@@ -286,16 +290,9 @@ class StorageHelper:
             logger.info(f"Duplicate file detected: {content_hash[:16]}...")
             return existing.data[0]
         
-        # Upload to Supabase Storage
+        # Upload to Azure Blob Storage
         try:
-            self.client.storage.from_(bucket).upload(
-                path=storage_path,
-                file=content,
-                file_options={
-                    "content-type": content_type,
-                    "upsert": "true",
-                }
-            )
+            azure_blob.upload(bucket, storage_path, content, content_type)
         except Exception as e:
             error_msg = str(e)
             logger.error(f"Storage upload failed: {error_msg}")
@@ -347,13 +344,9 @@ class StorageHelper:
         
         # Generate signed URL for download (valid for 1 hour)
         try:
-            signed_url = self.client.storage.from_(
-                file_record["bucket_id"]
-            ).create_signed_url(
-                file_record["storage_path"],
-                expires_in=3600
+            file_record["download_url"] = azure_blob.signed_url(
+                file_record["bucket_id"], file_record["storage_path"], expires_in=3600
             )
-            file_record["download_url"] = signed_url.get("signedURL")
         except Exception as e:
             logger.warning(f"Failed to generate signed URL: {e}")
             file_record["download_url"] = None
@@ -380,10 +373,9 @@ class StorageHelper:
             return None
         
         try:
-            response = self.client.storage.from_(
-                file_record["bucket_id"]
-            ).download(file_record["storage_path"])
-            return response
+            return azure_blob.download(
+                file_record["bucket_id"], file_record["storage_path"]
+            )
         except Exception as e:
             logger.error(f"Failed to download file: {e}")
             return None
@@ -415,9 +407,7 @@ class StorageHelper:
         
         # Delete from storage
         try:
-            self.client.storage.from_(
-                file_record["bucket_id"]
-            ).remove([file_record["storage_path"]])
+            azure_blob.delete(file_record["bucket_id"], file_record["storage_path"])
         except Exception as e:
             logger.warning(f"Failed to delete from storage: {e}")
             # Continue to delete database record even if storage delete fails
@@ -572,10 +562,8 @@ class StorageHelper:
         # Verify file exists in storage
         try:
             # Try to get file info from storage
-            files = self.client.storage.from_(pending["bucket"]).list(
-                path=pending["user_id"]
-            )
-            
+            files = azure_blob.list_prefix(pending["bucket"], pending["user_id"])
+
             # Check if our file is there
             storage_filename = os.path.basename(pending["storage_path"])
             file_exists = any(

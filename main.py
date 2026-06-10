@@ -241,6 +241,11 @@ async def _shutdown_perf_infra():
     except Exception:
         pass
     try:
+        from db.supabase_client import close_sync_pool as _close_sync_pool
+        _close_sync_pool()
+    except Exception:
+        pass
+    try:
         from core.cache import cache as _cache
         await _cache.close()
     except Exception:
@@ -322,10 +327,15 @@ app = FastAPI(
 )
 
 
-# CORS middleware — open to all origins
+# CORS middleware.
+# Set CORS_ALLOW_ORIGINS (comma-separated) to lock to known frontends in prod;
+# defaults to "*" so it works out of the box. Auth uses Bearer tokens (not
+# cookies), so credentials stay off and "*" is acceptable.
+_cors_origins_env = os.environ.get("CORS_ALLOW_ORIGINS", "").strip()
+_cors_origins = [o.strip() for o in _cors_origins_env.split(",") if o.strip()] or ["*"]
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=_cors_origins,
     allow_credentials=False,  # must be False when allow_origins=["*"]
     allow_methods=["*"],
     allow_headers=["*"],
@@ -958,8 +968,8 @@ async def health():
 if __name__ == "__main__":
     import uvicorn
 
-    port = int(os.environ.get("PORT", 8080))
-    # Multiple workers — async-friendly, doubles throughput on Railway's 2 vCPU box.
+    port = int(os.environ.get("PORT", 8000))
+    # Multiple workers — async-friendly, doubles throughput on a 2 vCPU box.
     workers = int(os.environ.get("WEB_CONCURRENCY", "2"))
 
     logger.info(f"Starting Analyst by Potomac API server on port {port} (workers={workers})")

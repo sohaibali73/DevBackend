@@ -31,13 +31,15 @@ import threading
 from dataclasses import dataclass, field
 from typing import Dict, Optional, List
 
+from core import azure_blob
+
 logger = logging.getLogger(__name__)
 
 # ── Storage paths ─────────────────────────────────────────────────────────────
 _STORAGE_ROOT = os.getenv("STORAGE_ROOT", "/data")
 _GENERATED_DIR = os.path.join(_STORAGE_ROOT, "generated")
 
-# ── Supabase bucket ───────────────────────────────────────────────────────────
+# ── Blob container ────────────────────────────────────────────────────────────
 _BUCKET_NAME = "user-uploads"
 _bucket_verified = False
 _bucket_lock = threading.Lock()
@@ -146,76 +148,22 @@ def _get_supabase_client():
         return None
 
 
-def _get_storage_client():
-    """Get Supabase storage client."""
-    db = _get_supabase_client()
-    return db.storage if db else None
-
-
 def _ensure_bucket():
-    """
-    Ensure the Supabase bucket exists. Thread-safe.
-
-    The Supabase Python SDK's get_bucket() can return 400 even when the bucket
-    exists (e.g. due to RLS or API version differences). create_bucket() returns
-    413 when the bucket already exists on some Supabase plan tiers.
-
-    Strategy:
-      1. Try get_bucket() — success → verified.
-      2. On error: try create_bucket() — success OR already-exists error → verified.
-      3. On ANY unexpected error from create_bucket: mark verified anyway and try
-         the upload directly; Supabase will 404 if the bucket is truly missing.
-    """
+    """Ensure the Azure Blob container exists. Thread-safe; verified once."""
     global _bucket_verified
     if _bucket_verified:
         return True
-
     with _bucket_lock:
         if _bucket_verified:
             return True
-
-        storage = _get_storage_client()
-        if not storage:
-            return False
-
         try:
-            storage.get_bucket(_BUCKET_NAME)
+            azure_blob._ensure_container(_BUCKET_NAME)
             _bucket_verified = True
-            logger.info("✓ Supabase Storage bucket '%s' verified", _BUCKET_NAME)
+            logger.info("✓ Azure Blob container '%s' ready", _BUCKET_NAME)
             return True
-        except Exception:
-            try:
-                storage.create_bucket(
-                    _BUCKET_NAME,
-                    options={"public": False, "file_size_limit": 10737418240},
-                )
-                _bucket_verified = True
-                logger.info("✓ Created Supabase Storage bucket '%s'", _BUCKET_NAME)
-                return True
-            except Exception as create_err:
-                err = str(create_err).lower()
-                # 409/duplicate/already exists → bucket is there, proceed
-                # 413 "Payload too large" → Supabase returns this when bucket
-                #     already exists on certain plan/version combos (confirmed
-                #     via SQL: bucket exists with file_size_limit=null)
-                if (
-                    "already exists" in err
-                    or "duplicate"    in err
-                    or "409"          in err
-                    or "413"          in err
-                    or "payload too large" in err
-                ):
-                    _bucket_verified = True
-                    logger.info("✓ Bucket '%s' already exists (confirmed)", _BUCKET_NAME)
-                    return True
-                # Unknown error — mark verified and attempt upload anyway;
-                # the upload itself will surface a meaningful 404 if missing.
-                logger.warning(
-                    "⚠ Bucket check inconclusive for '%s': %s — attempting upload anyway",
-                    _BUCKET_NAME, create_err,
-                )
-                _bucket_verified = True
-                return True
+        except Exception as e:
+            logger.warning("⚠ Could not ensure container '%s': %s", _BUCKET_NAME, e)
+            return False
 
 
 def _insert_supabase_db_record(entry: FileEntry, storage_path: str):
@@ -253,11 +201,7 @@ def _upload_to_supabase(entry: FileEntry):
     """
     try:
         if not _ensure_bucket():
-            logger.warning("Skipping Supabase upload — bucket not available")
-            return
-
-        storage = _get_storage_client()
-        if not storage:
+            logger.warning("Skipping Blob upload — container not available")
             return
 
         storage_path = f"{entry.file_id}/{entry.filename}"
@@ -275,13 +219,9 @@ def _upload_to_supabase(entry: FileEntry):
         }
         content_type = mime_map.get(entry.file_type, "application/octet-stream")
 
-        storage.from_(_BUCKET_NAME).upload(
-            path=storage_path,
-            file=entry.data,
-            file_options={"content-type": content_type, "upsert": "true"},
-        )
+        azure_blob.upload(_BUCKET_NAME, storage_path, entry.data, content_type)
         logger.info(
-            "✓ Persisted to Supabase Storage: %s (%s, %.1f KB)",
+            "✓ Persisted to Azure Blob Storage: %s (%s, %.1f KB)",
             storage_path, entry.file_type, entry.size_kb,
         )
 
@@ -291,9 +231,9 @@ def _upload_to_supabase(entry: FileEntry):
     except Exception as e:
         err = str(e)
         if "duplicate" in err.lower() or "already exists" in err.lower() or "409" in err:
-            logger.debug("File already exists in Supabase Storage: %s", entry.file_id)
+            logger.debug("File already exists in Blob Storage: %s", entry.file_id)
         else:
-            logger.error("✗ Supabase Storage upload failed for %s: %s", entry.file_id, e)
+            logger.error("✗ Blob Storage upload failed for %s: %s", entry.file_id, e)
 
 
 def _read_from_uploads(file_id: str) -> Optional[FileEntry]:
@@ -360,12 +300,8 @@ def _download_from_supabase(file_id: str) -> Optional[FileEntry]:
         if not _ensure_bucket():
             return None
 
-        storage = _get_storage_client()
-        if not storage:
-            return None
-
-        # List files in the file_id directory to find the filename
-        files = storage.from_(_BUCKET_NAME).list(path=file_id)
+        # List blobs under the file_id prefix to find the filename
+        files = azure_blob.list_prefix(_BUCKET_NAME, f"{file_id}/")
         if not files:
             return None
 
@@ -373,7 +309,7 @@ def _download_from_supabase(file_id: str) -> Optional[FileEntry]:
         filename   = file_info.get("name", f"download_{file_id}")
         storage_path = f"{file_id}/{filename}"
 
-        data = storage.from_(_BUCKET_NAME).download(storage_path)
+        data = azure_blob.download(_BUCKET_NAME, storage_path)
         if not data:
             return None
 

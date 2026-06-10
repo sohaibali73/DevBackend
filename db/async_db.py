@@ -56,11 +56,11 @@ async def init_pool():
         return None
 
     settings = get_settings()
-    dsn = settings.supabase_db_url
+    dsn = settings.effective_db_url
     if not dsn:
         logger.warning(
-            "SUPABASE_DB_URL is not set — asyncpg pool disabled. "
-            "Hot-path queries will fall back to the sync Supabase client."
+            "DATABASE_URL is not set — asyncpg pool disabled. "
+            "Hot-path queries will fall back to the sync DB client."
         )
         return None
 
@@ -74,13 +74,14 @@ async def init_pool():
                 min_size=settings.async_db_pool_min,
                 max_size=settings.async_db_pool_max,
                 command_timeout=60,
-                # Supabase pooler in transaction mode does NOT support
-                # session-level features (LISTEN/NOTIFY, prepared statements
-                # outside a single statement). Disable statement cache to
-                # avoid "prepared statement does not exist" errors.
+                # statement_cache_size=0 keeps us compatible with connection
+                # poolers running in transaction mode (e.g. Azure Postgres
+                # Flexible Server's built-in PgBouncer). A direct 5432
+                # connection works fine with it disabled too — small perf cost,
+                # always correct.
                 statement_cache_size=0,
-                # Connections from the pooler are short-lived; recycle
-                # ours every 30 min to stay healthy.
+                # Recycle idle connections every 30 min to stay healthy behind
+                # any pooler/idle-timeout.
                 max_inactive_connection_lifetime=1800,
             )
             logger.info(
@@ -167,6 +168,6 @@ async def executemany(query: str, args_iter: Iterable[Iterable[Any]]) -> None:
 
 
 def is_configured() -> bool:
-    """True iff asyncpg is installed AND SUPABASE_DB_URL is set."""
-    return _ASYNCPG_AVAILABLE and bool(get_settings().supabase_db_url)
+    """True iff asyncpg is installed AND a Postgres DSN is set."""
+    return _ASYNCPG_AVAILABLE and bool(get_settings().effective_db_url)
 

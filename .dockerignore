@@ -1,38 +1,90 @@
 # Git
 .git
 .gitignore
+.gitattributes
 
 # Python
-__pycache__
-*.pyc
-*.pyo
-.venv
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+pip-wheel-metadata/
+share/python-wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+.pytest_cache/
+.coverage
+htmlcov/
+.tox/
+.nox/
+.hypothesis/
+*.cover
+
+# Virtual environments
+.venv/
+env/
 venv/
-.env
+ENV/
+env.bak/
+venv.bak/
 .env.local
 
-# Node/Frontend (not needed for backend)
-node_modules/
-package-lock.json
-Uidesignkit-main/
-
 # IDE
-.idea/
 .vscode/
+.idea/
 *.swp
 *.swo
+*~
+.DS_Store
+*.iml
 
-# Railway/Render config
-render.yaml
-railway.json
-nixpacks.toml
-.railwayignore
+# Docker
+.dockerignore
+Dockerfile
 
-# Backups and data
-backup_*/
-data/
+# Project specific
+.claude
+.next
+out.pdf
+test.pdf
+test_output.pptx
+test_user_spec.pptx
+pip_install.log
+template_inspection.pptx
+ALL NORGATE TICKERS.txt  # Optional: remove if needed at runtime
+Documentation/
+scripts/
+!scripts/apply_migrations.py
 *.log
 
-# Docs
-*.md
-!README.md
+# Node (if present)
+node_modules/
+npm-debug.log
+yarn-error.log
+
+# OS
+.DS_Store
+Thumbs.db
+.env
+.env.example
+
+# CI/CD
+.github/
+.gitlab-ci.yml
+.circleci/
+Jenkinsfile

@@ -40,6 +40,23 @@ CREATE TABLE IF NOT EXISTS user_feedback (
     updated_at TIMESTAMPTZ DEFAULT NOW()
 );
 
+-- Reconcile with any pre-existing user_feedback (001_initial_schema creates a
+-- thinner version). ADD COLUMN IF NOT EXISTS is idempotent and nullable so it
+-- works whether the table is new or already present.
+ALTER TABLE user_feedback ADD COLUMN IF NOT EXISTS code_id UUID;
+ALTER TABLE user_feedback ADD COLUMN IF NOT EXISTS conversation_id UUID;
+ALTER TABLE user_feedback ADD COLUMN IF NOT EXISTS original_prompt TEXT;
+ALTER TABLE user_feedback ADD COLUMN IF NOT EXISTS generated_code TEXT;
+ALTER TABLE user_feedback ADD COLUMN IF NOT EXISTS feedback_type VARCHAR(50);
+ALTER TABLE user_feedback ADD COLUMN IF NOT EXISTS feedback_text TEXT;
+ALTER TABLE user_feedback ADD COLUMN IF NOT EXISTS correct_code TEXT;
+ALTER TABLE user_feedback ADD COLUMN IF NOT EXISTS rating INTEGER;
+ALTER TABLE user_feedback ADD COLUMN IF NOT EXISTS status VARCHAR(50) DEFAULT 'pending_review';
+ALTER TABLE user_feedback ADD COLUMN IF NOT EXISTS admin_notes TEXT;
+ALTER TABLE user_feedback ADD COLUMN IF NOT EXISTS reviewed_by UUID;
+ALTER TABLE user_feedback ADD COLUMN IF NOT EXISTS reviewed_at TIMESTAMPTZ;
+ALTER TABLE user_feedback ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ DEFAULT NOW();
+
 -- ============================================================================
 -- 2. Training Suggestions Table
 -- ============================================================================

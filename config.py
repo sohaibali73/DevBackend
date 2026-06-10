@@ -8,21 +8,32 @@ from pydantic_settings import BaseSettings
 class Settings(BaseSettings):
     """Application settings loaded from environment."""
 
-    # Supabase - MUST be set via environment variables
-    supabase_url: str = ""
-    supabase_key: str = ""  # anon/public key
-    supabase_service_key: str = ""  # service_role key (required for backend operations with RLS)
-    supabase_jwt_secret: str = ""   # JWT secret from Supabase (Settings → API → JWT Settings)
-                                    # When set, JWTs are verified locally (no round-trip per request)
-
-    # Direct Postgres connection (asyncpg) — Supabase pooler URL on port 6543
-    # Settings → Database → Connection string → "Transaction" pooler (port 6543)
-    supabase_db_url: str = ""
+    # ── Database (Azure Database for PostgreSQL — Flexible Server) ──────────────
+    # Primary connection string used by BOTH the asyncpg hot-path pool and the
+    # synchronous PostgREST-compatible shim in db/supabase_client.py.
+    #   postgresql://user:pass@host.postgres.database.azure.com:5432/dbname?sslmode=require
+    database_url: str = ""
     async_db_pool_min: int = 2
     async_db_pool_max: int = 20
 
-    # Redis cache
-    redis_url: str = ""             # e.g. redis://default:pwd@host.railway.internal:6379
+    # ── Legacy Supabase fields (DEPRECATED) ────────────────────────────────────
+    # Kept only so older scripts/imports don't crash. No longer used by the app
+    # at runtime. `supabase_db_url` still works as a fallback for `database_url`.
+    supabase_url: str = ""
+    supabase_key: str = ""
+    supabase_service_key: str = ""
+    supabase_jwt_secret: str = ""
+    supabase_db_url: str = ""
+
+    # ── Azure Blob Storage (replaces Supabase Storage buckets) ─────────────────
+    # Prefer Managed Identity in Azure (set account name only); fall back to a
+    # connection string for local/dev.
+    azure_storage_account: str = ""                  # e.g. "pfmaiappsdev" (just the name)
+    azure_storage_connection_string: str = ""        # full conn string (local/dev)
+    azure_storage_use_managed_identity: bool = True  # use MI when running in Azure
+
+    # Redis cache (OPTIONAL — core/cache.py falls back to in-process LRU when empty)
+    redis_url: str = ""
     enable_redis_cache: bool = True
     enable_prompt_cache: bool = True
 
@@ -38,10 +49,16 @@ class Settings(BaseSettings):
     # Admin configuration (comma-separated list of admin emails)
     admin_emails: str = ""
 
-    # Security - Note: These are DEPRECATED - Supabase Auth handles JWT tokens
+    # ── Authentication (self-hosted JWT) ───────────────────────────────────────
+    # The backend now issues AND verifies its own HS256 JWTs. SECRET_KEY MUST be
+    # set to a strong random value in production (tokens are signed with it).
+    #   python -c "import secrets; print(secrets.token_urlsafe(48))"
     secret_key: str = "change-this-in-production"
     algorithm: str = "HS256"
-    access_token_expire_minutes: int = 600 * 24 * 7
+    jwt_issuer: str = "potomac-backend"
+    jwt_audience: str = "authenticated"
+    access_token_expire_minutes: int = 60 * 24 * 7          # 7 days
+    refresh_token_expire_minutes: int = 60 * 24 * 30        # 30 days
 
     # Optional server-side API keys - set via environment variables
     anthropic_api_key: str = ""
@@ -81,7 +98,13 @@ class Settings(BaseSettings):
     class Config:
         env_file = ".env"
         extra = "ignore"
-    
+
+    @property
+    def effective_db_url(self) -> str:
+        """Postgres DSN — prefers DATABASE_URL, falls back to the legacy
+        SUPABASE_DB_URL so existing local .env files keep working."""
+        return self.database_url or self.supabase_db_url
+
     def get_admin_emails(self) -> list:
         """Get list of admin emails from comma-separated string."""
         if not self.admin_emails:

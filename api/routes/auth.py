@@ -1,8 +1,9 @@
 """
-Simplified Authentication Routes using Supabase Auth.
+Self-hosted authentication routes.
 
-Supabase handles all authentication (JWT, sessions, password reset).
-This module just wraps the Supabase auth API and manages user profiles.
+The backend owns the full auth lifecycle (passwords hashed with bcrypt in
+user_profiles.password_hash; access/refresh tokens are HS256 JWTs signed with
+SECRET_KEY). No external identity provider.
 """
 
 from datetime import datetime
@@ -13,9 +14,19 @@ from pydantic import BaseModel, EmailStr, Field
 import logging
 
 from config import get_settings
-from db.supabase_client import get_supabase, get_auth_client
+from db.supabase_client import get_supabase
 from api.dependencies import get_current_user
 from core.encryption import encrypt_value
+from core.auth_local import (
+    hash_password,
+    verify_password,
+    create_access_token,
+    create_refresh_token,
+    decode_token,
+    new_user_id,
+    TokenExpired,
+    TokenInvalid,
+)
 
 router = APIRouter(prefix="/auth", tags=["Authentication"])
 security = HTTPBearer()
@@ -87,132 +98,80 @@ class PasswordUpdate(BaseModel):
 
 @router.post("/register", response_model=Token)
 async def register(data: UserRegister):
-    """
-    Register a new user using Supabase Auth.
-    
-    Supabase sends a confirmation email (if enabled in Supabase dashboard).
-    User must confirm email before they can login.
-    """
-    # Use a fresh auth client — sign_up mutates GoTrue session state and would
-    # corrupt the shared singleton under concurrency.
-    auth_db = get_auth_client()
+    """Register a new user (self-hosted). Returns access + refresh tokens."""
     db = get_supabase()
     settings = get_settings()
+    email = data.email.lower().strip()
 
+    # Reject duplicates.
+    existing = db.table("user_profiles").select("id").eq("email", email).execute()
+    if existing.data:
+        raise HTTPException(status_code=400, detail="Email already registered")
+
+    user_id = new_user_id()
+    is_admin = email in settings.get_admin_emails()
     try:
-        auth_response = auth_db.auth.sign_up({
-            "email": data.email,
-            "password": data.password,
-            "options": {
-                "data": {
-                    "name": data.name,
-                    "nickname": data.name or data.email.split("@")[0],
-                }
-            }
-        })
-
-        if not auth_response.user:
-            raise HTTPException(status_code=400, detail="Failed to create user")
-
-        # Grant admin if email is in admin list
-        admin_emails = settings.get_admin_emails()
-        if data.email.lower() in admin_emails:
-            try:
-                db.table("user_profiles").update({"is_admin": True}).eq(
-                    "id", auth_response.user.id
-                ).execute()
-            except Exception as e:
-                logger.warning(f"Could not grant admin: {e}")
-
-        # Email confirmation required - no session yet
-        if not auth_response.session:
-            return Token(
-                access_token="",
-                token_type="bearer",
-                user_id=auth_response.user.id,
-                email=data.email,
-                expires_in=0
-            )
-
-        return Token(
-            access_token=auth_response.session.access_token,
-            refresh_token=auth_response.session.refresh_token,
-            token_type="bearer",
-            user_id=auth_response.user.id,
-            email=data.email,
-            expires_in=auth_response.session.expires_in or 3600
-        )
-
-    except HTTPException:
-        raise
+        db.table("user_profiles").insert({
+            "id": user_id,
+            "email": email,
+            "password_hash": hash_password(data.password),
+            "name": data.name,
+            "nickname": data.name or email.split("@")[0],
+            "is_admin": is_admin,
+            "is_active": True,
+        }).execute()
     except Exception as e:
-        error_msg = str(e).lower()
-        if "already" in error_msg or "exists" in error_msg:
-            raise HTTPException(status_code=400, detail="Email already registered")
         logger.error(f"Registration failed: {e}")
         raise HTTPException(status_code=400, detail="Registration failed")
+
+    return Token(
+        access_token=create_access_token(user_id, email),
+        refresh_token=create_refresh_token(user_id, email),
+        token_type="bearer",
+        user_id=user_id,
+        email=email,
+        expires_in=settings.access_token_expire_minutes * 60,
+    )
 
 
 @router.post("/login", response_model=Token)
 async def login(data: UserLogin):
-    """
-    Login using Supabase Auth.
-    
-    Returns JWT token that should be used in Authorization header.
-    """
-    # Use a fresh auth client — sign_in mutates GoTrue session state.
-    auth_db = get_auth_client()
+    """Authenticate with email + password. Returns access + refresh tokens."""
     db = get_supabase()
+    settings = get_settings()
+    email = data.email.lower().strip()
 
-    try:
-        auth_response = auth_db.auth.sign_in_with_password({
-            "email": data.email,
-            "password": data.password
-        })
+    result = db.table("user_profiles").select(
+        "id, email, password_hash, is_active"
+    ).eq("email", email).execute()
+    row = result.data[0] if result.data else None
 
-        if not auth_response.user or not auth_response.session:
-            raise HTTPException(status_code=401, detail="Invalid credentials")
-
-        # Update last active timestamp
-        try:
-            db.table("user_profiles").update({
-                "last_active_at": datetime.utcnow().isoformat()
-            }).eq("id", auth_response.user.id).execute()
-        except Exception:
-            pass
-
-        return Token(
-            access_token=auth_response.session.access_token,
-            refresh_token=auth_response.session.refresh_token,
-            token_type="bearer",
-            user_id=auth_response.user.id,
-            email=data.email,
-            expires_in=auth_response.session.expires_in or 3600
-        )
-
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"Login failed (raw Supabase error): {e}")  # always log first
-        error_msg = str(e).lower()
-        if "not confirmed" in error_msg or "email_not_confirmed" in error_msg:
-            raise HTTPException(status_code=401, detail="Email not confirmed. Please check your inbox.")
-        if "rate" in error_msg or "too many" in error_msg:
-            raise HTTPException(status_code=429, detail="Too many login attempts. Please wait a few minutes.")
+    if not row or not verify_password(data.password, row.get("password_hash")):
         raise HTTPException(status_code=401, detail="Invalid credentials")
+    if not row.get("is_active", True):
+        raise HTTPException(status_code=403, detail="Account has been deactivated. Contact support.")
+
+    user_id = row["id"]
+    try:
+        db.table("user_profiles").update(
+            {"last_active_at": datetime.utcnow().isoformat()}
+        ).eq("id", user_id).execute()
+    except Exception:
+        pass
+
+    return Token(
+        access_token=create_access_token(user_id, email),
+        refresh_token=create_refresh_token(user_id, email),
+        token_type="bearer",
+        user_id=user_id,
+        email=email,
+        expires_in=settings.access_token_expire_minutes * 60,
+    )
 
 
 @router.post("/logout")
 async def logout(user: dict = Depends(get_current_user)):
-    """
-    Logout user.
-
-    Supabase JWTs are self-contained and stateless — there is no server-side
-    session to invalidate.  Calling sign_out() on the shared service-role
-    singleton can corrupt its auth state and interfere with other requests.
-    The client is responsible for discarding the token on its side.
-    """
-    # Do NOT call db.auth.sign_out() on the singleton — it mutates shared state.
+    """Logout. JWTs are stateless; the client discards the token."""
     return {"message": "Logged out successfully"}
 
 
@@ -321,117 +280,89 @@ async def get_api_keys_status(user: dict = Depends(get_current_user)):
 
 @router.post("/refresh-token", response_model=Token)
 async def refresh_token(data: RefreshTokenRequest):
-    """
-    Refresh the access token using a refresh token.
-
-    The client must send the refresh_token received at login.
-    Returns a fresh access_token and a rotated refresh_token.
-    """
-    # Refresh MUST use a fresh client — refresh_session mutates the GoTrue
-    # session, which under concurrency was the primary cause of users being
-    # "logged out every few minutes" (the singleton's session would flip to
-    # a different user mid-request, invalidating subsequent get_user calls).
-    auth_db = get_auth_client()
-
+    """Exchange a valid refresh token for a fresh access + refresh token pair."""
+    settings = get_settings()
     try:
-        # Use Supabase's refresh_session — this is the only correct way to get
-        # a new access token from a refresh token on a stateless backend client.
-        response = auth_db.auth.refresh_session(data.refresh_token)
+        payload = decode_token(data.refresh_token, expected_type="refresh")
+    except TokenExpired:
+        raise HTTPException(status_code=401, detail="Refresh token expired")
+    except TokenInvalid:
+        raise HTTPException(status_code=401, detail="Invalid refresh token")
 
-        if not response or not response.session or not response.user:
-            raise HTTPException(status_code=401, detail="Invalid or expired refresh token")
-
-        return Token(
-            access_token=response.session.access_token,
-            refresh_token=response.session.refresh_token,
-            token_type="bearer",
-            user_id=response.user.id,
-            email=response.user.email or "",
-            expires_in=response.session.expires_in or 3600
-        )
-
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"Token refresh failed: {e}")
-        raise HTTPException(status_code=401, detail="Invalid or expired refresh token")
+    user_id = payload["sub"]
+    email = payload.get("email", "")
+    return Token(
+        access_token=create_access_token(user_id, email),
+        refresh_token=create_refresh_token(user_id, email),
+        token_type="bearer",
+        user_id=user_id,
+        email=email,
+        expires_in=settings.access_token_expire_minutes * 60,
+    )
 
 
 @router.post("/forgot-password")
-async def forgot_password(
-    data: PasswordResetRequest,
-    background_tasks: BackgroundTasks
-):
-    """Request password reset via Supabase Auth."""
-    auth_db = get_auth_client()
+async def forgot_password(data: PasswordResetRequest, background_tasks: BackgroundTasks):
+    """Issue a short-lived password-reset token and email a reset link.
+
+    Email delivery depends on SMTP settings being configured; when they are
+    not, the link is logged server-side. Always returns success to prevent
+    email enumeration.
+    """
+    from core.auth_local import _encode  # local import: reset tokens are a niche path
+    db = get_supabase()
     settings = get_settings()
+    email = data.email.lower().strip()
 
     try:
-        auth_db.auth.reset_password_email(
-            data.email,
-            {"redirect_to": f"{settings.frontend_url}/reset-password"}
-        )
+        result = db.table("user_profiles").select("id, email").eq("email", email).execute()
+        if result.data:
+            row = result.data[0]
+            reset_token = _encode({"sub": row["id"], "email": row["email"]}, 30, "reset")
+            reset_link = f"{settings.frontend_url}/reset-password?token={reset_token}"
+            # TODO: wire SMTP send here; for now log the link for operators.
+            logger.info("Password reset link for %s: %s", email, reset_link)
     except Exception as e:
         logger.info(f"Password reset requested: {e}")
 
-    # Always return success to prevent email enumeration
     return {"message": "If this email is registered, a password reset link has been sent"}
 
 
 @router.post("/reset-password")
 async def reset_password(
     data: PasswordUpdate,
-    credentials: HTTPAuthorizationCredentials = Depends(security)
+    credentials: HTTPAuthorizationCredentials = Depends(security),
 ):
-    """Reset password using token from reset email."""
-    # Fresh client — we both validate the token and call update_user, both of
-    # which mutate GoTrue session state. Doing this on the singleton would
-    # log out other users.
-    auth_db = get_auth_client()
-    token = credentials.credentials
-
+    """Reset password using the reset token from the email link."""
+    db = get_supabase()
     try:
-        user = auth_db.auth.get_user(token)
-        if not user or not user.user:
-            raise HTTPException(status_code=401, detail="Invalid reset token")
+        payload = decode_token(credentials.credentials, expected_type="reset")
+    except (TokenExpired, TokenInvalid):
+        raise HTTPException(status_code=401, detail="Invalid or expired reset token")
 
-        # Set the session on the fresh client so update_user has auth context.
-        try:
-            auth_db.auth.set_session(token, "")
-        except Exception:
-            pass
-        auth_db.auth.update_user({"password": data.new_password})
-        return {"message": "Password reset successfully"}
-
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"Password reset failed: {e}")
+    result = db.table("user_profiles").update(
+        {"password_hash": hash_password(data.new_password),
+         "updated_at": datetime.utcnow().isoformat()}
+    ).eq("id", payload["sub"]).execute()
+    if not result.data:
         raise HTTPException(status_code=400, detail="Failed to reset password")
+    return {"message": "Password reset successfully"}
 
 
 @router.put("/change-password")
 async def change_password(
     data: PasswordUpdate,
     user: dict = Depends(get_current_user),
-    credentials: HTTPAuthorizationCredentials = Depends(security),
 ):
-    """Change password for logged-in user."""
-    # Use a fresh auth client and set the user's session on it so update_user
-    # is scoped to this request and cannot mutate the shared singleton's
-    # session (which would log out other users).
-    auth_db = get_auth_client()
-    try:
-        auth_db.auth.set_session(credentials.credentials, "")
-    except Exception:
-        pass
-
-    try:
-        auth_db.auth.update_user({"password": data.new_password})
-        return {"message": "Password changed successfully"}
-    except Exception as e:
-        logger.error(f"Password change failed: {e}")
+    """Change password for the logged-in user."""
+    db = get_supabase()
+    result = db.table("user_profiles").update(
+        {"password_hash": hash_password(data.new_password),
+         "updated_at": datetime.utcnow().isoformat()}
+    ).eq("id", user["id"]).execute()
+    if not result.data:
         raise HTTPException(status_code=400, detail="Failed to change password")
+    return {"message": "Password changed successfully"}
 
 
 # ============================================================================

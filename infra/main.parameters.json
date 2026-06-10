@@ -1,0 +1,20 @@
+{
+  "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentParameters.json#",
+  "contentVersion": "1.0.0.0",
+  "parameters": {
+    "namePrefix": { "value": "pfmai" },
+    "backendImage": { "value": "ghcr.io/sohaibali73/potomac-backend:latest" },
+    "frontendImage": { "value": "ghcr.io/sohaibali73/analyst-frontend:latest" },
+    "registryServer": { "value": "ghcr.io" },
+    "registryUsername": { "value": "sohaibali73" },
+    "registryPassword": { "value": "" },
+    "pgAdminUser": { "value": "pfmadmin" },
+    "pgAdminPassword": { "value": "" },
+    "secretKey": { "value": "" },
+    "encryptionKey": { "value": "" },
+    "anthropicApiKey": { "value": "" },
+    "openaiApiKey": { "value": "" },
+    "tavilyApiKey": { "value": "" },
+    "adminEmails": { "value": "sohaib.ali@potomac.com" }
+  }
+}

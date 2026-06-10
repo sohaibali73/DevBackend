@@ -1,19 +1,20 @@
 """FastAPI dependencies for authentication and user context.
 
-Performance notes:
-    * JWT is now verified LOCALLY using ``SUPABASE_JWT_SECRET`` (HS256) — no
-      Supabase round-trip on every authenticated request. Saves ~150–400 ms.
-    * When the JWT secret is not configured we fall back to the slower
-      ``supabase.auth.get_user()`` path, but cache that result in Redis for
-      60s so repeat requests within the same minute are free.
-    * User profile + API keys are also Redis-cached (60s) and read via
-      asyncpg when available — no PostgREST round-trip in the hot path.
+Auth model:
+    * Tokens are HS256 JWTs the backend issues and verifies locally with
+      ``SECRET_KEY`` (see core.auth_local). No external identity provider, no
+      network round-trip per request.
+    * The JWT carries ``sub`` (user id) and ``email``, so the user's identity
+      is read straight from the token — no auth-server lookup needed.
+    * User profile + API keys are Redis-cached (60s) and read via asyncpg when
+      available — no extra round-trip in the hot path.
 """
 
 from __future__ import annotations
 
 import asyncio
 import logging
+import os
 from typing import Any, Dict, Optional
 
 from fastapi import Depends, HTTPException, Query, Request
@@ -22,103 +23,57 @@ from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from config import get_settings
 from core.cache import cache
 from core.encryption import decrypt_value
+from core.auth_local import decode_token, TokenExpired, TokenInvalid
 from db import async_db
-from db.supabase_client import get_auth_client, get_supabase
+from db.supabase_client import get_supabase
 
 logger = logging.getLogger(__name__)
-security = HTTPBearer()
+# auto_error=False so missing/empty Authorization yields None (not an auto 403),
+# letting the AUTH_BYPASS path and our own 401s take over.
+security = HTTPBearer(auto_error=False)
 
-# JWT cache TTL (seconds). Should be < typical token lifetime (Supabase = 1 h).
-_JWT_CACHE_TTL = 300
-
-# ── Local JWT verification (fast path) ─────────────────────────────────────────
-
-try:
-    import jwt as _pyjwt  # PyJWT
-    _PYJWT_AVAILABLE = True
-except Exception:  # pragma: no cover
-    _pyjwt = None
-    _PYJWT_AVAILABLE = False
+# TEMPORARY: AUTH_BYPASS=1 disables auth entirely and runs every request as a
+# fixed dev user. Pairs with NEXT_PUBLIC_AUTH_BYPASS=1 on the frontend. Remove
+# (unset the env var) before launch.
+_AUTH_BYPASS = os.getenv("AUTH_BYPASS", "").lower() in ("1", "true", "yes")
+_BYPASS_UID = "00000000-0000-0000-0000-000000000001"
+_BYPASS_EMAIL = "dev@potomac.com"
 
 
-def _verify_jwt_local(token: str) -> Optional[str]:
-    """Verify a Supabase HS256 JWT locally. Returns the user id (``sub``) or None.
+# ── Local JWT verification ──────────────────────────────────────────────────
 
-    Raises HTTPException(401, "token_expired") when the token is expired so the
-    frontend can refresh.
+def _verify_jwt(token: str) -> Optional[Dict[str, Any]]:
+    """Verify our own HS256 JWT locally. Returns the payload, or None if invalid.
+
+    Raises HTTPException(401, "token_expired") when expired so the frontend
+    knows to refresh.
     """
-    settings = get_settings()
-    secret = settings.supabase_jwt_secret
-    if not secret or not _PYJWT_AVAILABLE:
-        return None
     try:
-        payload = _pyjwt.decode(
-            token,
-            secret,
-            algorithms=["HS256"],
-            audience="authenticated",
-            options={"verify_aud": True, "require": ["sub", "exp"]},
-        )
-        return payload.get("sub")
-    except _pyjwt.ExpiredSignatureError:
+        return decode_token(token, expected_type="access")
+    except TokenExpired:
         raise HTTPException(
             status_code=401,
             detail="token_expired",
             headers={"X-Token-Expired": "true"},
         )
-    except _pyjwt.InvalidTokenError as exc:
-        logger.debug("Local JWT verification failed: %s", exc)
-        return None  # caller will try the Supabase fallback path
-
-
-async def _verify_jwt_supabase(token: str) -> Optional[str]:
-    """Slow-path: ask Supabase to verify the JWT. Cached for 60s."""
-    cache_key = f"jwt:uid:{token[-32:]}"  # tail-suffix keeps key bounded
-    cached = await cache.get(cache_key)
-    if cached:
-        return cached
-
-    def _call():
-        auth_db = get_auth_client()
-        return auth_db.auth.get_user(token)
-
-    try:
-        result = await asyncio.to_thread(_call)
-        if not result or not getattr(result, "user", None):
-            return None
-        uid = result.user.id
-        await cache.set(cache_key, uid, ttl=60)
-        return uid
-    except Exception as exc:
-        msg = str(exc).lower()
-        if "expired" in msg:
-            raise HTTPException(
-                status_code=401,
-                detail="token_expired",
-                headers={"X-Token-Expired": "true"},
-            )
-        logger.error("Token validation failed: %s", exc)
+    except TokenInvalid as exc:
+        logger.debug("JWT verification failed: %s", exc)
         return None
 
 
 # ── Public dependencies ───────────────────────────────────────────────────────
 
 async def get_current_user_id(
-    credentials: HTTPAuthorizationCredentials = Depends(security),
+    credentials: Optional[HTTPAuthorizationCredentials] = Depends(security),
 ) -> str:
     """Extract and validate user ID from the bearer JWT."""
-    token = credentials.credentials
-
-    # 1. Try local JWT verification (fast path).
-    uid = _verify_jwt_local(token)
-    if uid:
-        return uid
-
-    # 2. Fall back to Supabase round-trip (cached).
-    uid = await _verify_jwt_supabase(token)
-    if uid:
-        return uid
-
+    if _AUTH_BYPASS:
+        return _BYPASS_UID
+    if not credentials:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    payload = _verify_jwt(credentials.credentials)
+    if payload and payload.get("sub"):
+        return payload["sub"]
     raise HTTPException(status_code=401, detail="Invalid or expired token")
 
 
@@ -144,6 +99,8 @@ async def get_current_user_id_sse(
     headers, so keep this opt-in per route. Do NOT default it onto JSON
     endpoints.
     """
+    if _AUTH_BYPASS:
+        return _BYPASS_UID
     # 1. Authorization header wins when present (avoids logging the token).
     auth_header = request.headers.get("authorization") or request.headers.get("Authorization")
     raw_token: Optional[str] = None
@@ -161,40 +118,56 @@ async def get_current_user_id_sse(
         )
 
     # 3. Verify via the same path as get_current_user_id.
-    uid = _verify_jwt_local(raw_token)
-    if uid:
-        return uid
-    uid = await _verify_jwt_supabase(raw_token)
-    if uid:
-        return uid
+    payload = _verify_jwt(raw_token)
+    if payload and payload.get("sub"):
+        return payload["sub"]
 
     raise HTTPException(status_code=401, detail="Invalid or expired token")
 
 
 async def get_current_user(
-    credentials: HTTPAuthorizationCredentials = Depends(security),
+    credentials: Optional[HTTPAuthorizationCredentials] = Depends(security),
 ) -> Dict[str, Any]:
     """Return the current user's public profile (no decrypted secrets).
 
-    This stays close to the original (proven) flow — only the JWT validation
-    is short-circuited by ``get_current_user_id`` when possible. The profile
-    fetch + auto-create logic runs on the sync Supabase client inside
+    The user's id + email come straight from the verified JWT (no auth-server
+    lookup). The profile fetch + auto-create runs on the sync DB client inside
     ``asyncio.to_thread`` so it doesn't block the event loop.
     """
+    if _AUTH_BYPASS:
+        user_id = _BYPASS_UID
+        email = _BYPASS_EMAIL
+        def _ensure_dev() -> Dict[str, Any]:
+            db = get_supabase()
+            r = db.table("user_profiles").select("id").eq("id", user_id).execute()
+            if not r.data:
+                db.table("user_profiles").insert({
+                    "id": user_id, "email": email, "name": "Dev User",
+                    "nickname": "Dev", "is_admin": True, "is_active": True,
+                }).execute()
+            return {
+                "id": user_id, "email": email, "name": "Dev User", "nickname": "Dev",
+                "is_admin": True, "is_active": True, "created_at": None,
+                "last_active_at": None, "has_claude_key": False, "has_tavily_key": False,
+                "has_openai_key": False, "has_openrouter_key": False,
+                "preferred_provider": "anthropic", "preferred_model": "claude-sonnet-4-20250514",
+            }
+        return await asyncio.to_thread(_ensure_dev)
+
+    if not credentials:
+        raise HTTPException(status_code=401, detail="Not authenticated")
     token = credentials.credentials
+    payload = _verify_jwt(token)
+    if not payload or not payload.get("sub"):
+        raise HTTPException(status_code=401, detail="Invalid or expired token")
+    user_id = payload["sub"]
+    email = payload.get("email", "")
 
     def _fetch_sync() -> Dict[str, Any]:
-        auth_db = get_auth_client()
         db = get_supabase()
-        auth_user = auth_db.auth.get_user(token)
-        if not auth_user or not auth_user.user:
-            raise HTTPException(status_code=401, detail="Invalid or expired token")
-
-        user_id = auth_user.user.id
-        email = auth_user.user.email or ""
 
         profile_result = db.table("user_profiles").select(
-            "id, name, nickname, is_admin, is_active, created_at, last_active_at, "
+            "id, email, name, nickname, is_admin, is_active, created_at, last_active_at, "
             "claude_api_key_encrypted, tavily_api_key_encrypted, "
             "openai_api_key_encrypted, openrouter_api_key_encrypted, "
             "preferred_provider, preferred_model"
@@ -203,8 +176,8 @@ async def get_current_user(
         if not profile_result.data:
             profile_data = {
                 "id": user_id,
-                "name": auth_user.user.user_metadata.get("name") if auth_user.user.user_metadata else None,
-                "nickname": (auth_user.user.user_metadata or {}).get("nickname", email.split("@")[0]),
+                "email": email,
+                "nickname": email.split("@")[0] if email else None,
             }
             db.table("user_profiles").insert(profile_data).execute()
             profile = profile_data
@@ -315,7 +288,7 @@ async def get_user_api_keys(
 
 
 async def get_user_with_api_keys(
-    credentials: HTTPAuthorizationCredentials = Depends(security),
+    credentials: Optional[HTTPAuthorizationCredentials] = Depends(security),
 ) -> Dict[str, Any]:
     """Return user profile + decrypted Claude / Tavily keys."""
     user = await get_current_user(credentials)

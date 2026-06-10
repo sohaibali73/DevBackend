@@ -377,6 +377,17 @@ def _set_cached_kb(query: str, category: str, data: Dict) -> None:
 # SHARED HELPERS
 # =============================================================================
 
+def _sanitize_nan(obj):
+    """Recursively replace float NaN/Inf with None so json.dumps produces valid JSON."""
+    if isinstance(obj, float) and (math.isnan(obj) or math.isinf(obj)):
+        return None
+    if isinstance(obj, dict):
+        return {k: _sanitize_nan(v) for k, v in obj.items()}
+    if isinstance(obj, list):
+        return [_sanitize_nan(i) for i in obj]
+    return obj
+
+
 def _ema(data, window: int):
     """
     Exponential Moving Average.
@@ -407,8 +418,8 @@ def _tavily_search(query: str, max_results: int = 5) -> Optional[Dict]:
     tavily_key = os.getenv("TAVILY_API_KEY")
     if not tavily_key:
         try:
-            from config import settings
-            tavily_key = getattr(settings, "TAVILY_API_KEY", None)
+            from config import get_settings
+            tavily_key = get_settings().tavily_api_key or None
         except Exception:
             pass
 
@@ -3687,6 +3698,7 @@ def get_stock_chart(symbol: str, period: str = "3mo", interval: str = "1d", char
         start_time = time.time()
         ticker     = yf.Ticker(symbol)
         hist       = ticker.history(period=period, interval=interval)
+        hist       = hist.dropna(subset=["Open", "High", "Low", "Close"])
         if hist.empty:
             return {"success": False, "error": f"No chart data found for {symbol}"}
 
@@ -3774,6 +3786,9 @@ def technical_analysis(symbol: str, period: str = "3mo") -> Dict[str, Any]:
         if hist.empty or len(hist) < 20:
             return {"success": False, "error": f"Insufficient data for {symbol}"}
 
+        hist   = hist.dropna(subset=["Close", "High", "Low"])
+        if len(hist) < 20:
+            return {"success": False, "error": f"Insufficient clean data for {symbol}"}
         closes = hist["Close"].values.astype(float)
         highs  = hist["High"].values.astype(float)
         lows   = hist["Low"].values.astype(float)
@@ -4386,6 +4401,7 @@ def backtest_quick(
         start_time = time.time()
         sym        = symbol.upper()
         hist       = yf.Ticker(sym).history(period=period)
+        hist       = hist.dropna(subset=["Close"])
         if hist.empty or len(hist) < slow_period + 10:
             return {"success": False, "error": f"Insufficient data for backtest on {sym}"}
 
@@ -7134,7 +7150,7 @@ def handle_tool_call(
             result = {"result": result, "_tool_time_ms": elapsed_ms}
 
         logger.debug("Tool %s completed in %sms", tool_name, result["_tool_time_ms"])
-        _json_out = json.dumps(result, indent=2, default=str)
+        _json_out = json.dumps(_sanitize_nan(result), indent=2, default=str)
         try:
             from core.debug_transcript import get_current_transcript as _gct
             _dt = _gct()

@@ -12,11 +12,9 @@ CREATE TABLE IF NOT EXISTS afl_uploaded_files (
     filename TEXT NOT NULL,
     content_type TEXT NOT NULL,
     file_data JSONB NOT NULL,
-    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    
-    -- Foreign key to users table
-    CONSTRAINT fk_afl_uploaded_files_user FOREIGN KEY (user_id) 
-        REFERENCES users(id) ON DELETE CASCADE
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    -- NOTE: removed FK to users(id) — user_id is TEXT and authz is enforced in
+    -- application code (self-hosted auth), so no DB-level FK is needed.
 );
 
 -- Index for fast user file queries

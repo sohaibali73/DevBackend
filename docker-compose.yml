@@ -1,0 +1,110 @@
+services:
+  # FastAPI backend
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: potomac-api
+    ports:
+      - "8000:8000"
+    environment:
+      ENVIRONMENT: development
+      LOG_LEVEL: INFO
+      PORT: 8000
+      WEB_CONCURRENCY: 2
+      STORAGE_ROOT: /data
+      # Database (local Postgres; Azure sets DATABASE_URL to the Flexible Server)
+      DATABASE_URL: ${DATABASE_URL:-postgresql://postgres:postgres@postgres:5432/dev}
+      # Object storage — Azurite (local Azure Blob emulator)
+      AZURE_STORAGE_CONNECTION_STRING: ${AZURE_STORAGE_CONNECTION_STRING:-DefaultEndpointsProtocol=http;AccountName=devstoreaccount1;AccountKey=Eby8vdM02xNOcqFlqUwJPLlmEtlCDXJ1OUzFT50uSRZ6IFsuFq2UVErCz4I6tq/K1SZFPTOtr/KBHBeksoGMGw==;BlobEndpoint=http://azurite:10000/devstoreaccount1;}
+      AZURE_STORAGE_USE_MANAGED_IDENTITY: "false"
+      # Cache (optional; in-process LRU is used if empty)
+      REDIS_URL: ${REDIS_URL:-redis://redis:6379}
+      ENABLE_REDIS_CACHE: "true"
+      ENABLE_PROMPT_CACHE: "true"
+      # API Keys (set these in .env.local)
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      TAVILY_API_KEY: ${TAVILY_API_KEY:-}
+      # Admin
+      ADMIN_EMAILS: ${ADMIN_EMAILS:-}
+      ENCRYPTION_KEY: ${ENCRYPTION_KEY:-}
+      SECRET_KEY: ${SECRET_KEY:-dev-secret-key-change-in-production}
+    volumes:
+      - ./:/app
+      - /app/.venv
+      - /app/__pycache__
+      - /app/.pytest_cache
+      - potomac-data:/data
+    depends_on:
+      redis:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+      azurite:
+        condition: service_started
+    networks:
+      - potomac
+    restart: unless-stopped
+
+  # Azurite — local Azure Blob Storage emulator
+  azurite:
+    image: mcr.microsoft.com/azure-storage/azurite
+    container_name: potomac-azurite
+    command: azurite-blob --blobHost 0.0.0.0
+    ports:
+      - "10000:10000"
+    volumes:
+      - azurite-data:/data
+    networks:
+      - potomac
+    restart: unless-stopped
+
+  # PostgreSQL database (local development) — pgvector image for embeddings
+  postgres:
+    image: pgvector/pgvector:pg16
+    container_name: potomac-postgres
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: dev
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - potomac
+    restart: unless-stopped
+
+  # Redis cache (local development)
+  redis:
+    image: redis:7-alpine
+    container_name: potomac-redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis-data:/data
+    command: redis-server --appendonly yes
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - potomac
+    restart: unless-stopped
+
+volumes:
+  postgres-data:
+  redis-data:
+  potomac-data:
+  azurite-data:
+
+networks:
+  potomac:
+    driver: bridge
